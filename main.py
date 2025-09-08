@@ -26,12 +26,28 @@ from app.services.langgraph_service import langgraph_service
 from dotenv import load_dotenv
 load_dotenv()
 
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
 settings = get_settings()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("sophia-backend")
 
 app = FastAPI(title=settings.APP_NAME)
+
+# OpenTelemetry setup
+resource = Resource.create({"service.name": "sophia-backend"})
+provider = TracerProvider(resource=resource)
+otlp_exporter = OTLPSpanExporter()
+provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+trace.set_tracer_provider(provider)
+tracer = trace.get_tracer("sophia")
+FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -173,7 +189,8 @@ async def synthesize(
 
     try:
         file_name = f"sophia_{int(time.time()*1000)}.mp3"
-        audio_url = upload_audio_and_get_url(file_name, audio_bytes)
+        # Fix argument order: first bytes, then optional file_name
+        audio_url = upload_audio_and_get_url(audio_bytes, file_name)
     except Exception:
         logger.exception("Audio upload failed")
         raise HTTPException(status_code=500, detail="Audio upload failed")
@@ -203,38 +220,54 @@ async def chat(
 
     session_id = uuid.uuid4()
 
-    try:
-        wav_bytes = await file.read()
-        transcript = transcribe_audio_with_voxtral(wav_bytes)
-    except Exception:
-        logger.exception("Transcription failed in chat")
-        raise HTTPException(status_code=500, detail="Transcription failed")
+    with tracer.start_as_current_span("chat") as chat_span:
+        chat_span.set_attribute("session.id", str(session_id))
+        t0 = time.time()
+        try:
+            wav_bytes = await file.read()
+            with tracer.start_as_current_span("stt_transcription") as stt_span:
+                transcript = transcribe_audio_with_voxtral(wav_bytes)
+                stt_span.set_attribute("transcript.length", len(transcript))
+        except Exception:
+            logger.exception("Transcription failed in chat")
+            raise HTTPException(status_code=500, detail="Transcription failed")
 
-    user_emotion = analyze_emotion_audio(wav_bytes)
-    try:
-        insert_emotion_score(session_id, role="user", emotion=user_emotion)
-    except Exception:
-        logger.warning("Persist user emotion failed; continuing")
+        user_emotion = analyze_emotion_audio(wav_bytes)
+        chat_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
+        chat_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
+        try:
+            insert_emotion_score(session_id, role="user", emotion=user_emotion)
+        except Exception:
+            logger.warning("Persist user emotion failed; continuing")
 
-    try:
-        reply = generate_llm_reply(transcript)
-    except Exception:
-        logger.exception("LLM generation failed in chat")
-        raise HTTPException(status_code=500, detail="Response generation failed")
+        try:
+            with tracer.start_as_current_span("llm_generation") as llm_span:
+                reply = generate_llm_reply(transcript)
+                llm_span.set_attribute("reply.length", len(reply))
+        except Exception:
+            logger.exception("LLM generation failed in chat")
+            raise HTTPException(status_code=500, detail="Response generation failed")
 
-    try:
-        audio_bytes = synthesize_inworld(reply)
-        file_name = f"sophia_{int(time.time()*1000)}.mp3"
-        audio_url = upload_audio_and_get_url(file_name, audio_bytes)
-    except Exception:
-        logger.exception("Synthesis or upload failed in chat")
-        raise HTTPException(status_code=500, detail="Synthesis failed")
+        try:
+            with tracer.start_as_current_span("tts_synthesis_upload"):
+                audio_bytes = synthesize_inworld(reply)
+                file_name = f"sophia_{int(time.time()*1000)}.mp3"
+                # Fix argument order: first bytes, then optional file_name
+                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+        except Exception:
+            logger.exception("Synthesis or upload failed in chat")
+            raise HTTPException(status_code=500, detail="Synthesis failed")
 
-    sophia_emotion = analyze_emotion_audio(audio_bytes)
-    try:
-        insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
-    except Exception:
-        logger.warning("Persist sophia emotion failed; continuing")
+        sophia_emotion = analyze_emotion_audio(audio_bytes)
+        chat_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
+        chat_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
+        try:
+            insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+        except Exception:
+            logger.warning("Persist sophia emotion failed; continuing")
+
+        total_ms = int((time.time() - t0) * 1000)
+        chat_span.set_attribute("total_roundtrip_time.ms", total_ms)
 
     try:
         insert_conversation_session({
