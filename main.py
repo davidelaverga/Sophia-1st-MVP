@@ -6,7 +6,8 @@ import logging
 from typing import Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -44,6 +45,9 @@ app.state.limiter = limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Mount static files for frontend
+app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
 
 
 class Emotion(BaseModel):
@@ -92,6 +96,12 @@ class TextChatRequest(BaseModel):
 
 @app.get("/")
 def root():
+    """Serve the frontend interface"""
+    return FileResponse("frontend/index.html")
+
+@app.get("/api")
+def api_root():
+    """API status endpoint"""
     return {"message": "Sophia AI Backend with DeFi Agent is running."}
 
 
@@ -102,8 +112,10 @@ async def transcribe(
     file: UploadFile = File(...),
     api_key_ok: None = Depends(verify_api_key),
 ):
-    if not file.filename.lower().endswith(".wav"):
-        raise HTTPException(status_code=400, detail="File must be a WAV audio file.")
+    # Accept common audio formats
+    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
 
     session_id = uuid.uuid4()
 
@@ -184,8 +196,10 @@ async def chat(
     file: UploadFile = File(...),
     api_key_ok: None = Depends(verify_api_key),
 ):
-    if not file.filename.lower().endswith(".wav"):
-        raise HTTPException(status_code=400, detail="File must be a WAV audio file.")
+    # Accept common audio formats
+    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
 
     session_id = uuid.uuid4()
 
@@ -256,8 +270,10 @@ async def defi_chat(
 ):
     """Enhanced chat endpoint using LangGraph for DeFi conversations"""
     
-    if not file.filename.lower().endswith(".wav"):
-        raise HTTPException(status_code=400, detail="File must be a WAV audio file.")
+    # Accept common audio formats
+    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
 
     try:
         wav_bytes = await file.read()

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sophia - DeFi AI Assistant</title>
+    <link rel="stylesheet" href="/frontend/styles.css?v=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo-section">
+                    <div class="logo-icon">
+                        <div class="ai-pulse"></div>
+                        <span class="logo-text">Sophia</span>
+                    </div>
+                    <span class="tagline">Your DeFi AI Assistant</span>
+                </div>
+                <div class="status-indicator">
+                    <span class="status-dot online"></span>
+                    <span class="status-text">AI Online</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Chat Interface -->
+        <main class="chat-container">
+            <div class="chat-wrapper">
+                <!-- Chat Messages -->
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <div class="avatar sophia-avatar">
+                            <div class="avatar-pulse"></div>
+                        </div>
+                        <div class="message-content">
+                            <h3>Welcome to Sophia DeFi</h3>
+                            <p>I'm your AI assistant for navigating the world of decentralized finance. Ask me about yield farming, staking, protocols, risks, or any DeFi concepts!</p>
+                            <div class="quick-actions">
+                                <button class="quick-btn" onclick="sendQuickMessage('What is yield farming?')">
+                                    🌾 Yield Farming
+                                </button>
+                                <button class="quick-btn" onclick="sendQuickMessage('How do I start with DeFi safely?')">
+                                    🛡️ Safe Start
+                                </button>
+                                <button class="quick-btn" onclick="sendQuickMessage('What are the current DeFi trends?')">
+                                    📈 Trends
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Section -->
+                <div class="input-section">
+                    <div class="input-container">
+                        <!-- Voice Input -->
+                        <div class="voice-controls">
+                            <button class="voice-btn" id="voiceBtn" onclick="toggleVoiceRecording()">
+                                <span class="voice-icon">🎤</span>
+                                <span class="voice-text">Hold to Talk</span>
+                            </button>
+                            <div class="recording-indicator" id="recordingIndicator">
+                                <div class="pulse-ring"></div>
+                                Recording...
+                            </div>
+                        </div>
+
+                        <!-- Text Input -->
+                        <div class="text-input-container">
+                            <input 
+                                type="text" 
+                                id="textInput" 
+                                placeholder="Ask about DeFi, staking, yield farming..."
+                                maxlength="500"
+                            >
+                            <button class="send-btn" id="sendBtn" onclick="sendTextMessage()">
+                                <span class="send-icon">⚡</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Settings Panel -->
+                    <div class="settings-panel" id="settingsPanel">
+                        <div class="settings-content">
+                            <h4>Settings</h4>
+                            <div class="setting-item">
+                                <label for="apiUrl">API URL:</label>
+                                <input type="text" id="apiUrl" placeholder="Backend URL">
+                            </div>
+                            <div class="setting-item">
+                                <label>Session ID:</label>
+                                <input type="text" id="sessionDisplay" readonly>
+                            </div>
+                            <button class="save-settings-btn" onclick="saveSettings()">Save Settings</button>
+                        </div>
+                    </div>
+                    
+                    <button class="settings-toggle" onclick="toggleSettings()">⚙️</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Loading Overlay -->
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-content">
+                <div class="crypto-loader">
+                    <div class="loader-ring"></div>
+                    <div class="loader-ring"></div>
+                    <div class="loader-ring"></div>
+                </div>
+                <p class="loading-text">Sophia is thinking...</p>
+            </div>
+        </div>
+
+        <!-- Audio Player -->
+        <audio id="audioPlayer" controls style="display: none;"></audio>
+    </div>
+
+    <script src="/frontend/script.js?v=1.0"></script>
+</body>
+</html>
