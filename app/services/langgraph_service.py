@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any
 from app.langgraph_nodes import SophiaLangGraph
 from app.services.evaluations import evaluation_manager
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,13 @@ class LangGraphService:
         
             # Check for finished conversations and run evaluations
             try:
-                finished_reports = evaluation_manager.check_and_evaluate_finished_conversations()
-                if finished_reports:
-                    logger.info(f"Completed evaluations for {len(finished_reports)} finished conversations")
+                threading.Thread(
+                    target=self._run_eval_checks_background,
+                    name="eval-check-finished",
+                    daemon=True,
+                ).start()
             except Exception as e:
-                logger.error(f"Failed to check finished conversations: {e}")
+                logger.error(f"Failed to start evaluation background task: {e}")
             
             # Format response
             response = {
@@ -134,6 +137,15 @@ class LangGraphService:
         except Exception as e:
             logger.error(f"LangGraph text conversation processing failed: {e}")
             raise
+
+    def _run_eval_checks_background(self):
+        """Run evaluation checks in a background thread to avoid blocking user requests."""
+        try:
+            finished_reports = evaluation_manager.check_and_evaluate_finished_conversations()
+            if finished_reports:
+                logger.info(f"Completed evaluations for {len(finished_reports)} finished conversations")
+        except Exception as e:
+            logger.error(f"Background evaluation check failed: {e}")
 
 # Singleton instance
 langgraph_service = LangGraphService()

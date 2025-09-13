@@ -111,7 +111,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       
       formData.append('file', audioBlob, fileName)
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat/stream`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
@@ -119,38 +119,128 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
         body: formData
       })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      if (!response.ok || !response.body) {
+        const detail = !response.ok ? `${response.status} ${response.statusText}` : 'No response body'
+        throw new Error(`Streaming request failed: ${detail}`)
       }
 
-      const result = await response.json()
-      
-      // Add user message
-      onMessage({
-        id: Date.now().toString() + '_user',
-        type: 'user',
-        content: result.transcript,
-        sender: 'user',
-        emotion: result.user_emotion,
-        timestamp: new Date()
-      })
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let sophiaMessageId = Date.now().toString() + '_sophia'
+      let transcriptAdded = false
+      let accumulated = ''
+      let audioUrl: string | null = null
 
-      // Add Sophia response
-      onMessage({
-        id: Date.now().toString() + '_sophia',
-        type: 'sophia',
-        content: result.reply,
-        sender: 'ai',
-        emotion: result.sophia_emotion,
-        audioUrl: result.audio_url,
-        intent: result.intent,
-        timestamp: new Date()
-      })
+      const pushSophiaMessage = (content: string) => {
+        onMessage({
+          id: sophiaMessageId,
+          type: 'sophia',
+          content,
+          sender: 'ai',
+          timestamp: new Date()
+        })
+      }
 
-      // Auto-play audio response
-      if (result.audio_url) {
-        setTimeout(() => playAudio(result.audio_url), 500)
+      const updateSophiaMessage = (content: string, extra?: { audioUrl?: string; emotion?: any }) => {
+        onMessage({
+          id: sophiaMessageId,
+          type: 'sophia',
+          content,
+          sender: 'ai',
+          audioUrl: extra?.audioUrl,
+          emotion: extra?.emotion,
+          timestamp: new Date()
+        })
+      }
+
+      const processLine = (line: string) => {
+        if (!line.trim()) return
+        // Expect SSE lines like: "event: token" or "data: ..."
+        // We'll collect per-event until a blank line separates events
+      }
+
+      // Simple SSE parser state
+      let currentEvent: string | null = null
+      let currentData: string[] = []
+
+      const handleEvent = (event: string, data: string) => {
+        try {
+          if (event === 'transcript') {
+            const payload = JSON.parse(data)
+            // Add user message first
+            if (!transcriptAdded) {
+              onMessage({
+                id: Date.now().toString() + '_user',
+                type: 'user',
+                content: payload.transcript,
+                sender: 'user',
+                emotion: payload.user_emotion,
+                timestamp: new Date()
+              })
+              transcriptAdded = true
+              // Initialize Sophia message as empty to start streaming
+              pushSophiaMessage('')
+            }
+          } else if (event === 'token') {
+            const chunk = data
+            accumulated += chunk
+            updateSophiaMessage(accumulated)
+          } else if (event === 'reply_done') {
+            const payload = JSON.parse(data)
+            accumulated = payload.reply || accumulated
+            updateSophiaMessage(accumulated)
+          } else if (event === 'audio_url') {
+            const payload = JSON.parse(data)
+            audioUrl = payload.audio_url
+            const mock = !!payload.mock_audio
+            updateSophiaMessage(accumulated, { audioUrl: payload.audio_url, emotion: payload.sophia_emotion })
+            if (audioUrl && !mock && /^https?:\/\//.test(audioUrl)) {
+              setTimeout(() => playAudio(audioUrl!), 300)
+            }
+          } else if (event === 'error') {
+            console.error('SSE error:', data)
+          }
+        } catch (err) {
+          console.warn('Failed to handle SSE event', event, err)
+        }
+      }
+
+      const flushIfEventComplete = () => {
+        if (currentEvent) {
+          const data = currentData.join('\n')
+          handleEvent(currentEvent, data)
+          currentEvent = null
+          currentData = []
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          // flush remaining
+          flushIfEventComplete()
+          break
+        }
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 1)
+          if (line.startsWith('event:')) {
+            // Starting new event; flush previous
+            flushIfEventComplete()
+            currentEvent = line.slice('event:'.length).trim()
+          } else if (line.startsWith('data:')) {
+            currentData.push(line.slice('data:'.length).trim())
+          } else if (line.trim() === '') {
+            // separator between events
+            flushIfEventComplete()
+          } else {
+            // continuation of data or ignore
+            currentData.push(line)
+          }
+        }
       }
 
     } catch (error) {

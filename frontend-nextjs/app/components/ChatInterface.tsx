@@ -51,7 +51,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/text-chat`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/text-chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -63,29 +63,87 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
         })
       })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      if (!response.ok || !response.body) {
+        const detail = !response.ok ? `${response.status} ${response.statusText}` : 'No response body'
+        throw new Error(`Streaming request failed: ${detail}`)
       }
 
-      const result = await response.json()
-
-      const sophiaMessage: Message = {
-        id: generateSessionId(),
+      // Initialize a Sophia message for incremental updates
+      const sophiaId = generateSessionId()
+      setMessages(prev => [...prev, {
+        id: sophiaId,
         type: 'sophia',
-        content: result.reply,
+        content: '',
         sender: 'ai',
-        emotion: result.sophia_emotion,
-        audioUrl: result.audio_url,
-        intent: result.intent,
         timestamp: new Date()
+      }])
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let accumulated = ''
+
+      const updateSophia = (content: string, extra?: { audioUrl?: string; emotion?: any }) => {
+        setMessages(prev => prev.map(m => m.id === sophiaId ? ({ ...m, content, audioUrl: extra?.audioUrl, emotion: extra?.emotion }) : m))
       }
 
-      setMessages(prev => [...prev, sophiaMessage])
+      let currentEvent: string | null = null
+      let currentData: string[] = []
 
-      // Auto-play audio if available
-      if (result.audio_url) {
-        setTimeout(() => playAudio(result.audio_url), 500)
+      const handleEvent = (event: string, data: string) => {
+        try {
+          if (event === 'token') {
+            const chunk = data
+            accumulated += chunk
+            updateSophia(accumulated)
+          } else if (event === 'reply_done') {
+            const payload = JSON.parse(data)
+            accumulated = payload.reply || accumulated
+            updateSophia(accumulated)
+          } else if (event === 'audio_url') {
+            const payload = JSON.parse(data)
+            updateSophia(accumulated, { audioUrl: payload.audio_url, emotion: payload.sophia_emotion })
+            const mock = !!payload.mock_audio
+            if (payload.audio_url && !mock && /^https?:\/\//.test(payload.audio_url)) {
+              setTimeout(() => playAudio(payload.audio_url), 300)
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to handle SSE event', event, err)
+        }
+      }
+
+      const flushIfEventComplete = () => {
+        if (currentEvent) {
+          const data = currentData.join('\n')
+          handleEvent(currentEvent, data)
+          currentEvent = null
+          currentData = []
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          flushIfEventComplete()
+          break
+        }
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 1)
+          if (line.startsWith('event:')) {
+            flushIfEventComplete()
+            currentEvent = line.slice('event:'.length).trim()
+          } else if (line.startsWith('data:')) {
+            currentData.push(line.slice('data:'.length).trim())
+          } else if (line.trim() === '') {
+            flushIfEventComplete()
+          } else {
+            currentData.push(line)
+          }
+        }
       }
 
     } catch (error) {

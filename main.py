@@ -6,14 +6,14 @@ import logging
 from typing import Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.deps import verify_api_key, limiter
-from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply
+from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply, stream_generate_llm_reply
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
 from app.services.tts import synthesize_inworld
 from app.services.supabase import (
@@ -44,13 +44,55 @@ app = FastAPI(title=settings.APP_NAME)
 resource = Resource.create({
     "service.name": "sophia-backend",
     "service.version": "1.0.0",
-    "deployment.environment": "staging"
+    "deployment.environment": "staging",
 })
+
+
+def _normalize_otlp_endpoint(ep: str | None) -> str | None:
+    if not ep:
+        return None
+    ep = ep.rstrip("/")
+    # If caller passed base gateway (e.g., https://otlp-gateway.grafana.net/otlp),
+    # add the traces path expected by the HTTP exporter.
+    if not ep.endswith("/v1/traces"):
+        # Common Grafana endpoints end in "/otlp". Either way, append the traces path cleanly.
+        return f"{ep}/v1/traces"
+    return ep
+
+
+def _parse_otlp_headers(hdrs: str | None) -> dict[str, str] | None:
+    if not hdrs:
+        return None
+    # Support comma-separated key=value pairs, e.g. "Authorization=Bearer abc, X-Org=123"
+    out: dict[str, str] = {}
+    for part in hdrs.split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out or None
+
+
 provider = TracerProvider(resource=resource)
-otlp_exporter = OTLPSpanExporter()
-provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+# Configure OTLP HTTP exporter for Grafana Cloud (or any OTLP endpoint) via env
+otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
+
+# Only enable exporter if explicitly configured to avoid connection errors to localhost
+if otlp_endpoint:
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=otlp_endpoint,
+        headers=otlp_headers,
+    )
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+else:
+    # No exporter configured; traces will be kept in-process only
+    pass
+
 trace.set_tracer_provider(provider)
 tracer = trace.get_tracer("sophia")
+
+# Auto-instrument FastAPI
 FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(
@@ -175,6 +217,27 @@ async def generate_response(
     return GenerateResponse(reply=reply, tone="encouraging")
 
 
+@app.post("/generate-response/stream")
+@limiter.limit(settings.API_RATE_LIMIT)
+async def generate_response_stream(
+    request: Request,
+    body: GenerateRequest,
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Stream LLM tokens as they are generated.
+
+    Returns plain text chunks; the client should append them to display the
+    streaming answer. This endpoint is ideal for chat UIs that want low-latency
+    first token and incremental updates.
+    """
+    try:
+        generator = stream_generate_llm_reply(body.text)
+        return StreamingResponse(generator, media_type="text/plain")
+    except Exception:
+        logger.exception("Streaming response generation failed")
+        raise HTTPException(status_code=500, detail="Streaming response generation failed")
+
+
 class SynthesizeRequest(BaseModel):
     text: str
 
@@ -245,10 +308,7 @@ async def chat(
         
         chat_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
         chat_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
-        try:
-            insert_emotion_score(session_id, role="user", emotion=user_emotion)
-        except Exception:
-            logger.warning("Persist user emotion failed; continuing")
+        # Defer emotion persistence until after conversation session is created to avoid FK issues
 
         try:
             with tracer.start_as_current_span("llm_generation") as llm_span:
@@ -277,14 +337,12 @@ async def chat(
         
         chat_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
         chat_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
-        try:
-            insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
-        except Exception:
-            logger.warning("Persist sophia emotion failed; continuing")
+        # Defer emotion persistence until after conversation session is created to avoid FK issues
 
         total_ms = int((time.time() - t0) * 1000)
         chat_span.set_attribute("total_roundtrip_time.ms", total_ms)
 
+    # Insert conversation first (let DB set timestamps), then emotion scores to satisfy FK
     try:
         insert_conversation_session({
             "id": str(session_id),
@@ -294,9 +352,16 @@ async def chat(
             "user_emotion_confidence": user_emotion.confidence,
             "sophia_emotion_label": sophia_emotion.label,
             "sophia_emotion_confidence": sophia_emotion.confidence,
-            "audio_url": audio_url,
-            "created_at": int(time.time()),
+            "audio_url": audio_url or None,
         })
+        try:
+            insert_emotion_score(session_id, role="user", emotion=user_emotion)
+        except Exception:
+            logger.warning("Persist user emotion failed; continuing")
+        try:
+            insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+        except Exception:
+            logger.warning("Persist sophia emotion failed; continuing")
     except Exception:
         logger.warning("Persist conversation session failed; continuing")
 
@@ -334,7 +399,7 @@ async def defi_chat(
             collect_evaluation_data=True
         )
         
-        # Store in Supabase
+        # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
             insert_conversation_session({
                 "id": result["session_id"],
@@ -344,11 +409,18 @@ async def defi_chat(
                 "user_emotion_confidence": result["user_emotion"]["confidence"],
                 "sophia_emotion_label": result["sophia_emotion"]["label"],
                 "sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
-                "audio_url": result["audio_url"],
-                "created_at": int(time.time()),
+                "audio_url": result["audio_url"] or None,
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
             })
+            try:
+                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+            except Exception as e:
+                logger.warning(f"Failed to persist user emotion: {e}")
+            try:
+                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+            except Exception as e:
+                logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist conversation session: {e}")
         
@@ -359,6 +431,123 @@ async def defi_chat(
         raise HTTPException(status_code=500, detail=f"DeFi chat processing failed: {str(e)}")
 
 
+@app.post("/defi-chat/stream")
+@limiter.limit(settings.API_RATE_LIMIT)
+async def defi_chat_stream(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: Optional[str] = None,
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Streaming variant of DeFi chat.
+
+    Server-Sent Events (SSE) stream with events:
+    - event: transcript, data: { transcript, user_emotion }
+    - event: token, data: <text chunk>
+    - event: reply_done, data: { reply }
+    - event: audio_url, data: { audio_url, sophia_emotion }
+    """
+    # IMPORTANT: Read the uploaded file BEFORE starting the generator.
+    # Starlette may close the underlying SpooledTemporaryFile once the coroutine
+    # returns control, which would make subsequent reads fail within the
+    # generator with "I/O operation on closed file".
+    wav_bytes = await file.read()
+
+    async def event_generator():
+        nonlocal session_id
+        try:
+            # STT
+            transcript = transcribe_audio_with_voxtral(wav_bytes)
+            user_emotion = analyze_emotion_audio(wav_bytes)
+            if session_id is None:
+                session_id_local = str(uuid.uuid4())
+                session_id = session_id_local
+            else:
+                session_id_local = session_id
+            # Do NOT persist emotions yet; insert conversation first to satisfy FK
+
+            # Send transcript event
+            import json as _json
+            yield f"event: transcript\ndata: {_json.dumps({'transcript': transcript, 'user_emotion': user_emotion.model_dump(), 'session_id': session_id_local})}\n\n"
+
+            # Stream LLM
+            reply_accum = []
+            for chunk in stream_generate_llm_reply(transcript):
+                if not chunk:
+                    continue
+                reply_accum.append(chunk)
+                # stream token chunk
+                safe_chunk = chunk.replace("\n", " ")
+                yield f"event: token\ndata: {safe_chunk}\n\n"
+
+            reply = "".join(reply_accum).strip()
+            yield f"event: reply_done\ndata: {{\"reply\": { _json.dumps(reply) }}}\n\n"
+
+            # Synthesize TTS and upload
+            try:
+                audio_bytes = synthesize_inworld(reply)
+                file_name = f"sophia_{int(time.time()*1000)}.mp3"
+                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+            except Exception:
+                logger.exception("Synthesis or upload failed in defi_chat_stream")
+                audio_url = None
+
+            # Analyze Sophia emotion (persist later after conversation insert)
+            sophia_emotion = None
+            mock_audio = False
+            try:
+                if audio_url:
+                    # Detect mock audio (tiny placeholder)
+                    try:
+                        mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+                    except Exception:
+                        mock_audio = False
+                    sophia_emotion = analyze_emotion_audio(audio_bytes)
+            except Exception:
+                logger.warning("Sophia emotion analysis failed; continuing")
+
+            # Persist conversation first (no explicit created_at), then emotions to satisfy FK
+            try:
+                insert_conversation_session({
+                    "id": session_id_local,
+                    "transcript": transcript,
+                    "reply": reply,
+                    "user_emotion_label": user_emotion.label,
+                    "user_emotion_confidence": user_emotion.confidence,
+                    "sophia_emotion_label": (sophia_emotion.label if sophia_emotion else None),
+                    "sophia_emotion_confidence": (sophia_emotion.confidence if sophia_emotion else None),
+                    "audio_url": audio_url or None,
+                })
+                try:
+                    insert_emotion_score(session_id_local, role="user", emotion=user_emotion)
+                except Exception as e:
+                    logger.warning(f"Failed to persist user emotion: {e}")
+                try:
+                    if sophia_emotion:
+                        insert_emotion_score(session_id_local, role="sophia", emotion=sophia_emotion)
+                except Exception as e:
+                    logger.warning(f"Failed to persist sophia emotion: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to persist conversation session (stream): {e}")
+
+            # Send audio URL and sophia emotion
+            payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
+            yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
+
+        except Exception as e:
+            logger.exception("Streaming DeFi chat failed")
+            # Send an error event to client
+            yield f"event: error\ndata: {{\"detail\": \"{str(e)}\"}}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 @app.post("/text-chat", response_model=DefiChatResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
 async def text_chat(
@@ -376,21 +565,24 @@ async def text_chat(
             collect_evaluation_data=True
         )
         
-        # Store in Supabase
+        # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
             insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
                 "reply": result["reply"],
-                "user_emotion_label": result["user_emotion"]["label"],
-                "user_emotion_confidence": result["user_emotion"]["confidence"],
-                "sophia_emotion_label": result["sophia_emotion"]["label"],
-                "sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
-                "audio_url": result["audio_url"],
-                "created_at": int(time.time()),
+                "audio_url": result["audio_url"] or None,
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
             })
+            try:
+                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+            except Exception as e:
+                logger.warning(f"Failed to persist user emotion: {e}")
+            try:
+                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+            except Exception as e:
+                logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist text conversation session: {e}")
         
@@ -401,6 +593,67 @@ async def text_chat(
         raise HTTPException(status_code=500, detail=f"Text chat processing failed: {str(e)}")
 
 
+@app.post("/text-chat/stream")
+@limiter.limit(settings.API_RATE_LIMIT)
+async def text_chat_stream(
+    request: Request,
+    body: TextChatRequest,
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Streaming variant for text-only chat.
+
+    Server-Sent Events (SSE) with:
+    - event: token, data: <text chunk>
+    - event: reply_done, data: { reply }
+    - event: audio_url, data: { audio_url, sophia_emotion }
+    """
+    async def event_generator():
+        try:
+            import json as _json
+            # Stream LLM tokens
+            reply_accum = []
+            for chunk in stream_generate_llm_reply(body.message):
+                if not chunk:
+                    continue
+                reply_accum.append(chunk)
+                safe_chunk = chunk.replace("\n", " ")
+                yield f"event: token\ndata: {safe_chunk}\n\n"
+
+            reply = "".join(reply_accum).strip()
+            yield f"event: reply_done\ndata: {{\"reply\": { _json.dumps(reply) }}}\n\n"
+
+            # Optional TTS synthesis and audio URL
+            audio_url = ""
+            sophia_emotion = None
+            mock_audio = False
+            try:
+                audio_bytes = synthesize_inworld(reply)
+                file_name = f"sophia_{int(time.time()*1000)}.mp3"
+                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                try:
+                    mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+                except Exception:
+                    mock_audio = False
+                sophia_emotion = analyze_emotion_audio(audio_bytes)
+            except Exception:
+                logger.exception("Synthesis or upload failed in text_chat_stream")
+
+            payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
+            yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
+
+        except Exception as e:
+            logger.exception("Streaming text chat failed")
+            yield f"event: error\ndata: {{\"detail\": \"{str(e)}\"}}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 @app.get("/health")
 def health_check():
     """Health check endpoint"""

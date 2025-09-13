@@ -89,12 +89,35 @@ export default function Home() {
   }
 
   const signInWithDiscord = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'discord',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`
+    try {
+      setIsLoading(true)
+      console.log('🔐 Starting Discord sign-in...')
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'discord',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        }
+      })
+
+      if (error) {
+        console.error('❌ Discord sign-in error:', error)
+        alert(`Discord sign-in failed: ${error.message}`)
+        return
       }
-    })
+
+      // Some environments may not auto-redirect. Manually navigate if URL is returned.
+      if (data?.url) {
+        console.log('🔀 Redirecting to:', data.url)
+        window.location.href = data.url
+      } else {
+        console.warn('⚠️ No redirect URL returned from signInWithOAuth')
+      }
+    } catch (e: any) {
+      console.error('❌ Unexpected error during Discord sign-in:', e)
+      alert(`Unexpected sign-in error: ${e?.message || e}`)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   if (!user) {
@@ -111,9 +134,10 @@ export default function Home() {
           
           <button
             onClick={signInWithDiscord}
-            className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-3"
+            disabled={isLoading}
+            className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-3"
           >
-            Continue with Discord
+            {isLoading ? 'Redirecting…' : 'Continue with Discord'}
           </button>
         </div>
       </div>

@@ -2011,6 +2011,10 @@ a {
   --tw-gradient-to: #374151 var(--tw-gradient-to-position);
 }
 
+.disabled\:opacity-60:disabled {
+  opacity: 0.6;
+}
+
 .group:hover .group-hover\:scale-100 {
   --tw-scale-x: 1;
   --tw-scale-y: 1;
