@@ -416,3 +416,57 @@ class SophiaLangGraph:
         logger.info(f"LangGraph processing completed for session {session_id}")
         
         return final_state
+    
+    def process_text_conversation(self, message: str, session_id: Optional[str] = None) -> GraphState:
+        """Process a text-only conversation turn, bypassing audio processing"""
+        
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
+        # Initialize state with text message directly
+        initial_state: GraphState = {
+            "session_id": session_id,
+            "audio_bytes": b"",  # Empty for text input
+            "transcript": message,  # Use the text message directly
+            "user_emotion": EmotionData(label="neutral", confidence=0.7),  # Default for text
+            "intent": "",
+            "context_memory": {},
+            "llm_response": "",
+            "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "audio_url": "",
+            "tts_bytes": b"",
+            "evaluation_logs": [],
+            "fallback_used": {}
+        }
+        
+        logger.info(f"Starting LangGraph text processing for session {session_id} with message: '{message[:50]}...'")
+        
+        # Create a text-specific graph that skips audio processing
+        text_workflow = StateGraph(GraphState)
+        
+        # Initialize nodes
+        intent_analyzer = IntentAnalyzer()
+        response_generator = ResponseGenerator()
+        tts_node = TTSNode()
+        eval_logger = EvalLogger()
+        
+        # Add nodes (skip audio_ingestor for text input)
+        text_workflow.add_node("intent_analyzer", intent_analyzer)
+        text_workflow.add_node("response_generator", response_generator)
+        text_workflow.add_node("tts_node", tts_node)
+        text_workflow.add_node("eval_logger", eval_logger)
+        
+        # Define edges (workflow sequence without audio processing)
+        text_workflow.add_edge(START, "intent_analyzer")
+        text_workflow.add_edge("intent_analyzer", "response_generator")
+        text_workflow.add_edge("response_generator", "tts_node")
+        text_workflow.add_edge("tts_node", "eval_logger")
+        text_workflow.add_edge("eval_logger", END)
+        
+        # Compile and execute the text-specific graph
+        text_graph = text_workflow.compile()
+        final_state = text_graph.invoke(initial_state)
+        
+        logger.info(f"LangGraph text processing completed for session {session_id}")
+        
+        return final_state

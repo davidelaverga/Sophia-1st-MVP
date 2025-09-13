@@ -41,7 +41,11 @@ logger = logging.getLogger("sophia-backend")
 app = FastAPI(title=settings.APP_NAME)
 
 # OpenTelemetry setup
-resource = Resource.create({"service.name": "sophia-backend"})
+resource = Resource.create({
+    "service.name": "sophia-backend",
+    "service.version": "1.0.0",
+    "deployment.environment": "staging"
+})
 provider = TracerProvider(resource=resource)
 otlp_exporter = OTLPSpanExporter()
 provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
@@ -232,7 +236,13 @@ async def chat(
             logger.exception("Transcription failed in chat")
             raise HTTPException(status_code=500, detail="Transcription failed")
 
-        user_emotion = analyze_emotion_audio(wav_bytes)
+        with tracer.start_as_current_span("emotion_analysis_user") as emotion_span:
+            user_emotion = analyze_emotion_audio(wav_bytes)
+            emotion_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
+            emotion_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
+            emotion_span.set_attribute("emotion.type", "user")
+            emotion_span.set_attribute("emotion.source", "audio")
+        
         chat_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
         chat_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
         try:
@@ -258,7 +268,13 @@ async def chat(
             logger.exception("Synthesis or upload failed in chat")
             raise HTTPException(status_code=500, detail="Synthesis failed")
 
-        sophia_emotion = analyze_emotion_audio(audio_bytes)
+        with tracer.start_as_current_span("emotion_analysis_sophia") as sophia_emotion_span:
+            sophia_emotion = analyze_emotion_audio(audio_bytes)
+            sophia_emotion_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
+            sophia_emotion_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
+            sophia_emotion_span.set_attribute("emotion.type", "sophia")
+            sophia_emotion_span.set_attribute("emotion.source", "audio")
+        
         chat_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
         chat_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
         try:
@@ -315,7 +331,7 @@ async def defi_chat(
         result = langgraph_service.process_conversation(
             audio_bytes=wav_bytes,
             session_id=session_id,
-            run_evaluation=True
+            collect_evaluation_data=True
         )
         
         # Store in Supabase
@@ -353,22 +369,12 @@ async def text_chat(
     """Text-only chat endpoint for DeFi conversations"""
     
     try:
-        # Create a minimal audio representation for text input
-        # This allows reuse of the LangGraph pipeline
-        fake_audio = b""  # Empty audio bytes for text-only input
-        
-        # Process through LangGraph, but override transcript
-        result = langgraph_service.process_conversation(
-            audio_bytes=fake_audio,
+        # Process text message directly through LangGraph with text input
+        result = langgraph_service.process_text_conversation(
+            message=body.message,
             session_id=body.session_id,
-            run_evaluation=True
+            collect_evaluation_data=True
         )
-        
-        # Override transcript with the actual text message
-        result["transcript"] = body.message
-        
-        # For text-only, set neutral emotions initially
-        result["user_emotion"] = {"label": "neutral", "confidence": 0.7}
         
         # Store in Supabase
         try:
@@ -401,8 +407,8 @@ def health_check():
     return {"status": "healthy", "timestamp": int(time.time())}
 
 
-@app.get("/sessions/{session_id}")
-async def get_session_memory(
+@app.get("/memory/{session_id}")
+async def get_memory(
     session_id: str,
     api_key_ok: None = Depends(verify_api_key),
 ):
@@ -410,10 +416,113 @@ async def get_session_memory(
     try:
         from app.services.memory import memory_manager
         context = memory_manager.get_context_for_llm(session_id)
-        return {"session_id": session_id, "context": context}
+        
+        return {
+            "session_id": session_id,
+            "context": context,
+            "timestamp": time.time()
+        }
+        
     except Exception as e:
-        logger.exception("Failed to retrieve session memory")
-        raise HTTPException(status_code=500, detail="Failed to retrieve session memory")
+        logger.error(f"Failed to get memory for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory")
+
+
+@app.post("/evaluation/force/{session_id}")
+async def force_evaluate_conversation(
+    session_id: str,
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Force evaluation of a specific conversation"""
+    try:
+        from app.services.evaluations import evaluation_manager
+        
+        report = evaluation_manager.force_evaluate_conversation(session_id)
+        
+        if report is None:
+            raise HTTPException(status_code=404, detail=f"No active conversation found for session {session_id}")
+        
+        return {
+            "message": "Conversation evaluation completed",
+            "session_id": session_id,
+            "evaluation_report": {
+                "total_messages": report.total_messages,
+                "conversation_duration_minutes": round(report.conversation_duration / 60, 2),
+                "ragas_average": report.ragas_metrics.average_score if report.ragas_metrics else None,
+                "phoenix_evaluations": len(report.phoenix_metrics),
+                "drift_alert": report.drift_alert,
+                "confidence_change": f"{report.baseline_confidence:.2f} -> {report.current_confidence:.2f}"
+            },
+            "timestamp": time.time()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to force evaluate conversation {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to evaluate conversation")
+
+
+@app.get("/evaluation/status")
+async def get_evaluation_status(
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Get current evaluation system status"""
+    try:
+        from app.services.evaluations import evaluation_manager
+        
+        active_count = evaluation_manager.get_active_conversation_count()
+        
+        # Get status of all active conversations
+        active_conversations = []
+        for session_id in evaluation_manager.active_conversations.keys():
+            status = evaluation_manager.get_conversation_status(session_id)
+            if status:
+                active_conversations.append(status)
+        
+        return {
+            "active_conversations_count": active_count,
+            "active_conversations": active_conversations,
+            "conversation_timeout_minutes": evaluation_manager.conversation_timeout / 60,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get evaluation status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get evaluation status")
+
+
+@app.post("/evaluation/check-finished")
+async def check_finished_conversations(
+    api_key_ok: None = Depends(verify_api_key),
+):
+    """Manually check for and evaluate finished conversations"""
+    try:
+        from app.services.evaluations import evaluation_manager
+        
+        reports = evaluation_manager.check_and_evaluate_finished_conversations()
+        
+        evaluation_summaries = []
+        for report in reports:
+            evaluation_summaries.append({
+                "session_id": report.session_id,
+                "total_messages": report.total_messages,
+                "conversation_duration_minutes": round(report.conversation_duration / 60, 2),
+                "ragas_average": report.ragas_metrics.average_score if report.ragas_metrics else None,
+                "phoenix_evaluations": len(report.phoenix_metrics),
+                "drift_alert": report.drift_alert
+            })
+        
+        return {
+            "message": f"Evaluated {len(reports)} finished conversations",
+            "evaluations_completed": len(reports),
+            "evaluation_summaries": evaluation_summaries,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to check finished conversations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check finished conversations")
 
 
 if __name__ == "__main__":

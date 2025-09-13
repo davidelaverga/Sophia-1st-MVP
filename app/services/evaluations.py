@@ -26,6 +26,15 @@ class PhoenixMetrics:
     role: str  # "user" or "sophia"
 
 @dataclass
+class ConversationData:
+    """Data collected during a conversation for later evaluation"""
+    session_id: str
+    messages: List[Dict[str, Any]]
+    audio_data: List[Dict[str, bytes]]
+    created_at: float
+    last_activity: float
+
+@dataclass
 class EvaluationReport:
     session_id: str
     ragas_metrics: Optional[RAGASMetrics]
@@ -34,6 +43,8 @@ class EvaluationReport:
     baseline_confidence: float
     current_confidence: float
     timestamp: float
+    total_messages: int
+    conversation_duration: float
 
 class RAGASEvaluator:
     """RAGAS evaluation for answer quality"""
@@ -261,38 +272,154 @@ class EvaluationManager:
         self.ragas_evaluator = RAGASEvaluator()
         self.phoenix_monitor = PhoenixDriftMonitor()
         self.supabase = get_supabase()
+        self.active_conversations: Dict[str, ConversationData] = {}
+        self.conversation_timeout = 300  # 5 minutes of inactivity ends conversation
     
-    def evaluate_session(self, session_id: str, query: str, answer: str, 
-                        user_audio: bytes, sophia_audio: bytes, 
-                        retrieved_context: str = "") -> EvaluationReport:
-        """Comprehensive session evaluation"""
+    def collect_message_data(self, session_id: str, query: str, answer: str, 
+                           user_audio: bytes, sophia_audio: bytes, 
+                           retrieved_context: str = "") -> None:
+        """Collect data from a message exchange for later evaluation"""
         
-        # RAGAS evaluation
+        current_time = time.time()
+        
+        # Initialize conversation data if new session
+        if session_id not in self.active_conversations:
+            self.active_conversations[session_id] = ConversationData(
+                session_id=session_id,
+                messages=[],
+                audio_data=[],
+                created_at=current_time,
+                last_activity=current_time
+            )
+            logger.info(f"Started collecting data for new conversation: {session_id}")
+        
+        # Add message data
+        conversation = self.active_conversations[session_id]
+        conversation.messages.append({
+            "query": query,
+            "answer": answer,
+            "retrieved_context": retrieved_context,
+            "timestamp": current_time
+        })
+        
+        # Add audio data
+        conversation.audio_data.append({
+            "user_audio": user_audio,
+            "sophia_audio": sophia_audio,
+            "timestamp": current_time
+        })
+        
+        # Update last activity
+        conversation.last_activity = current_time
+        
+        logger.info(f"Collected message data for session {session_id}. Total messages: {len(conversation.messages)}")
+    
+    def check_and_evaluate_finished_conversations(self) -> List[EvaluationReport]:
+        """Check for finished conversations and run evaluations"""
+        
+        current_time = time.time()
+        finished_sessions = []
+        reports = []
+        
+        # Find conversations that have timed out
+        for session_id, conversation in self.active_conversations.items():
+            if current_time - conversation.last_activity > self.conversation_timeout:
+                finished_sessions.append(session_id)
+        
+        # Evaluate finished conversations
+        for session_id in finished_sessions:
+            try:
+                report = self._evaluate_finished_conversation(session_id)
+                reports.append(report)
+                # Remove from active conversations
+                del self.active_conversations[session_id]
+                logger.info(f"Completed evaluation for finished conversation: {session_id}")
+            except Exception as e:
+                logger.error(f"Failed to evaluate finished conversation {session_id}: {e}")
+        
+        return reports
+    
+    def force_evaluate_conversation(self, session_id: str) -> Optional[EvaluationReport]:
+        """Force evaluation of a specific conversation (e.g., when user explicitly ends it)"""
+        
+        if session_id not in self.active_conversations:
+            logger.warning(f"No active conversation found for session {session_id}")
+            return None
+        
+        try:
+            report = self._evaluate_finished_conversation(session_id)
+            del self.active_conversations[session_id]
+            logger.info(f"Force completed evaluation for conversation: {session_id}")
+            return report
+        except Exception as e:
+            logger.error(f"Failed to force evaluate conversation {session_id}: {e}")
+            return None
+    
+    def _evaluate_finished_conversation(self, session_id: str) -> EvaluationReport:
+        """Evaluate a finished conversation using all collected data"""
+        
+        conversation = self.active_conversations[session_id]
+        current_time = time.time()
+        
+        logger.info(f"Evaluating finished conversation {session_id} with {len(conversation.messages)} messages")
+        
+        # Aggregate RAGAS evaluation across all messages
         ragas_metrics = None
         try:
-            ragas_metrics = self.ragas_evaluator.evaluate_response(query, answer, retrieved_context)
-            logger.info(f"RAGAS metrics: avg={ragas_metrics.average_score:.2f}")
+            all_ragas_scores = []
+            for msg in conversation.messages:
+                msg_ragas = self.ragas_evaluator.evaluate_response(
+                    msg["query"], msg["answer"], msg["retrieved_context"]
+                )
+                all_ragas_scores.append(msg_ragas)
+            
+            if all_ragas_scores:
+                # Calculate average metrics across all messages
+                avg_faithfulness = np.mean([r.faithfulness for r in all_ragas_scores])
+                avg_relevance = np.mean([r.relevance for r in all_ragas_scores])
+                avg_correctness = np.mean([r.correctness for r in all_ragas_scores])
+                avg_score = (avg_faithfulness + avg_relevance + avg_correctness) / 3
+                
+                ragas_metrics = RAGASMetrics(
+                    faithfulness=avg_faithfulness,
+                    relevance=avg_relevance,
+                    correctness=avg_correctness,
+                    average_score=avg_score
+                )
+                logger.info(f"Aggregated RAGAS metrics: avg={avg_score:.2f} across {len(all_ragas_scores)} messages")
         except Exception as e:
             logger.error(f"RAGAS evaluation failed: {e}")
         
-        # Phoenix evaluations
+        # Phoenix evaluations for all audio data
         phoenix_metrics = []
         try:
-            user_metrics = self.phoenix_monitor.evaluate_audio_emotion(user_audio, session_id, "user")
-            sophia_metrics = self.phoenix_monitor.evaluate_audio_emotion(sophia_audio, session_id, "sophia")
-            phoenix_metrics = [user_metrics, sophia_metrics]
+            for i, audio_data in enumerate(conversation.audio_data):
+                user_metrics = self.phoenix_monitor.evaluate_audio_emotion(
+                    audio_data["user_audio"], session_id, "user"
+                )
+                user_metrics.timestamp = audio_data["timestamp"]
+                
+                sophia_metrics = self.phoenix_monitor.evaluate_audio_emotion(
+                    audio_data["sophia_audio"], session_id, "sophia"
+                )
+                sophia_metrics.timestamp = audio_data["timestamp"]
+                
+                phoenix_metrics.extend([user_metrics, sophia_metrics])
+            
+            logger.info(f"Phoenix evaluation completed for {len(phoenix_metrics)} audio samples")
         except Exception as e:
             logger.error(f"Phoenix evaluation failed: {e}")
         
-        # Drift monitoring
+        # Drift monitoring using all Phoenix metrics
         drift_alert = False
         current_confidence = self.phoenix_monitor.baseline_confidence
         try:
-            recent_metrics = self.phoenix_monitor.get_recent_metrics()
-            recent_metrics.extend(phoenix_metrics)  # Add current metrics
-            drift_alert, current_confidence = self.phoenix_monitor.check_drift_alert(recent_metrics)
+            drift_alert, current_confidence = self.phoenix_monitor.check_drift_alert(phoenix_metrics)
         except Exception as e:
             logger.error(f"Drift monitoring failed: {e}")
+        
+        # Calculate conversation duration
+        conversation_duration = conversation.last_activity - conversation.created_at
         
         # Create evaluation report
         report = EvaluationReport(
@@ -302,7 +429,9 @@ class EvaluationManager:
             drift_alert=drift_alert,
             baseline_confidence=self.phoenix_monitor.baseline_confidence,
             current_confidence=current_confidence,
-            timestamp=time.time()
+            timestamp=current_time,
+            total_messages=len(conversation.messages),
+            conversation_duration=conversation_duration
         )
         
         # Log evaluation summary
@@ -312,16 +441,44 @@ class EvaluationManager:
     
     def _log_evaluation_summary(self, report: EvaluationReport):
         """Log comprehensive evaluation summary"""
+        
+        # Calculate emotion distribution
+        user_emotions = [m.emotion_label for m in report.phoenix_metrics if m.role == "user"]
+        sophia_emotions = [m.emotion_label for m in report.phoenix_metrics if m.role == "sophia"]
+        
         summary = {
             "session_id": report.session_id,
+            "total_messages": report.total_messages,
+            "conversation_duration_minutes": round(report.conversation_duration / 60, 2),
             "ragas_average": report.ragas_metrics.average_score if report.ragas_metrics else "N/A",
-            "user_emotion": report.phoenix_metrics[0].emotion_label if len(report.phoenix_metrics) > 0 else "N/A",
-            "sophia_emotion": report.phoenix_metrics[1].emotion_label if len(report.phoenix_metrics) > 1 else "N/A",
+            "user_emotions": list(set(user_emotions)) if user_emotions else ["N/A"],
+            "sophia_emotions": list(set(sophia_emotions)) if sophia_emotions else ["N/A"],
+            "total_phoenix_evaluations": len(report.phoenix_metrics),
             "drift_alert": report.drift_alert,
             "confidence_drop": f"{report.baseline_confidence:.2f} -> {report.current_confidence:.2f}"
         }
         
-        logger.info(f"Evaluation Summary: {json.dumps(summary, indent=2)}")
+        logger.info(f"Conversation Evaluation Summary: {json.dumps(summary, indent=2)}")
+    
+    def get_active_conversation_count(self) -> int:
+        """Get number of active conversations being tracked"""
+        return len(self.active_conversations)
+    
+    def get_conversation_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get status of a specific conversation"""
+        if session_id not in self.active_conversations:
+            return None
+        
+        conversation = self.active_conversations[session_id]
+        current_time = time.time()
+        
+        return {
+            "session_id": session_id,
+            "message_count": len(conversation.messages),
+            "duration_minutes": round((current_time - conversation.created_at) / 60, 2),
+            "last_activity_minutes_ago": round((current_time - conversation.last_activity) / 60, 2),
+            "will_timeout_in_minutes": round((self.conversation_timeout - (current_time - conversation.last_activity)) / 60, 2)
+        }
     
     def run_batch_evaluation(self, num_queries: int = 10) -> Dict[str, Any]:
         """Run batch evaluation on ground truth queries"""

@@ -3,7 +3,10 @@
     "allow": [
       "Bash(python test_sophia_langgraph.py:*)",
       "Bash(pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(npm run dev:*)",
+      "Bash(touch:*)"
     ],
     "deny": []
   }
