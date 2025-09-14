@@ -13,13 +13,8 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.deps import verify_api_key, limiter
-from app.services.mistral import (
-    transcribe_audio_with_voxtral,
-    generate_llm_reply,
-    stream_generate_llm_reply,
-    generate_reply_from_audio,
-    stream_generate_reply_from_audio,
-)
+from app.services.mistral import stream_generate_reply_from_audio, generate_llm_reply
+from app.services.langgraph_service import langgraph_service
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 from app.services.supabase import (
@@ -28,7 +23,6 @@ from app.services.supabase import (
     insert_emotion_score,
     insert_conversation_session,
 )
-from app.services.langgraph_service import langgraph_service
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -643,18 +637,18 @@ async def ws_voice(websocket: WebSocket):
                     logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)}")
 
                     # Use Voxtral audio streaming for fastest response (bypasses STT step)
-                    logger.info("WS: starting Voxtral audio streaming (direct audio->tokens)")
+                    # Stream tokens from LangChain agent using Voxtral streaming internally
                     reply_tokens = []
                     tokens_sent = 0
                     try:
-                        for tok in stream_generate_reply_from_audio(wav_utter):
+                        for tok in langgraph_service.stream_conversation_response(wav_utter):
                             if not tok:
                                 continue
                             reply_tokens.append(tok)
                             await _ws_send_json(websocket, {"type": "token", "text": tok})
                             tokens_sent += 1
                     except Exception as e:
-                        logger.warning(f"WS: Voxtral audio streaming failed: {e}")
+                        logger.warning(f"WS: LangChain agent streaming failed: {e}")
                     
                     # Fallback to text-based streaming if Voxtral audio streaming failed
                     if tokens_sent == 0:

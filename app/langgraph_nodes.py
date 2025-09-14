@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from langgraph.graph import StateGraph, START, END
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
 
-from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply
+from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply, stream_generate_reply_from_audio
 from app.services.emotion import analyze_emotion_audio
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url, get_supabase
@@ -470,3 +470,80 @@ class SophiaLangGraph:
         logger.info(f"LangGraph text processing completed for session {session_id}")
         
         return final_state
+    
+    def process_audio_to_context(self, audio_bytes: bytes, session_id: Optional[str] = None) -> GraphState:
+        """Process audio through initial nodes to get context for streaming"""
+        
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
+        # Initialize state
+        initial_state: GraphState = {
+            "session_id": session_id,
+            "audio_bytes": audio_bytes,
+            "transcript": "",
+            "user_emotion": EmotionData(label="neutral", confidence=0.0),
+            "intent": "",
+            "context_memory": {},
+            "llm_response": "",
+            "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "audio_url": "",
+            "tts_bytes": b"",
+            "evaluation_logs": [],
+            "fallback_used": {}
+        }
+        
+        # Process through initial nodes
+        audio_ingestor = AudioIngestor()
+        intent_analyzer = IntentAnalyzer()
+        
+        # Run audio processing and intent analysis
+        state = audio_ingestor(initial_state)
+        state = intent_analyzer(state)
+        
+        return state
+    
+    def stream_llm_response(self, state: GraphState):
+        """Stream LLM response using Voxtral streaming"""
+        
+        logger.info(f"Streaming LLM response for session {state['session_id']}")
+        
+        try:
+            # Build context like ResponseGenerator does
+            response_generator = ResponseGenerator()
+            context = response_generator._build_context(state)
+            
+            # Get RAG context for DeFi questions
+            rag_context = ""
+            if state["intent"] == "defi_question":
+                rag_context = rag_system.get_context_for_llm(state["transcript"])
+                logger.info(f"RAG context retrieved: {len(rag_context)} characters")
+            
+            # Build comprehensive prompt
+            prompt_parts = [f"The user seems {state['user_emotion'].label} (confidence: {state['user_emotion'].confidence:.2f})."]
+            
+            if context:
+                prompt_parts.append(f"Conversation context: {context}")
+            
+            if rag_context:
+                prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
+            
+            prompt_parts.append(f"User question: {state['transcript']}")
+            
+            full_prompt = " | ".join(prompt_parts)
+            
+            # Stream response using Voxtral - note: Voxtral streaming doesn't use custom prompts
+            # We'll need to use the transcript and generate with context instead
+            from app.services.mistral import stream_generate_llm_reply
+            
+            # Use the transcript with full context for streaming
+            for token in stream_generate_llm_reply(full_prompt):
+                yield token
+                
+        except Exception as e:
+            logger.error(f"Streaming LLM response failed: {e}")
+            # Fallback to rule-based response
+            if "defi" in state["transcript"].lower() or "crypto" in state["transcript"].lower():
+                yield "I can help you with DeFi questions. What would you like to know?"
+            else:
+                yield "I'm here to help. Could you please rephrase your question?"

@@ -138,12 +138,27 @@ class LangGraphService:
             logger.error(f"LangGraph text conversation processing failed: {e}")
             raise
 
-    def _run_eval_checks_background(self):
-        """Run evaluation checks in a background thread to avoid blocking user requests."""
+    def stream_conversation_response(self, audio_bytes: bytes, session_id: str = None):
+        """Stream conversation response using direct Voxtral streaming - simplified approach"""
+        
+        logger.info(f"Streaming conversation directly through Voxtral for session {session_id}")
+        
         try:
-            finished_reports = evaluation_manager.check_and_evaluate_finished_conversations()
-            if finished_reports:
-                logger.info(f"Completed evaluations for {len(finished_reports)} finished conversations")
+            # Direct Voxtral streaming without complex pipeline
+            from app.services.mistral import stream_generate_reply_from_audio
+            
+            for token in stream_generate_reply_from_audio(audio_bytes):
+                yield token
+                
+        except Exception as e:
+            logger.error(f"Direct Voxtral streaming failed: {e}")
+            # Fallback to rule-based response
+            yield "I'm having trouble processing your request. Could you please try again?"
+
+    def _run_eval_checks_background(self):
+        """Run evaluation checks in background thread"""
+        try:
+            evaluation_manager.check_and_run_evaluations()
         except Exception as e:
             logger.error(f"Background evaluation check failed: {e}")
 
