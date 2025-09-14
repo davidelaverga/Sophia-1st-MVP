@@ -207,51 +207,16 @@ def stream_generate_llm_reply(text: str):
     """
     # Handle empty input before attempting API
     if not text or not str(text).strip():
-        yield "I didn’t catch that. Could you rephrase your question about DeFi?"
+        yield "I didn't catch that. Could you rephrase your question about DeFi?"
         return
+    
     client = _client()
-    # Prefer Responses streaming when available; fallback to Chat streaming
+    
+    # Use Chat streaming with proper error handling
     try:
-        resp_iface = getattr(client, "responses", None)
-        if resp_iface is not None:
-            with resp_iface.stream(
-                model="mistral-small-latest",
-                input=[
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
-                    },
-                ],
-            ) as stream:
-                for event in stream:
-                    try:
-                        if hasattr(event, "delta") and isinstance(event.delta, str) and event.delta:
-                            yield event.delta
-                        elif hasattr(event, "data") and isinstance(event.data, dict):
-                            d = event.data
-                            if isinstance(d.get("output_text"), str) and d["output_text"]:
-                                yield d["output_text"]
-                    except Exception:
-                        continue
-                try:
-                    _ = stream.get_final_response()
-                except Exception:
-                    pass
-                return
-    except Exception as e:
-        try:
-            import logging
-            logging.getLogger("mistral").warning(f"Responses.stream failed: {e}")
-        except Exception:
-            pass
-
-    # Chat streaming fallback
-    try:
-        with client.chat.stream(
+        logger.info(f"Starting streaming LLM reply for text: {text[:50]}...")
+        
+        stream = client.chat.stream(
             model="mistral-small-latest",
             messages=[
                 {
@@ -260,36 +225,138 @@ def stream_generate_llm_reply(text: str):
                 },
                 {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
-        ) as stream:
-            for event in stream:
-                try:
-                    if hasattr(event, "delta") and getattr(event.delta, "content", None):
-                        yield event.delta.content
-                    elif hasattr(event, "data") and isinstance(event.data, dict):
-                        if event.data.get("type") in ("content.delta", "message.delta"):
-                            parts = event.data.get("delta") or {}
-                            if isinstance(parts, dict) and parts.get("content"):
-                                yield parts["content"]
-                except Exception:
-                    continue
+        )
+        
+        tokens_yielded = 0
+        for chunk in stream:
             try:
-                _ = stream.get_final_response()
-            except Exception:
-                pass
-            return
-    except Exception:
-        pass
+                # Handle different chunk formats from Mistral SDK
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, 'content') and delta.content:
+                        yield delta.content
+                        tokens_yielded += 1
+                elif hasattr(chunk, 'delta') and chunk.delta:
+                    if hasattr(chunk.delta, 'content') and chunk.delta.content:
+                        yield chunk.delta.content
+                        tokens_yielded += 1
+                elif hasattr(chunk, 'content') and chunk.content:
+                    yield chunk.content
+                    tokens_yielded += 1
+            except Exception as e:
+                logger.warning(f"Error processing stream chunk: {e}")
+                continue
+                
+        logger.info(f"Streaming completed, yielded {tokens_yielded} tokens")
+        
+        if tokens_yielded == 0:
+            logger.warning("No tokens were yielded from stream, falling back to rule-based response")
+            # Fallback to rule-based response if streaming failed
+            lower = text.lower()
+            if "yield" in lower:
+                yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
+            elif "staking" in lower:
+                yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
+            elif "defi" in lower:
+                yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
+            else:
+                yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+        
+    except Exception as e:
+        logger.error(f"Streaming LLM reply failed: {e}")
+        # Final rule fallback
+        lower = text.lower()
+        if "yield" in lower:
+            yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
+        elif "staking" in lower:
+            yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
+        elif "defi" in lower:
+            yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
+        else:
+            yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
 
-    # Final rule fallback
-    lower = text.lower()
-    if "yield" in lower:
-        yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
-        return
-    if "staking" in lower:
-        yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-        return
-    if "defi" in lower:
-        yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-        return
-    yield "Here’s a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
-    return
+
+def stream_generate_reply_from_audio(wav_bytes: bytes):
+    """Stream tokens directly from Voxtral using audio input + chat completion.
+    
+    This bypasses separate STT and uses Voxtral's native audio understanding
+    with streaming for the fastest possible response times.
+    """
+    try:
+        client = _client()
+        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        
+        logger.info("Starting Voxtral audio streaming...")
+        
+        stream = client.chat.stream(
+            model="voxtral-mini-latest",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": audio_b64,
+                        },
+                        {
+                            "type": "text",
+                            "text": "Respond briefly as Sophia, a safe DeFi mentor. Keep under 50 words."
+                        }
+                    ]
+                }
+            ],
+        )
+        
+        tokens_yielded = 0
+        for chunk in stream:
+            try:
+                # Handle CompletionEvent wrapper from newer Mistral SDK
+                if hasattr(chunk, 'data'):
+                    chunk_data = chunk.data
+                else:
+                    chunk_data = chunk
+                
+                # Handle different chunk formats from Mistral SDK
+                if hasattr(chunk_data, 'choices') and chunk_data.choices:
+                    delta = chunk_data.choices[0].delta
+                    if hasattr(delta, 'content') and delta.content:
+                        yield delta.content
+                        tokens_yielded += 1
+                elif hasattr(chunk_data, 'delta') and chunk_data.delta:
+                    if hasattr(chunk_data.delta, 'content') and chunk_data.delta.content:
+                        yield chunk_data.delta.content
+                        tokens_yielded += 1
+                elif hasattr(chunk_data, 'content') and chunk_data.content:
+                    yield chunk_data.content
+                    tokens_yielded += 1
+            except Exception as e:
+                logger.warning(f"Error processing Voxtral stream chunk: {e}")
+                continue
+                
+        logger.info(f"Voxtral streaming completed, yielded {tokens_yielded} tokens")
+        
+        if tokens_yielded == 0:
+            logger.warning("No tokens from Voxtral stream, falling back to STT + text streaming")
+            # Fallback to traditional STT + text streaming
+            try:
+                text = transcribe_audio_with_voxtral(wav_bytes)
+                if text:
+                    for token in stream_generate_llm_reply(text):
+                        yield token
+                else:
+                    yield "I couldn't understand the audio. Could you try speaking more clearly?"
+            except Exception:
+                yield "I'm having trouble processing audio right now. Please try again."
+        
+    except Exception as e:
+        logger.error(f"Voxtral audio streaming failed: {e}")
+        # Fallback to traditional STT + text streaming
+        try:
+            text = transcribe_audio_with_voxtral(wav_bytes)
+            if text:
+                for token in stream_generate_llm_reply(text):
+                    yield token
+            else:
+                yield "I couldn't understand the audio. Could you try speaking more clearly?"
+        except Exception:
+            yield "I'm having trouble processing audio right now. Please try again."

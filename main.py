@@ -18,6 +18,7 @@ from app.services.mistral import (
     generate_llm_reply,
     stream_generate_llm_reply,
     generate_reply_from_audio,
+    stream_generate_reply_from_audio,
 )
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
@@ -620,21 +621,11 @@ async def ws_voice(websocket: WebSocket):
                     continue
                 pcm_buffer.extend(chunk)
 
-                # Emit partial transcript about every ~1s (and if we have enough audio)
-                now = time.time()
-                if now - last_partial_emit >= 1.0 and len(pcm_buffer) >= BYTES_PER_SEC // 2:
-                    tail = pcm_buffer[-(2 * BYTES_PER_SEC):]
-                    wav = _wav_header_pcm16(len(tail) // 2) + tail
-                    try:
-                        text = transcribe_audio_with_voxtral(wav)
-                        if text:
-                            await _ws_send_json(websocket, {"type": "partial_transcript", "text": text})
-                            partial_transcript = text
-                    except Exception:
-                        pass
-                    last_partial_emit = now
+                # Skip partial transcripts for faster experience - go directly to Voxtral
+                # User doesn't need to see transcription, just fast response
 
                 # Simple amplitude-based VAD
+                now = time.time()
                 recent = pcm_buffer[-SILENCE_BYTES:] if len(pcm_buffer) > SILENCE_BYTES else pcm_buffer
                 amp = _avg_abs_pcm16(recent)
                 if amp > SILENCE_THRESHOLD:
@@ -644,33 +635,44 @@ async def ws_voice(websocket: WebSocket):
                         logger.info(f"WS: speech started at {utter_start_pos} bytes (amp={amp:.1f})")
                     last_voice_activity = now
 
-                # Endpoint: long enough silence after speech and we have some text
-                if in_speech and partial_transcript and (now - last_voice_activity) * 1000.0 >= SILENCE_MS:
-                    final_text = partial_transcript.strip()
-                    await _ws_send_json(websocket, {"type": "final_transcript", "text": final_text})
-                    # Extract utterance audio segment for logs only
+                # Endpoint: long enough silence after speech - no transcription needed
+                if in_speech and (now - last_voice_activity) * 1000.0 >= SILENCE_MS:
+                    # Extract utterance audio segment for direct Voxtral processing
                     utter_bytes = bytes(pcm_buffer[utter_start_pos:])
                     wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
-                    logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)} final_text_len={len(final_text)}")
+                    logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)}")
 
-                    # TRUE streaming of tokens from Mistral (Responses or Chat fallback)
-                    logger.info("WS: starting token stream from LLM")
+                    # Use Voxtral audio streaming for fastest response (bypasses STT step)
+                    logger.info("WS: starting Voxtral audio streaming (direct audio->tokens)")
                     reply_tokens = []
                     tokens_sent = 0
                     try:
-                        for tok in stream_generate_llm_reply(final_text):
+                        for tok in stream_generate_reply_from_audio(wav_utter):
                             if not tok:
                                 continue
                             reply_tokens.append(tok)
                             await _ws_send_json(websocket, {"type": "token", "text": tok})
                             tokens_sent += 1
                     except Exception as e:
-                        logger.warning(f"WS: stream_generate_llm_reply failed: {e}")
+                        logger.warning(f"WS: Voxtral audio streaming failed: {e}")
+                    
+                    # Fallback to text-based streaming if Voxtral audio streaming failed
                     if tokens_sent == 0:
-                        # Fallback: generate full reply and emit synthetic tokens so UI still streams
+                        logger.warning("WS: No tokens from Voxtral stream, falling back to rule-based response")
+                        # Since we don't have transcription, use a generic DeFi response
+                        fallback_response = "I'm here to help with DeFi questions. Could you please repeat your question?"
+                        for i, char in enumerate(fallback_response):
+                            if i % 8 == 0:  # Send chunks of ~8 chars
+                                chunk = fallback_response[i:i+8]
+                                reply_tokens.append(chunk)
+                                await _ws_send_json(websocket, {"type": "token", "text": chunk})
+                                tokens_sent += 1
+                    
+                    # Final fallback: synthetic chunking
+                    if tokens_sent == 0:
                         try:
-                            logger.info("WS: no tokens streamed; falling back to generate_llm_reply + synthetic chunks")
-                            full = generate_llm_reply(final_text)
+                            logger.info("WS: no tokens streamed; using minimal fallback")
+                            full = "Okay."
                         except Exception as e:
                             logger.warning(f"WS: generate_llm_reply fallback failed: {e}")
                             full = "Okay."
@@ -689,12 +691,13 @@ async def ws_voice(websocket: WebSocket):
                     import re
                     sentences = [s.strip() for s in re.split(r"(?<=[\.!?])\s+", reply_full) if s.strip()]
                     audio_url_last = None
-                    for sent in sentences:
+                    for i, sent in enumerate(sentences):
                         try:
-                            logger.info(f"WS: TTS streaming for sentence len={len(sent)}")
+                            logger.info(f"WS: TTS streaming for sentence {i+1}/{len(sentences)}, len={len(sent)}")
                             import base64 as _b64
                             streamed_any = False
                             try:
+                                # Stream each sentence as individual audio chunks
                                 for pcm_chunk in synthesize_inworld_stream(sent, sample_rate_hz=48000) or []:
                                     streamed_any = True
                                     b64 = _b64.b64encode(pcm_chunk).decode('ascii')
@@ -702,27 +705,32 @@ async def ws_voice(websocket: WebSocket):
                                     await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": b64, "eos": False})
                             except Exception:
                                 logger.exception("WS: inworld streaming failed; falling back to non-streaming TTS for this sentence")
+                            
                             if not streamed_any:
-                                # Fallback: synthesize whole sentence and stream bytes
-                                audio_bytes = synthesize_inworld(sent)
-                                logger.info(f"WS: fallback TTS bytes={len(audio_bytes)} (mock={str(audio_bytes).startswith('b\'ID3mock')})")
-                                CHUNK = 8192
-                                for off in range(0, len(audio_bytes), CHUNK):
-                                    piece = audio_bytes[off:off+CHUNK]
-                                    b64 = _b64.b64encode(piece).decode('ascii')
-                                    await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/mpeg", "b64": b64, "eos": False})
-                                # Also upload the full sentence MP3 to storage (optional/back-compat)
+                                # Fallback: synthesize whole sentence as complete audio
                                 try:
-                                    file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                    audio_url_chunk = upload_audio_and_get_url(audio_bytes, file_name)
-                                    audio_url_last = audio_url_chunk
-                                    logger.info(f"WS: uploaded audio chunk -> {audio_url_chunk}")
-                                    await _ws_send_json(websocket, {"type": "audio_url_chunk", "audio_url": audio_url_chunk})
-                                except Exception:
-                                    logger.warning("WS: upload of TTS sentence failed; continuing with streamed chunks only")
+                                    audio_bytes = synthesize_inworld(sent)
+                                    logger.info(f"WS: fallback TTS bytes={len(audio_bytes)} (mock={str(audio_bytes).startswith('b\'ID3mock')})")
+                                    
+                                    # Send complete sentence audio as single chunk for immediate playback
+                                    b64 = _b64.b64encode(audio_bytes).decode('ascii')
+                                    await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/mpeg", "b64": b64, "eos": False})
+                                    
+                                    # Also upload the full sentence MP3 to storage (optional/back-compat)
+                                    try:
+                                        file_name = f"sophia_{int(time.time()*1000)}.mp3"
+                                        audio_url_chunk = upload_audio_and_get_url(audio_bytes, file_name)
+                                        audio_url_last = audio_url_chunk
+                                        logger.info(f"WS: uploaded audio chunk -> {audio_url_chunk}")
+                                        await _ws_send_json(websocket, {"type": "audio_url_chunk", "audio_url": audio_url_chunk})
+                                    except Exception:
+                                        logger.warning("WS: upload of TTS sentence failed; continuing with streamed chunks only")
+                                except Exception as e:
+                                    logger.error(f"WS: fallback TTS synthesis failed for sentence: {e}")
                         except Exception:
                             logger.exception("WS: TTS or upload chunk failed")
                             continue
+                    
                     # Signal end-of-stream for this reply's audio
                     await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": "", "eos": True})
                     # Also send final audio_url for compatibility

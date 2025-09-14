@@ -64,11 +64,10 @@ def synthesize_inworld(text: str) -> bytes:
 
 
 def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
-    """Yield LINEAR16 PCM bytes from Inworld streaming TTS (:stream).
+    """Yield accumulated LINEAR16 PCM bytes from Inworld streaming TTS.
 
-    We keep the WAV header on the first chunk to make the concatenated Blob playable in browsers
-    when the frontend assembles all chunks. Subsequent chunks are raw PCM16 data.
-    On error, this generator yields nothing (caller should fall back to synthesize_inworld).
+    Following Inworld docs pattern: accumulate audio data before yielding larger chunks
+    for smoother playback. Yields complete audio segments instead of tiny fragments.
     """
     settings = get_settings()
     if not settings.INWORLD_API_KEY:
@@ -96,7 +95,12 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
         logger.info("TTS stream: POST :stream")
         r = requests.post(url, json=payload, headers=headers, stream=True, timeout=60)
         r.raise_for_status()
-        first = True
+        
+        # Accumulate audio data like in Inworld docs
+        all_audio_data = []
+        wav_header = None
+        chunk_count = 0
+        
         for line in r.iter_lines():
             if not line:
                 continue
@@ -105,17 +109,48 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
                 audio_b64 = chunk.get("result", {}).get("audioContent")
                 if not audio_b64:
                     continue
+                    
                 bs = base64.b64decode(audio_b64)
-                if first:
-                    # Keep WAV header (first 44 bytes) so browser playback works when concatenated
-                    first = False
-                    yield bs
+                chunk_count += 1
+                
+                if wav_header is None and len(bs) > 44:
+                    # Extract WAV header from first chunk
+                    wav_header = bs[:44]
+                    all_audio_data.extend(bs[44:])
                 else:
-                    # Subsequent chunks contain a WAV header too; strip it if present
-                    yield bs[44:] if len(bs) > 44 else bs
+                    # Strip WAV header from subsequent chunks
+                    audio_data = bs[44:] if len(bs) > 44 else bs
+                    all_audio_data.extend(audio_data)
+                
+                # Yield accumulated chunks every ~0.5 seconds worth of audio
+                # At 48kHz 16-bit mono: ~48000 samples/sec * 2 bytes = 96000 bytes/sec
+                # So ~48000 bytes = ~0.5 seconds
+                if len(all_audio_data) >= 48000:
+                    if wav_header:
+                        # Create complete WAV with header + accumulated data
+                        complete_audio = bytearray(wav_header)
+                        complete_audio.extend(all_audio_data)
+                        yield bytes(complete_audio)
+                        wav_header = None  # Only include header in first yield
+                    else:
+                        yield bytes(all_audio_data)
+                    all_audio_data = []
+                    
             except Exception as e:
                 logger.warning(f"TTS stream: failed parsing chunk: {e}")
                 continue
+        
+        # Yield any remaining audio data
+        if all_audio_data:
+            if wav_header:
+                complete_audio = bytearray(wav_header)
+                complete_audio.extend(all_audio_data)
+                yield bytes(complete_audio)
+            else:
+                yield bytes(all_audio_data)
+                
+        logger.info(f"TTS stream: completed, processed {chunk_count} chunks")
+        
     except Exception as e:
         logger.exception(f"TTS stream: request failed: {e}")
         return

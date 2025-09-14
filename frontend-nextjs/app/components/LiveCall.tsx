@@ -59,22 +59,35 @@ export default function LiveCall() {
   const playingRef = useRef(false)
   const audioChunkBuffersRef = useRef<Uint8Array[]>([])
 
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  
   const playNextInQueue = () => {
     if (playingRef.current) return
     const url = ttsQueueRef.current.shift()
     if (!url) return
+    
     playingRef.current = true
     const audio = new Audio(url)
+    currentAudioRef.current = audio
+    
     audio.onended = () => {
       playingRef.current = false
+      currentAudioRef.current = null
+      // Continue to next chunk in queue
       playNextInQueue()
     }
     audio.onerror = () => {
+      console.warn("Audio playback error, continuing to next chunk")
       playingRef.current = false
+      currentAudioRef.current = null
+      // Continue to next chunk even on error
       playNextInQueue()
     }
-    audio.play().catch(() => {
+    audio.play().catch((err) => {
+      console.warn("Audio play failed:", err)
       playingRef.current = false
+      currentAudioRef.current = null
+      // Continue to next chunk even on play failure
       playNextInQueue()
     })
   }
@@ -98,16 +111,12 @@ export default function LiveCall() {
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data)
-        if (data.type === "partial_transcript") {
-          setPartial(data.text || "")
-        } else if (data.type === "final_transcript") {
-          setPartial(data.text || "")
-          setTokens("")
-          setReply("")
-        } else if (data.type === "token") {
+        if (data.type === "token") {
           setTokens((prev) => prev + (data.text || ""))
         } else if (data.type === "reply_done") {
           setReply(data.text || "")
+          // Reset tokens for next response
+          setTokens("")
         } else if (data.type === "audio_url_chunk") {
           const u = data.audio_url as string
           if (u && /^https?:\/\//.test(u)) {
@@ -115,28 +124,30 @@ export default function LiveCall() {
             playNextInQueue()
           }
         } else if (data.type === "audio_chunk") {
-          // Streaming base64 audio chunks. We accumulate per reply until eos, then play.
+          // Streaming base64 audio chunks. Queue them for sequential playback.
           try {
             const eos = !!data.eos
             const b64 = data.b64 as string
+            
             if (b64 && !eos) {
+              // Queue each chunk for sequential playback
               const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-              audioChunkBuffersRef.current.push(bin)
-            }
-            if (eos) {
-              const total = audioChunkBuffersRef.current.reduce((acc, u) => acc + u.byteLength, 0)
-              if (total > 0) {
-                const merged = new Uint8Array(total)
-                let off = 0
-                for (const u of audioChunkBuffersRef.current) { merged.set(u, off); off += u.byteLength }
-                audioChunkBuffersRef.current = []
-                const blob = new Blob([merged], { type: data.mime || 'audio/mpeg' })
-                const url = URL.createObjectURL(blob)
-                ttsQueueRef.current.push(url)
+              const blob = new Blob([bin], { type: data.mime || 'audio/wav' })
+              const url = URL.createObjectURL(blob)
+              ttsQueueRef.current.push(url)
+              
+              // Only start playback if nothing is currently playing
+              if (!playingRef.current) {
                 playNextInQueue()
-                // Revoke URL after some time
-                setTimeout(() => URL.revokeObjectURL(url), 30000)
               }
+              
+              // Revoke URL after some time
+              setTimeout(() => URL.revokeObjectURL(url), 30000)
+            }
+            
+            if (eos) {
+              // End of stream - clear any remaining buffers
+              audioChunkBuffersRef.current = []
             }
           } catch {}
         } else if (data.type === "audio_url") {
@@ -204,6 +215,19 @@ export default function LiveCall() {
     setListening(false)
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null
+    
+    // Stop any playing audio and clear queue
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current.currentTime = 0
+      currentAudioRef.current = null
+    }
+    playingRef.current = false
+    ttsQueueRef.current = []
+    
+    // Reset UI state
+    setTokens("")
+    setReply("")
   }
 
   useEffect(() => {
@@ -217,8 +241,7 @@ export default function LiveCall() {
         <button onClick={endCall} disabled={!connected} className="px-4 py-2 rounded-xl bg-red-600 text-white disabled:bg-gray-600">End</button>
         <span className="text-sm text-gray-300">{connected ? (listening ? "Live (mic on)" : "Connected") : "Disconnected"}</span>
       </div>
-      <div className="text-sm text-gray-300"><span className="font-semibold text-gray-100">You (partial):</span> {partial || ""}</div>
-      <div className="text-sm text-gray-300"><span className="font-semibold text-gray-100">Sophia (stream):</span> {tokens}</div>
+      <div className="text-sm text-gray-300"><span className="font-semibold text-gray-100">Sophia:</span> {tokens}</div>
       {reply && (
         <div className="text-sm text-gray-100 font-medium">Final reply: {reply}</div>
       )}

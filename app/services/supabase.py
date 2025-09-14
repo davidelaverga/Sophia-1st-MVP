@@ -124,6 +124,23 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         import logging
         logging.warning("No valid user_id available for conversation_session")
         # We'll continue anyway and let the database handle any constraints
+    
+    # Ensure all SQL parameters expected by insert_conversation_session_sql are present
+    # If missing, provide sensible defaults.
+    # Required by SQL helper: id, user_id, transcript, reply,
+    # user_emotion_label, user_emotion_confidence, sophia_emotion_label,
+    # sophia_emotion_confidence, audio_url
+    if "id" not in data or not data.get("id"):
+        # Generate a session id if not provided
+        data["id"] = str(uuid.uuid4())
+    # Default optional fields to None if absent
+    data.setdefault("transcript", None)
+    data.setdefault("reply", None)
+    data.setdefault("user_emotion_label", None)
+    data.setdefault("user_emotion_confidence", None)
+    data.setdefault("sophia_emotion_label", None)
+    data.setdefault("sophia_emotion_confidence", None)
+    data.setdefault("audio_url", None)
             
     if SUPABASE_DB_DSN and insert_conversation_session_sql:
         try:
