@@ -1,5 +1,7 @@
 'use client'
 
+import Image from "next/image";
+import LiveCall from "./components/LiveCall";
 import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { User, LogOut, Mic } from 'lucide-react'
@@ -252,6 +254,14 @@ export default function Home() {
                 </div>
               </div>
               
+              {/* Live, phone-call style interface */}
+              <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                <h3 className="text-xl font-bold text-white mb-4">Live Voice Call</h3>
+                <p className="text-gray-300 mb-4">Talk to Sophia in real-time. Click Start Call and begin speaking. You’ll see partial transcripts and hear responses as they stream.</p>
+                <LiveCall />
+              </div>
+
+              {/* Text chat remains available below */}
               <ChatInterface 
                 messages={messages}
                 setMessages={setMessages}
@@ -259,10 +269,12 @@ export default function Home() {
                 setIsLoading={setIsLoading}
               />
 
+              {/* Legacy upload-based voice recorder (hidden by default)
               <VoiceRecorder 
                 onMessage={(message) => setMessages(prev => [...prev, message])}
                 setIsLoading={setIsLoading}
               />
+              */}
             </div>
           </div>
         ) : (

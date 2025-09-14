@@ -3,6 +3,8 @@ import io
 from typing import List
 from mistralai import Mistral
 from app.config import get_settings
+import logging
+logger = logging.getLogger("sophia-backend")
 
 
 def _client() -> Mistral:
@@ -88,30 +90,97 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
         return ""
 
 
+def generate_reply_from_audio(wav_bytes: bytes, hint_text: str | None = None) -> str:
+    """Use Voxtral chat with audio input to directly get a reply without separate STT.
+
+    If Voxtral chat fails, fall back to transcribe + text generation.
+    """
+    try:
+        client = _client()
+        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_audio", "input_audio": audio_b64},
+                ],
+            }
+        ]
+        # Include a short, safe hint to steer responses
+        if hint_text and hint_text.strip():
+            messages[0]["content"].append({"type": "text", "text": hint_text.strip()})
+        else:
+            messages[0]["content"].append({"type": "text", "text": "Respond briefly as a safe DeFi mentor."})
+
+        resp = client.chat.complete(
+            model="voxtral-mini-latest",
+            messages=messages,
+        )
+        content = getattr(resp.choices[0].message, "content", resp.choices[0].message)
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "text":
+                    text_parts.append(c.get("text", ""))
+            out = " ".join([t for t in text_parts if t]).strip()
+            if out:
+                return out
+        return str(content).strip()
+    except Exception as e:
+        logger.warning(f"Voxtral chat with audio failed; falling back to STT+LLM: {e}")
+        # Fallback: STT then text generation
+        try:
+            text = transcribe_audio_with_voxtral(wav_bytes)
+            if text:
+                return generate_llm_reply(text)
+        except Exception:
+            pass
+        return "I couldn’t fully parse that audio. Could you repeat or speak a bit slower?"
+
+
 def generate_llm_reply(text: str) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
         return "I didn’t catch that. Could you rephrase your question about DeFi?"
     try:
         client = _client()
-        # Use Responses API only
-        r = client.responses.create(
+        # Prefer Responses API when available; fallback to Chat API for older SDKs
+        try:
+            resp_iface = getattr(client, "responses", None)
+            if resp_iface is not None:
+                r = resp_iface.create(
+                    model="mistral-small-latest",
+                    input=[
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
+                        },
+                    ],
+                )
+                out = getattr(r, "output_text", None)
+                if isinstance(out, str) and out.strip():
+                    return out.strip()
+                return str(r)
+        except Exception:
+            pass
+
+        # Chat API fallback
+        r2 = client.chat.complete(
             model="mistral-small-latest",
-            input=[
+            messages=[
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
+                    "content": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
                 },
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
-                },
+                {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
         )
-        out = getattr(r, "output_text", None)
-        if isinstance(out, str) and out.strip():
-            return out.strip()
-        return str(r)
+        content = getattr(r2.choices[0].message, "content", r2.choices[0].message)
+        return str(content).strip()
     except Exception as e:
         # Log minimal detail for debugging
         try:
@@ -141,32 +210,66 @@ def stream_generate_llm_reply(text: str):
         yield "I didn’t catch that. Could you rephrase your question about DeFi?"
         return
     client = _client()
-    # Use Responses streaming only; if it fails, fall back to rule-based tokens (do not call Chat API)
+    # Prefer Responses streaming when available; fallback to Chat streaming
     try:
-        from contextlib import closing
-        with client.responses.stream(
+        resp_iface = getattr(client, "responses", None)
+        if resp_iface is not None:
+            with resp_iface.stream(
+                model="mistral-small-latest",
+                input=[
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
+                    },
+                ],
+            ) as stream:
+                for event in stream:
+                    try:
+                        if hasattr(event, "delta") and isinstance(event.delta, str) and event.delta:
+                            yield event.delta
+                        elif hasattr(event, "data") and isinstance(event.data, dict):
+                            d = event.data
+                            if isinstance(d.get("output_text"), str) and d["output_text"]:
+                                yield d["output_text"]
+                    except Exception:
+                        continue
+                try:
+                    _ = stream.get_final_response()
+                except Exception:
+                    pass
+                return
+    except Exception as e:
+        try:
+            import logging
+            logging.getLogger("mistral").warning(f"Responses.stream failed: {e}")
+        except Exception:
+            pass
+
+    # Chat streaming fallback
+    try:
+        with client.chat.stream(
             model="mistral-small-latest",
-            input=[
+            messages=[
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
+                    "content": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
                 },
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
-                },
+                {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
         ) as stream:
             for event in stream:
                 try:
-                    # Look for common Responses streaming deltas
-                    if hasattr(event, "delta") and isinstance(event.delta, str) and event.delta:
-                        yield event.delta
+                    if hasattr(event, "delta") and getattr(event.delta, "content", None):
+                        yield event.delta.content
                     elif hasattr(event, "data") and isinstance(event.data, dict):
-                        # Some SDK versions put textual delta under data{"output_text"}
-                        d = event.data
-                        if isinstance(d.get("output_text"), str) and d["output_text"]:
-                            yield d["output_text"]
+                        if event.data.get("type") in ("content.delta", "message.delta"):
+                            parts = event.data.get("delta") or {}
+                            if isinstance(parts, dict) and parts.get("content"):
+                                yield parts["content"]
                 except Exception:
                     continue
             try:
@@ -174,12 +277,8 @@ def stream_generate_llm_reply(text: str):
             except Exception:
                 pass
             return
-    except Exception as e:
-        try:
-            import logging
-            logging.getLogger("mistral").warning(f"Responses.stream failed: {e}")
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     # Final rule fallback
     lower = text.lower()

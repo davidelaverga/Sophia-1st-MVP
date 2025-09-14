@@ -51,23 +51,30 @@ def _classify_with_phoenix(text: str) -> Emotion | None:
 
 def _classify_with_llm(text: str) -> Emotion:
     try:
-        from mistralai.client import MistralClient
-        from mistralai.models.chat_completion import ChatMessage
+        from mistralai import Mistral
+        import json
         settings = get_settings()
         if not settings.MISTRAL_API_KEY:
             return Emotion(label="neutral", confidence=0.5)
-        client = MistralClient(api_key=settings.MISTRAL_API_KEY)
-        prompt = (
-            "Classify sentiment of the following text as one of: positive, neutral, negative. "
-            "Respond with JSON: {\"label\": \"...\", \"confidence\": 0.0-1.0}. Text: "
-            f"{text}"
-        )
-        resp = client.chat(
+        client = Mistral(api_key=settings.MISTRAL_API_KEY)
+        r = client.responses.create(
             model="mistral-small-latest",
-            messages=[ChatMessage(role="user", content=prompt)],
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": (
+                            "Classify sentiment of the following text as one of: positive, neutral, negative. "
+                            "Respond with JSON: {\"label\": \"...\", \"confidence\": 0.0-1.0}. Text: "
+                            f"{text}"
+                        )}
+                    ],
+                }
+            ],
         )
-        import json
-        content = str(resp.choices[0].message.content)
+        content = getattr(r, "output_text", None)
+        if not isinstance(content, str) or not content.strip():
+            return Emotion(label="neutral", confidence=0.5)
         try:
             obj = json.loads(content)
             label = obj.get("label", "neutral")
