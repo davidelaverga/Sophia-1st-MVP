@@ -1,0 +1,114 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Sophia - Emotion Confidence Trends",
+    "tags": ["sophia", "emotion", "confidence", "analytics"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "User Emotion Confidence (Daily Average)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "avg_over_time(phoenix_user_emotion_confidence[1d])",
+            "legendFormat": "User Emotion Confidence"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.5},
+                {"color": "green", "value": 0.8}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Sophia Emotion Confidence (Daily Average)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "avg_over_time(phoenix_sophia_emotion_confidence[1d])",
+            "legendFormat": "Sophia Emotion Confidence"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.5},
+                {"color": "green", "value": 0.8}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Emotion Distribution - User",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (phoenix_user_emotion_label) (increase(emotion_analysis_user_total[24h]))",
+            "legendFormat": "{{phoenix_user_emotion_label}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Emotion Distribution - Sophia",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (phoenix_sophia_emotion_label) (increase(emotion_analysis_sophia_total[24h]))",
+            "legendFormat": "{{phoenix_sophia_emotion_label}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Emotion Confidence Over Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "phoenix_user_emotion_confidence",
+            "legendFormat": "User Confidence"
+          },
+          {
+            "expr": "phoenix_sophia_emotion_confidence",
+            "legendFormat": "Sophia Confidence"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "refresh": "5m"
+  }
+}

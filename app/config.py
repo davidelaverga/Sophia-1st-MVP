@@ -35,6 +35,10 @@ class Settings:
     # Optional: direct Postgres via Transaction Pooler
     SUPABASE_DB_DSN: str | None = os.getenv("SUPABASE_DB_DSN")
 
+    # OpenTelemetry (OTLP HTTP exporter)
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    OTEL_EXPORTER_OTLP_HEADERS: str | None = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -1,0 +1,111 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Sophia - Latency Overview",
+    "tags": ["sophia", "latency", "performance"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Roundtrip Time",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(total_roundtrip_time_ms_bucket[5m])) by (le))",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(total_roundtrip_time_ms_bucket[5m])) by (le))",
+            "legendFormat": "50th percentile"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 2000},
+                {"color": "red", "value": 5000}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "STT Processing Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(stt_transcription_duration_seconds_sum[5m]) / rate(stt_transcription_duration_seconds_count[5m])",
+            "legendFormat": "Average STT Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "LLM Generation Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(llm_generation_duration_seconds_sum[5m]) / rate(llm_generation_duration_seconds_count[5m])",
+            "legendFormat": "Average LLM Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "TTS Synthesis Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(tts_synthesis_upload_duration_seconds_sum[5m]) / rate(tts_synthesis_upload_duration_seconds_count[5m])",
+            "legendFormat": "Average TTS Time"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Request Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total[5m])) by (method, endpoint)",
+            "legendFormat": "{{method}} {{endpoint}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

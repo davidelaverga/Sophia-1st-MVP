@@ -1,0 +1,141 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Sophia - Errors & Fallbacks",
+    "tags": ["sophia", "errors", "fallbacks", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "HTTP Error Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+            "legendFormat": "5xx Error Rate"
+          },
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"4..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+            "legendFormat": "4xx Error Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Fallback Usage",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "increase(mistral_fallback_to_gemini_total[5m])",
+            "legendFormat": "Mistral → Gemini Fallback"
+          },
+          {
+            "expr": "increase(voxtral_fallback_to_whisper_total[5m])",
+            "legendFormat": "Voxtral → Whisper Fallback"
+          },
+          {
+            "expr": "increase(inworld_fallback_to_openai_total[5m])",
+            "legendFormat": "Inworld → OpenAI Fallback"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "API Endpoint Errors",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (endpoint)",
+            "legendFormat": "{{endpoint}} - 5xx"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Service Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"sophia-backend\"}",
+            "legendFormat": "Backend Status"
+          },
+          {
+            "expr": "mistral_api_health",
+            "legendFormat": "Mistral API"
+          },
+          {
+            "expr": "inworld_api_health",
+            "legendFormat": "Inworld API"
+          },
+          {
+            "expr": "supabase_health",
+            "legendFormat": "Supabase"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"options": {"0": {"text": "Down", "color": "red"}}, "type": "value"},
+              {"options": {"1": {"text": "Up", "color": "green"}}, "type": "value"}
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Error Logs",
+        "type": "logs",
+        "targets": [
+          {
+            "expr": "{job=\"sophia-backend\"} |= \"ERROR\" or |= \"CRITICAL\"",
+            "legendFormat": ""
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Response Time by Endpoint",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint)",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

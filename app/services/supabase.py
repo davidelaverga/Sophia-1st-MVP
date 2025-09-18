@@ -2,14 +2,14 @@ import os
 import time
 import uuid
 from typing import Any, Dict
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from supabase import create_client, Client
 
 # Global client instance
-_supabase: Client = None
+_supabase: Client | None = None
 
-# Load environment variables from .env
-load_dotenv(r"C:\Users\ajdee\Sophia-1st-MVP (2)\Sophia-1st-MVP\.env")
+# Load environment variables from .env (portable)
+load_dotenv(find_dotenv(), override=False)
 
 # Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -19,7 +19,7 @@ SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
 SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Supabase credentials not configured in .env")
+    raise RuntimeError("Supabase credentials not configured in environment")
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -41,7 +41,7 @@ def get_supabase() -> Client:
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _supabase
     
-def upload_audio_and_get_url(file_bytes: bytes, file_name: str = None) -> str:
+def upload_audio_and_get_url(file_bytes: bytes, file_name: str | None = None) -> str:
     """Upload audio file to Supabase storage and return public URL.
     
     Note: This function doesn't require a user_id as it uses storage, not the database.
@@ -124,6 +124,23 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         import logging
         logging.warning("No valid user_id available for conversation_session")
         # We'll continue anyway and let the database handle any constraints
+    
+    # Ensure all SQL parameters expected by insert_conversation_session_sql are present
+    # If missing, provide sensible defaults.
+    # Required by SQL helper: id, user_id, transcript, reply,
+    # user_emotion_label, user_emotion_confidence, sophia_emotion_label,
+    # sophia_emotion_confidence, audio_url
+    if "id" not in data or not data.get("id"):
+        # Generate a session id if not provided
+        data["id"] = str(uuid.uuid4())
+    # Default optional fields to None if absent
+    data.setdefault("transcript", None)
+    data.setdefault("reply", None)
+    data.setdefault("user_emotion_label", None)
+    data.setdefault("user_emotion_confidence", None)
+    data.setdefault("sophia_emotion_label", None)
+    data.setdefault("sophia_emotion_confidence", None)
+    data.setdefault("audio_url", None)
             
     if SUPABASE_DB_DSN and insert_conversation_session_sql:
         try:
@@ -141,3 +158,35 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         import logging
         logging.warning(f"conversation_sessions insert failed: {e}")
         # Don't raise the exception, just log it and continue
+
+
+def has_user_consent(discord_id: str) -> bool:
+    """Check if a given Discord user has a consent record in Supabase.
+    
+    Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip text)
+    """
+    try:
+        res = supabase.table("user_consents").select("discord_id").eq("discord_id", discord_id).limit(1).execute()
+        return bool(getattr(res, "data", []) or [])
+    except Exception as e:
+        import logging
+        logging.warning(f"has_user_consent lookup failed: {e}")
+        return False
+
+
+def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: str | None = None) -> bool:
+    """Persist a consent record. Returns True if stored.
+    """
+    try:
+        payload = {
+            "discord_id": discord_id,
+            "consent_hash": consent_hash,
+            "timestamp": timestamp_iso,
+            "ip": ip or "",
+        }
+        supabase.table("user_consents").insert(payload).execute()
+        return True
+    except Exception as e:
+        import logging
+        logging.warning(f"save_user_consent failed: {e}")
+        return False
