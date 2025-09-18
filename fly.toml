@@ -3,27 +3,53 @@ app = "sophia-defi-api"
 primary_region = "ord"
 
 [build]
+  dockerfile = "./Dockerfile"
 
-[http_service]
+# Expose both FastAPI (8000) and Next.js dev (3000) for dev/test simplicity
+[[services]]
   internal_port = 8000
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
+  protocol = "tcp"
   processes = ["app"]
 
-[[http_service.checks]]
-  interval = "15s"
-  grace_period = "5s"
-  method = "GET"
-  path = "/health"
-  protocol = "http"
-  timeout = "10s"
-  tls_skip_verify = false
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 25
+    hard_limit = 50
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.checks]]
+    interval = "15s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = "10s"
+    tls_skip_verify = false
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  processes = ["app"]
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 25
+    hard_limit = 50
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 3000
 
 [env]
   PORT = "8000"
   PYTHONPATH = "/app"
+  NEXT_PUBLIC_API_URL = "https://sophia-defi-api.fly.dev"
 
 [[vm]]
   cpu_kind = "shared"
