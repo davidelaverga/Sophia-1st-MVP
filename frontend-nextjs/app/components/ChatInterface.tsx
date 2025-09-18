@@ -51,7 +51,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/text-chat/stream`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/text-chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

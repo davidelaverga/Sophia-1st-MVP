@@ -111,6 +111,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Mount static files for frontend
 app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
 
+# Simple health endpoint for Fly.io checks and container orchestration
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 class Emotion(BaseModel):
     label: str
