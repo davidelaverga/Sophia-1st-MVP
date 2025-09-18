@@ -5,25 +5,20 @@ primary_region = "ord"
 [build]
   dockerfile = "./Dockerfile"
 
-# Expose both FastAPI (8000) and Next.js dev (3000) for dev/test simplicity
-[[services]]
+[http_service]
   internal_port = 8000
-  protocol = "tcp"
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
   processes = ["app"]
 
-  [services.concurrency]
+  [http_service.concurrency]
     type = "connections"
     soft_limit = 25
     hard_limit = 50
 
-  [[services.ports]]
-    handlers = ["http"]
-    port = 80
-  [[services.ports]]
-    handlers = ["tls", "http"]
-    port = 443
-
-  [[services.checks]]
+  [[http_service.checks]]
     interval = "15s"
     grace_period = "5s"
     method = "GET"
@@ -31,20 +26,6 @@ primary_region = "ord"
     protocol = "http"
     timeout = "10s"
     tls_skip_verify = false
-
-[[services]]
-  internal_port = 3000
-  protocol = "tcp"
-  processes = ["app"]
-
-  [services.concurrency]
-    type = "connections"
-    soft_limit = 25
-    hard_limit = 50
-
-  [[services.ports]]
-    handlers = ["http"]
-    port = 3000
 
 [env]
   PORT = "8000"
@@ -58,7 +39,3 @@ primary_region = "ord"
 
 [deploy]
   release_command = "python -c 'print(\"Sophia Backend Starting...\")'"
-
-[[statics]]
-  guest_path = "/app/frontend"
-  url_prefix = "/frontend"
