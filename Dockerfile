@@ -29,9 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first to leverage layer caching
+# Create a dedicated virtualenv to avoid PEP 668 restrictions
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Install Python dependencies in the venv (better layer caching if requirements.txt unchanged)
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code (root contains main.py and app/)
 COPY . .
@@ -43,7 +47,8 @@ COPY . .
 RUN mkdir -p /opt/next
 COPY --from=frontend-builder /app/frontend-nextjs/.next/standalone /opt/next/
 COPY --from=frontend-builder /app/frontend-nextjs/.next/static /opt/next/.next/static
-COPY --from=frontend-builder /app/frontend-nextjs/public /opt/next/public
+# Project has no frontend-nextjs/public directory; create an empty one to be safe
+RUN mkdir -p /opt/next/public
 
 # Install a small process manager
 RUN npm install -g concurrently
