@@ -47,7 +47,8 @@ COPY . .
 RUN mkdir -p /opt/next
 COPY --from=frontend-builder /app/frontend-nextjs/.next/standalone /opt/next/
 COPY --from=frontend-builder /app/frontend-nextjs/.next/static /opt/next/.next/static
-COPY --from=frontend-builder /app/frontend-nextjs/public /opt/next/public
+# Project has no frontend-nextjs/public directory; create an empty one to be safe
+RUN mkdir -p /opt/next/public
 
 # Install a small process manager
 RUN npm install -g concurrently
