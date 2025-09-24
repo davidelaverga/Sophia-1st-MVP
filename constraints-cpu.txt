@@ -1,0 +1,12 @@
+# Force CPU-only PyTorch wheels to avoid pulling NVIDIA CUDA packages
+--index-url https://download.pytorch.org/whl/cpu
+
+# Pin CPU variants compatible with Python 3.11
+# Adjust versions as needed if dependency resolver conflicts
+torch==2.3.1+cpu
+torchvision==0.18.1+cpu
+torchaudio==2.3.1+cpu
+
+# If jax enters via transitive deps, ensure CPU wheels only
+jax==0.4.26
+jaxlib==0.4.26
