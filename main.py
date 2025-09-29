@@ -708,7 +708,8 @@ async def ws_voice(websocket: WebSocket):
                                 # Fallback: synthesize whole sentence as complete audio
                                 try:
                                     audio_bytes = synthesize_inworld(sent)
-                                    logger.info(f"WS: fallback TTS bytes={len(audio_bytes)} (mock={str(audio_bytes).startswith('b\'ID3mock')})")
+                                    mock_check = str(audio_bytes).startswith("b'ID3mock")
+                                    logger.info(f"WS: fallback TTS bytes={len(audio_bytes)} (mock={mock_check})")
                                     
                                     # Send complete sentence audio as single chunk for immediate playback
                                     b64 = _b64.b64encode(audio_bytes).decode('ascii')
