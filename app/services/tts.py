@@ -29,16 +29,18 @@ def synthesize_inworld(text: str) -> bytes:
     except Exception:
         clean_text = text or "Okay."
 
-    # Provide a slightly richer payload; fields are commonly supported by TTS providers
+    # Enhanced payload with Deborah voice, latest model, and playground parameters
     payload = {
         "text": clean_text,
-        "voiceId": "Ashley",
-        "modelId": "inworld-tts-1",
+        "voiceId": "Deborah",          # Updated from Ashley
+        "modelId": "inworld-tts-1-max", # Updated to latest model
         "format": "mp3",
         "sampleRate": 22050,
+        "temperature": 1.1,            # From playground settings
+        "talking_speed": 1.0,          # From playground settings (normal speed)
     }
     try:
-        logger.info("TTS: calling Inworld TTS (Basic)")
+        logger.info("TTS: calling Inworld TTS with Deborah voice and inworld-tts-1-max model")
         r = requests.post(url, json=payload, headers=headers_basic, timeout=30)
         r.raise_for_status()
         data = r.json()
@@ -83,16 +85,19 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
             "Authorization": f"Basic {settings.INWORLD_API_KEY}",
             "Content-Type": "application/json",
         }
+        # Enhanced payload with Deborah voice, latest model, and playground parameters
         payload = {
             "text": clean_text,
-            "voiceId": "Ashley",
-            "modelId": "inworld-tts-1",
+            "voiceId": "Deborah",          # Updated from Ashley
+            "modelId": "inworld-tts-1-max", # Updated to latest model
+            "temperature": 1.1,            # From playground settings
+            "talking_speed": 1.0,          # From playground settings (normal speed)
             "audio_config": {
                 "audio_encoding": "LINEAR16",
                 "sample_rate_hertz": sample_rate_hz,
             },
         }
-        logger.info("TTS stream: POST :stream")
+        logger.info("TTS stream: POST :stream with Deborah voice and inworld-tts-1-max model")
         r = requests.post(url, json=payload, headers=headers, stream=True, timeout=60)
         r.raise_for_status()
         

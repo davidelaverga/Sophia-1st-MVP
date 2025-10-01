@@ -1,0 +1,52 @@
+# Vercel ignore file for Sophia frontend
+# Exclude development and build artifacts
+
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage
+*.lcov
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+.next/cache
+.next/static/chunks/polyfills-*
+.next/static/chunks/webpack-*
+
+# Logs
+*.log
+
+# Backend files (should not be included in frontend deployment)
+../app/
+../main.py
+../requirements.txt
+../Dockerfile
+../*.py
+../tests/
+../.env*
+
+# Large audio files
+../audio/
+../*.wav
+../*.mp3
+../*.mp4
