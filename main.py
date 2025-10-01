@@ -108,8 +108,14 @@ from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Mount static files for frontend
-app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+# Mount static files for frontend (only if frontend directory exists)
+# In backend-only deployment (Render), frontend is served separately by Vercel
+import os
+if os.path.exists("frontend"):
+    app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+    print("✅ Frontend static files mounted at /frontend")
+else:
+    print("ℹ️ Frontend directory not found - running in backend-only mode (frontend served by Vercel)")
 
 # Simple health endpoint for Fly.io checks and container orchestration
 @app.get("/health")
@@ -162,8 +168,19 @@ class TextChatRequest(BaseModel):
 
 @app.get("/")
 def root():
-    """Serve the frontend interface"""
-    return FileResponse("frontend/index.html")
+    """Backend status - frontend served separately on Vercel"""
+    if os.path.exists("frontend/index.html"):
+        # Full-stack deployment: serve frontend
+        return FileResponse("frontend/index.html")
+    else:
+        # Backend-only deployment: return API info
+        return {
+            "message": "Sophia AI Backend is running",
+            "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
+            "api_status": "ok",
+            "deployment_mode": "backend-only",
+            "docs_url": "/docs"
+        }
 
 @app.get("/api")
 def api_root():
@@ -736,7 +753,8 @@ async def ws_voice(websocket: WebSocket):
                     await _ws_send_json(websocket, {"type": "audio_url", "audio_url": audio_url_last})
 
                     # Update summary for end-of-call persistence
-                    last_final_text = final_text
+                    # Note: WebSocket uses direct audio processing, no explicit transcript
+                    last_final_text = f"[Audio processed: {len(utter_bytes)} bytes]"
                     last_reply_text = reply_full
                     last_audio_url = audio_url_last
 
