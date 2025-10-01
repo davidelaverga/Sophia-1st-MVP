@@ -1,20 +1,7 @@
-# syntax=docker/dockerfile:1
+# Backend-Only Dockerfile for Render Deployment
+# Frontend is deployed separately on Vercel
 
-# ---------------------------
-# Stage 1: Build Next.js (standalone)
-# ---------------------------
-FROM node:18-alpine AS frontend-builder
-WORKDIR /app/frontend-nextjs
-COPY frontend-nextjs/package*.json ./
-RUN npm ci
-COPY frontend-nextjs/ ./
-# Build Next.js with standalone output
-RUN npm run build
-
-# ---------------------------
-# Stage 2: Final runtime (Node + Python slim)
-# ---------------------------
-FROM node:18-slim AS runtime
+FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -22,51 +9,38 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install Python + minimal system deps needed for audio
+# Install system dependencies for audio processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
     ffmpeg \
     libsndfile1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a dedicated virtualenv to avoid PEP 668 restrictions
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}"
-
-# Install Python dependencies in the venv (better layer caching if requirements.txt unchanged)
+# Install Python dependencies
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code (root contains main.py and app/)
-COPY . .
+# Copy backend code only (no frontend)
+COPY main.py ./
+COPY app/ ./app/
 
-# Copy only the minimal Next.js standalone artifacts to keep image small
-# - standalone server
-# - static assets
-# - public assets
-RUN mkdir -p /opt/next
-COPY --from=frontend-builder /app/frontend-nextjs/.next/standalone /opt/next/
-COPY --from=frontend-builder /app/frontend-nextjs/.next/static /opt/next/.next/static
-# Project has no frontend-nextjs/public directory; create an empty one to be safe
-RUN mkdir -p /opt/next/public
-
-# Install a small process manager
-RUN npm install -g concurrently
+# Copy SQL files and other backend resources
+COPY *.sql ./
+RUN mkdir -p ./grafana-dashboards
+COPY grafana-dashboards/ ./grafana-dashboards/ 2>/dev/null || true
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash sophia && \
-    chown -R sophia:sophia /app /opt/next
+    chown -R sophia:sophia /app
 USER sophia
 
-# Health check (backend only)
+# Health check for backend
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 -c "import requests; requests.get('http://localhost:8000/health')"
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Fly will set PORT; default to 8000 locally
+# Use PORT environment variable (Render sets this)
 ENV PORT=8000
-EXPOSE 8000
+EXPOSE $PORT
 
-# Start both processes:
-# - FastAPI on 8000 (exposed)
-# - Next.js standalone server on 3000 (internal)
-CMD ["sh", "-c", "concurrently \"uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}\" \"sh -lc 'cd /opt/next && node server.js -p 3000 -H 0.0.0.0'\""]
+# Start only the FastAPI backend
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
