@@ -6,9 +6,19 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url)
   const code = requestUrl.searchParams.get('code')
   const error = requestUrl.searchParams.get('error')
-  const origin = requestUrl.origin
+  
+  // CRITICAL FIX: Use correct Vercel origin instead of potentially wrong requestUrl.origin
+  const origin = process.env.NODE_ENV === 'production' 
+    ? 'https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app'
+    : requestUrl.origin
 
-  console.log('🔄 Auth callback received:', { code: !!code, error, origin })
+  console.log('🔄 Auth callback received:', { 
+    code: !!code, 
+    error, 
+    origin,
+    requestOrigin: requestUrl.origin,
+    env: process.env.NODE_ENV 
+  })
 
   if (error) {
     console.error('❌ OAuth error from Discord:', error)
