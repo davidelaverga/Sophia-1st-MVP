@@ -45,7 +45,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
         file_name = f"audio{_detect_ext(wav_bytes)}"
         bio = io.BytesIO(wav_bytes)
         resp = client.audio.transcriptions.complete(
-            model="voxtral-mini-latest",
+            model="voxtral-large-latest",  # Upgraded from voxtral-mini-latest for better accuracy
             file={
                 "content": bio,
                 "file_name": file_name,
@@ -113,7 +113,7 @@ def generate_reply_from_audio(wav_bytes: bytes, hint_text: str | None = None) ->
             messages[0]["content"].append({"type": "text", "text": "Respond briefly as a safe DeFi mentor."})
 
         resp = client.chat.complete(
-            model="voxtral-mini-latest",
+            model="voxtral-large-latest",  # Upgraded from voxtral-mini-latest for better accuracy
             messages=messages,
         )
         content = getattr(resp.choices[0].message, "content", resp.choices[0].message)
@@ -289,7 +289,7 @@ def stream_generate_reply_from_audio(wav_bytes: bytes):
         logger.info("Starting Voxtral audio streaming...")
         
         stream = client.chat.stream(
-            model="voxtral-mini-latest",
+            model="voxtral-large-latest",  # Upgraded from voxtral-mini-latest for better accuracy
             messages=[
                 {
                     "role": "user",
