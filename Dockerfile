@@ -24,10 +24,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py ./
 COPY app/ ./app/
 
-# Copy SQL files and other backend resources
+# Copy SQL files if they exist
 COPY *.sql ./
-RUN mkdir -p ./grafana-dashboards
-COPY grafana-dashboards/ ./grafana-dashboards/ 2>/dev/null || true
+
+# Copy grafana-dashboards directory if it exists
+COPY grafana-dashboards/ ./grafana-dashboards/
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash sophia && \
