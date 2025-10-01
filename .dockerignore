@@ -26,6 +26,12 @@ New folder/
 # Python cache and build artifacts
 __pycache__/
 *.pyc
+
+# CRITICAL: Frontend exclusion (deployed separately on Vercel)
+frontend/
+frontend-nextjs/
+**/frontend/
+**/frontend-nextjs/
 *.pyo
 *.pyd
 .Python
