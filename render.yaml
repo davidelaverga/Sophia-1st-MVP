@@ -3,8 +3,6 @@ services:
     name: sophia-backend
     env: docker
     plan: starter
-    # Use backend-only Dockerfile 
     dockerfilePath: ./Dockerfile.backend
     healthCheckPath: /health
-    # Auto-deploy after successful manual deploy
     autoDeploy: false
