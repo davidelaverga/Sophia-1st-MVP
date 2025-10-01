@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Remove standalone output for Vercel deployment
+  // Remove standalone output for Vercel deployment (use default for Vercel)
   // output: 'standalone', // This is for Docker/self-hosting, not Vercel
   
   // Optimize for Vercel deployment
