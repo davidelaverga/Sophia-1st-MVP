@@ -1,5 +1,9 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------
 # Backend-Only Dockerfile for Render Deployment
-# Frontend is deployed separately on Vercel
+# (Frontend is deployed separately on Vercel)
+# ---------------------------
 
 FROM python:3.10-slim
 
@@ -20,14 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code only (no frontend)
+# Copy backend code only
 COPY main.py ./
 COPY app/ ./app/
-
-# Copy SQL files if they exist
 COPY *.sql ./
-
-# Copy grafana-dashboards directory if it exists
 COPY grafana-dashboards/ ./grafana-dashboards/
 
 # Create non-root user for security
