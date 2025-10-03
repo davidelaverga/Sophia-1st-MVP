@@ -8,9 +8,7 @@ export async function GET(request: NextRequest) {
   const error = requestUrl.searchParams.get('error')
   
   // CRITICAL FIX: Use correct Vercel origin instead of potentially wrong requestUrl.origin
-  const origin = process.env.NODE_ENV === 'production' 
-    ? 'https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app'
-    : requestUrl.origin
+  const origin = process.env.NEXT_PUBLIC_SITE_URL || requestUrl.origin
 
   console.log('🔄 Auth callback received:', { 
     code: !!code, 
