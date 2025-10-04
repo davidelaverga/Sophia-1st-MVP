@@ -60,6 +60,11 @@ async function handleConsentCheck(request: NextRequest) {
     }
 
     console.log('✅ Discord ID found:', discordId)
+    console.log('📋 Discord ID type:', typeof discordId)
+
+    // Ensure discord_id is always a string
+    const discordIdString = String(discordId)
+    console.log('✅ Discord ID converted to string:', discordIdString)
 
     // Create service role client for database operations
     console.log('🔑 Creating service role client...')
