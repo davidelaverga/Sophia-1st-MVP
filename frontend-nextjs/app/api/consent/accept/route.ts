@@ -83,18 +83,30 @@ export async function POST(request: NextRequest) {
     console.log('✅ Discord ID found:', discordId)
     console.log('📋 Discord ID type:', typeof discordId)
 
+    // Ensure discord_id is always a string
+    const discordIdString = String(discordId)
+    console.log('✅ Discord ID converted to string:', discordIdString)
+
     // Get client IP
     const forwarded = request.headers.get('x-forwarded-for')
     const ip = forwarded ? forwarded.split(',')[0] : request.headers.get('x-real-ip') || 'unknown'
     console.log('📍 Client IP:', ip)
 
+    // Validate timestamp
+    if (!timestamp) {
+      console.error('❌ Timestamp is missing')
+      return NextResponse.json({ error: 'Timestamp is required' }, { status: 400 })
+    }
+
     // Convert ISO timestamp to Unix timestamp (bigint)
     const unixTimestamp = Math.floor(new Date(timestamp).getTime() / 1000)
+    console.log('📅 Unix timestamp:', unixTimestamp)
 
     // Create consent hash
-    const consentData = `${discordId}:${timestamp}:${ip}`
+    const consentData = `${discordIdString}:${timestamp}:${ip}`
     const consentHash = createHash('sha256').update(consentData).digest('hex')
     console.log('🔐 Consent hash generated:', consentHash.substring(0, 16) + '...')
+    console.log('📋 Consent data used:', consentData)
 
     // Create service role client for database operations
     console.log('🔑 Creating service role client...')
@@ -135,14 +147,22 @@ export async function POST(request: NextRequest) {
     // Store new consent record
     console.log('💾 Inserting new consent record...')
     const consentRecord = {
-      discord_id: discordId,
+      discord_id: discordIdString,
       consent_hash: consentHash,
       ip_address: ip,
       timestamp: unixTimestamp,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }
-    console.log('📄 Consent record:', JSON.stringify(consentRecord, null, 2))
+    console.log('📄 Consent record to insert:', JSON.stringify(consentRecord, null, 2))
+    console.log('📋 Record field types:', {
+      discord_id: typeof consentRecord.discord_id,
+      consent_hash: typeof consentRecord.consent_hash,
+      ip_address: typeof consentRecord.ip_address,
+      timestamp: typeof consentRecord.timestamp,
+      created_at: typeof consentRecord.created_at,
+      updated_at: typeof consentRecord.updated_at
+    })
 
     const { data: insertedData, error: insertError } = await serviceSupabase
       .from('user_consents')
