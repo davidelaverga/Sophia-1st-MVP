@@ -59,20 +59,29 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Authenticated user found:', user.id)
+    console.log('📋 Full user object keys:', Object.keys(user))
+    console.log('📋 User metadata keys:', Object.keys(user.user_metadata || {}))
 
     const body = await request.json()
     const { userId, timestamp } = body
 
     // Get user's Discord ID from auth metadata
-    const discordId = user.user_metadata?.provider_id || user.user_metadata?.sub
+    // Try multiple possible locations for Discord ID
+    const discordId = user.user_metadata?.provider_id || 
+                     user.user_metadata?.sub || 
+                     user.user_metadata?.provider_token ||
+                     user.id // Fallback to Supabase user ID
 
     if (!discordId) {
       console.error('❌ Discord ID not found in user metadata')
-      console.log('User metadata:', JSON.stringify(user.user_metadata))
+      console.log('📋 Full user metadata:', JSON.stringify(user.user_metadata, null, 2))
+      console.log('📋 User app_metadata:', JSON.stringify(user.app_metadata, null, 2))
+      console.log('📋 User identities:', JSON.stringify(user.identities, null, 2))
       return NextResponse.json({ error: 'Discord ID not found' }, { status: 404 })
     }
 
     console.log('✅ Discord ID found:', discordId)
+    console.log('📋 Discord ID type:', typeof discordId)
 
     // Get client IP
     const forwarded = request.headers.get('x-forwarded-for')
@@ -103,10 +112,11 @@ export async function POST(request: NextRequest) {
 
     // Check if consent already exists
     console.log('🔍 Checking for existing consent...')
+    console.log('🔍 Querying with discord_id:', discordIdString)
     const { data: existingConsent, error: checkError } = await serviceSupabase
       .from('user_consents')
       .select('discord_id')
-      .eq('discord_id', discordId)
+      .eq('discord_id', discordIdString)
       .single()
 
     if (checkError && checkError.code !== 'PGRST116') {

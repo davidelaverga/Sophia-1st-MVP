@@ -77,10 +77,11 @@ async function handleConsentCheck(request: NextRequest) {
 
     // Check consent status
     console.log('🔍 Checking consent status in database...')
+    console.log('🔍 Querying with discord_id:', discordIdString)
     const { data: consent, error: consentError } = await serviceSupabase
       .from('user_consents')
       .select('*')
-      .eq('discord_id', discordId)
+      .eq('discord_id', discordIdString)
       .single()
 
     if (consentError) {
