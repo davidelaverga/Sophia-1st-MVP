@@ -35,13 +35,30 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
       })
 
       if (response.ok) {
+        console.log('✅ Consent saved successfully')
         onAccept()
       } else {
-        const data = await response.json()
-        setError(data.message || 'Failed to save consent')
+        // Log error but still allow user to continue
+        const data = await response.json().catch(() => ({ error: 'Unknown error' }))
+        console.warn('⚠️ Failed to save consent, but allowing user to continue:', data.error)
+        setError('Could not save consent record. Your session will continue, but you may be asked again.')
+        
+        // Allow user to continue after 3 seconds even if save fails
+        setTimeout(() => {
+          console.log('⚠️ Allowing user to continue despite consent save failure')
+          onAccept()
+        }, 3000)
       }
     } catch (err) {
-      setError('Network error occurred')
+      // Log error but still allow user to continue
+      console.error('❌ Network error saving consent, but allowing user to continue:', err)
+      setError('Network error. You can still use Sophia, but consent was not recorded.')
+      
+      // Allow user to continue after 3 seconds even if save fails
+      setTimeout(() => {
+        console.log('⚠️ Allowing user to continue despite network error')
+        onAccept()
+      }, 3000)
     } finally {
       setIsSubmitting(false)
     }
