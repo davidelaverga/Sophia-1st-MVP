@@ -3,7 +3,18 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 async function handleConsentCheck(request: NextRequest) {
+  console.log('🔍 Consent check request received')
+  
   try {
+    // Verify environment variables
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('❌ Missing Supabase environment variables')
+      return NextResponse.json({ hasConsent: false, error: 'Server configuration error' }, { status: 500 })
+    }
+
+    console.log('✅ Environment variables verified')
+    console.log('📍 Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+
     const cookieStore = cookies()
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,20 +35,33 @@ async function handleConsentCheck(request: NextRequest) {
     )
 
     // Get current user session
+    console.log('🔍 Fetching user session...')
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
     
-    if (sessionError || !session?.user) {
+    if (sessionError) {
+      console.error('❌ Session error:', sessionError)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    
+    if (!session?.user) {
+      console.error('❌ No user session found')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    console.log('✅ User session found:', session.user.id)
 
     // Get user's Discord ID from auth metadata
     const discordId = session.user.user_metadata?.provider_id || session.user.user_metadata?.sub
 
     if (!discordId) {
+      console.warn('⚠️ Discord ID not found, returning hasConsent: false')
       return NextResponse.json({ hasConsent: false })
     }
 
+    console.log('✅ Discord ID found:', discordId)
+
     // Create service role client for database operations
+    console.log('🔑 Creating service role client...')
     const serviceSupabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -51,11 +75,30 @@ async function handleConsentCheck(request: NextRequest) {
     )
 
     // Check consent status
-    const { data: consent } = await serviceSupabase
+    console.log('🔍 Checking consent status in database...')
+    const { data: consent, error: consentError } = await serviceSupabase
       .from('user_consents')
       .select('*')
       .eq('discord_id', discordId)
       .single()
+
+    if (consentError) {
+      if (consentError.code === 'PGRST116') {
+        // Not found - user has no consent record
+        console.log('ℹ️ No consent record found for user')
+        return NextResponse.json({ 
+          hasConsent: false,
+          consentDate: null
+        })
+      }
+      console.error('❌ Error checking consent:', consentError)
+      return NextResponse.json({ 
+        hasConsent: false, 
+        error: consentError.message 
+      }, { status: 500 })
+    }
+
+    console.log('✅ Consent record found:', !!consent)
 
     return NextResponse.json({ 
       hasConsent: !!consent,
@@ -63,8 +106,11 @@ async function handleConsentCheck(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Consent check error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    console.error('❌ Consent check error:', error)
+    return NextResponse.json({ 
+      hasConsent: false,
+      error: 'Internal server error' 
+    }, { status: 500 })
   }
 }
 
