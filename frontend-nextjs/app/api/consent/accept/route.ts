@@ -215,19 +215,25 @@ export async function POST(request: NextRequest) {
     // Store new consent record
     console.log('💾 Inserting new consent record...')
     
-    // Build consent record with only fields that exist in schema
-    // Avoiding timestamp format issues - let database use default timestamp
+    // Build consent record with timestamp in ISO format (NOT Unix integer!)
+    // timestamp column is NOT NULL, so we must provide it
+    // Use ISO 8601 format: "2025-10-05T21:31:19.050151+00:00"
+    const consentTimestamp = new Date(timestamp).toISOString()
+    console.log('📅 Consent timestamp (ISO):', consentTimestamp)
+    
     const consentRecord: any = {
       discord_id: discordIdString,
       consent_hash: consentHash,
-      ip_address: ip
+      ip_address: ip,
+      timestamp: consentTimestamp  // ISO 8601 string format
     }
     
     console.log('📄 Consent record to insert:', JSON.stringify(consentRecord, null, 2))
     console.log('📋 Record field types:', {
       discord_id: typeof consentRecord.discord_id,
       consent_hash: typeof consentRecord.consent_hash,
-      ip_address: typeof consentRecord.ip_address
+      ip_address: typeof consentRecord.ip_address,
+      timestamp: typeof consentRecord.timestamp
     })
 
     const { data: insertedData, error: insertError } = await serviceSupabase
