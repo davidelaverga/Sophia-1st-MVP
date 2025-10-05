@@ -60,6 +60,11 @@ async function handleConsentCheck(request: NextRequest) {
     }
 
     console.log('✅ Discord ID found:', discordId)
+    console.log('📋 Discord ID type:', typeof discordId)
+
+    // Ensure discord_id is always a string
+    const discordIdString = String(discordId)
+    console.log('✅ Discord ID converted to string:', discordIdString)
 
     // Create service role client for database operations
     console.log('🔑 Creating service role client...')
@@ -77,10 +82,11 @@ async function handleConsentCheck(request: NextRequest) {
 
     // Check consent status
     console.log('🔍 Checking consent status in database...')
+    console.log('🔍 Querying with discord_id:', discordIdString)
     const { data: consent, error: consentError } = await serviceSupabase
       .from('user_consents')
       .select('*')
-      .eq('discord_id', discordId)
+      .eq('discord_id', discordIdString)
       .single()
 
     if (consentError) {
