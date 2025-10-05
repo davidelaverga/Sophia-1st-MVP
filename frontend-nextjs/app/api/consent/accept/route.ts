@@ -266,7 +266,8 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
+  } catch (error) {
     console.error('Consent accept error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}                                                                          
+}
