@@ -122,6 +122,67 @@ export async function POST(request: NextRequest) {
       }
     )
 
+    // IMPORTANT: Ensure user exists in users table before inserting consent
+    // This prevents foreign key constraint violations
+    console.log('👤 Checking if user exists in users table...')
+    const { data: existingUser, error: userCheckError } = await serviceSupabase
+      .from('users')
+      .select('discord_id')
+      .eq('discord_id', discordIdString)
+      .single()
+
+    if (userCheckError && userCheckError.code !== 'PGRST116') {
+      console.error('❌ Error checking user existence:', userCheckError)
+    }
+
+    if (!existingUser) {
+      console.log('👤 User not found in users table, creating new user...')
+      
+      // Get additional user info from Discord OAuth metadata
+      const username = user.user_metadata?.full_name || 
+                      user.user_metadata?.name || 
+                      user.user_metadata?.preferred_username ||
+                      `user_${discordIdString}`
+      const email = user.email || null
+      const avatarUrl = user.user_metadata?.avatar_url || 
+                       user.user_metadata?.picture || 
+                       null
+
+      console.log('📋 Creating user with:', { discord_id: discordIdString, username, email })
+
+      const { data: newUser, error: userInsertError } = await serviceSupabase
+        .from('users')
+        .insert({
+          discord_id: discordIdString,
+          username: username,
+          email: email,
+          avatar_url: avatarUrl,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single()
+
+      if (userInsertError) {
+        console.error('❌ Failed to create user:', userInsertError)
+        console.error('Error code:', userInsertError.code)
+        console.error('Error details:', userInsertError.details)
+        
+        // If user was already created (race condition), continue
+        if (userInsertError.code !== '23505') {
+          return NextResponse.json({ 
+            error: 'Failed to create user',
+            details: userInsertError.message 
+          }, { status: 500 })
+        }
+        console.log('⚠️ User already exists (race condition), continuing...')
+      } else {
+        console.log('✅ User created successfully:', newUser)
+      }
+    } else {
+      console.log('✅ User already exists in users table')
+    }
+
     // Check if consent already exists
     console.log('🔍 Checking for existing consent...')
     console.log('🔍 Querying with discord_id:', discordIdString)
