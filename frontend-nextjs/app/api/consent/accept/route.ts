@@ -138,28 +138,35 @@ export async function POST(request: NextRequest) {
     if (!existingUser) {
       console.log('👤 User not found in users table, creating new user...')
       
-      // Get additional user info from Discord OAuth metadata
+      // Get username from Discord OAuth metadata
+      // Try multiple possible locations
       const username = user.user_metadata?.full_name || 
                       user.user_metadata?.name || 
                       user.user_metadata?.preferred_username ||
+                      user.user_metadata?.username ||
                       `user_${discordIdString}`
+      
       const email = user.email || null
-      const avatarUrl = user.user_metadata?.avatar_url || 
-                       user.user_metadata?.picture || 
-                       null
 
       console.log('📋 Creating user with:', { discord_id: discordIdString, username, email })
 
+      // Only insert columns that exist in the users table schema
+      // Based on error: avatar_url, created_at, updated_at may not exist
+      const userRecord: any = {
+        discord_id: discordIdString,
+        username: username
+      }
+
+      // Add email only if provided
+      if (email) {
+        userRecord.email = email
+      }
+
+      console.log('📋 User record to insert:', userRecord)
+
       const { data: newUser, error: userInsertError } = await serviceSupabase
         .from('users')
-        .insert({
-          discord_id: discordIdString,
-          username: username,
-          email: email,
-          avatar_url: avatarUrl,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
+        .insert(userRecord)
         .select()
         .single()
 
