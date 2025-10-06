@@ -45,14 +45,25 @@ class AudioIngestor:
     def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
         self.use_voxtral_large = use_voxtral_large
-        if use_voxtral_large:
-            self.hybrid_service = HybridVoxtralService()
-            logger.info("AudioIngestor initialized with Voxtral Large unified pipeline")
+        self.hybrid_service = None  # Lazy initialization to avoid crashes when MISTRAL_API_KEY is missing
+        logger.info(f"AudioIngestor initialized (Voxtral Large: {use_voxtral_large})")
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
         
         if self.use_voxtral_large:
+            # Lazy initialization of HybridVoxtralService with fallback
+            if self.hybrid_service is None:
+                try:
+                    self.hybrid_service = HybridVoxtralService()
+                    logger.info("HybridVoxtralService initialized successfully in AudioIngestor")
+                except Exception as init_error:
+                    logger.warning(f"Failed to initialize HybridVoxtralService in AudioIngestor: {init_error}")
+                    logger.info("Falling back to legacy STT pipeline")
+                    state["use_voxtral_large"] = False
+                    state["fallback_used"]["audio_ingestor"] = "missing_credentials"
+                    return self._legacy_audio_ingestion(state)
+            
             # NEW: Use Voxtral Large for transcription only (response generation happens in ResponseGenerator)
             try:
                 # Only transcribe - don't generate response yet to avoid double API calls
@@ -75,7 +86,7 @@ class AudioIngestor:
                 
             except Exception as e:
                 logger.warning(f"AudioIngestor Voxtral Large transcription failed, falling back: {e}")
-                state["fallback_used"]["audio_ingestor"] = "legacy_stt"
+                state["fallback_used"]["audio_ingestor"] = "voxtral_transcription_failed"
                 state["use_voxtral_large"] = False
                 # Fall back to legacy pipeline
                 return self._legacy_audio_ingestion(state)
@@ -174,9 +185,8 @@ class ResponseGenerator:
     def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
         self.use_voxtral_large = use_voxtral_large
-        if use_voxtral_large:
-            self.hybrid_service = HybridVoxtralService()
-            logger.info("ResponseGenerator initialized with Voxtral Large support")
+        self.hybrid_service = None  # Lazy initialization to avoid crashes when MISTRAL_API_KEY is missing
+        logger.info(f"ResponseGenerator initialized (Voxtral Large: {use_voxtral_large})")
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
@@ -186,10 +196,33 @@ class ResponseGenerator:
         
         try:
             if use_voxtral_large:
-                # NEW: Use Voxtral Large unified response generation
-                response = self._generate_with_voxtral_large(state)
-                state["llm_response"] = response
-                logger.info(f"ResponseGenerator (Voxtral Large) completed: response='{response[:50]}...'")
+                # Lazy initialization of HybridVoxtralService with fallback
+                if self.hybrid_service is None:
+                    try:
+                        self.hybrid_service = HybridVoxtralService()
+                        logger.info("HybridVoxtralService initialized successfully")
+                    except Exception as init_error:
+                        logger.warning(f"Failed to initialize HybridVoxtralService: {init_error}")
+                        logger.info("Falling back to legacy LLM pipeline")
+                        use_voxtral_large = False
+                        state["fallback_used"]["voxtral_init"] = "missing_credentials"
+                
+                if use_voxtral_large:
+                    # NEW: Use Voxtral Large unified response generation
+                    response = self._generate_with_voxtral_large(state)
+                    state["llm_response"] = response
+                    logger.info(f"ResponseGenerator (Voxtral Large) completed: response='{response[:50]}...'")
+                else:
+                    # Fallback to legacy due to initialization failure
+                    context = self._build_context(state)
+                    response = self._generate_with_context(
+                        state["transcript"], 
+                        state["intent"], 
+                        state["user_emotion"],
+                        context
+                    )
+                    state["llm_response"] = response
+                    logger.info(f"ResponseGenerator (legacy fallback) completed: response='{response[:50]}...'")
             else:
                 # LEGACY: Use separate LLM generation
                 context = self._build_context(state)
