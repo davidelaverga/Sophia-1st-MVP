@@ -38,14 +38,56 @@ class GraphState(TypedDict):
     fallback_used: Dict[str, str]
 
 class AudioIngestor:
-    """Takes audio and returns text + user emotion"""
+    """Takes audio and returns text + user emotion - now using Voxtral Large unified pipeline"""
     
-    def __init__(self):
+    def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
+        self.use_voxtral_large = use_voxtral_large
+        if use_voxtral_large:
+            self.hybrid_service = HybridVoxtralService()
+            logger.info("AudioIngestor initialized with Voxtral Large unified pipeline")
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
         
+        if self.use_voxtral_large:
+            # NEW: Use Voxtral Large to get transcript from unified model
+            try:
+                # We extract transcript separately for compatibility with existing nodes
+                # In a full unified approach, we could skip separate transcription
+                result = self.hybrid_service.primary.extract_transcript_and_respond(
+                    state["audio_bytes"]
+                )
+                transcript = result["transcript"]
+                
+                # Analyze emotion from audio
+                user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                
+                state["transcript"] = transcript
+                state["user_emotion"] = EmotionData(
+                    label=user_emotion.label,
+                    confidence=user_emotion.confidence
+                )
+                
+                # Store the full response for potential use (optimization opportunity)
+                state["_voxtral_large_response"] = result.get("response", "")
+                
+                logger.info(f"AudioIngestor (Voxtral Large) completed: transcript='{transcript[:50]}...', "
+                           f"emotion={user_emotion.label}({user_emotion.confidence:.2f})")
+                
+            except Exception as e:
+                logger.warning(f"AudioIngestor Voxtral Large failed, falling back: {e}")
+                state["fallback_used"]["audio_ingestor"] = "legacy_stt"
+                # Fall back to legacy pipeline
+                return self._legacy_audio_ingestion(state)
+        else:
+            # LEGACY: Original STT pipeline
+            return self._legacy_audio_ingestion(state)
+        
+        return state
+    
+    def _legacy_audio_ingestion(self, state: GraphState) -> GraphState:
+        """Legacy audio ingestion using separate STT"""
         try:
             # Transcribe using Voxtral + Phoenix emotion analysis
             transcript = transcribe_audio_with_voxtral(state["audio_bytes"])
@@ -57,7 +99,7 @@ class AudioIngestor:
                 confidence=user_emotion.confidence
             )
             
-            logger.info(f"AudioIngestor completed: transcript='{transcript[:50]}...', "
+            logger.info(f"AudioIngestor (legacy) completed: transcript='{transcript[:50]}...', "
                        f"emotion={user_emotion.label}({user_emotion.confidence:.2f})")
             
         except Exception as e:
