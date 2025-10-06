@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, START, END
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
 
 from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply, stream_generate_reply_from_audio
+from app.services.voxtral_large import HybridVoxtralService
 from app.services.emotion import analyze_emotion_audio
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url, get_supabase
