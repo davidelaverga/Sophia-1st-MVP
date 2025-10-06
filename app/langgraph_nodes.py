@@ -69,6 +69,14 @@ class AudioIngestor:
                 # Only transcribe - don't generate response yet to avoid double API calls
                 transcript = self.hybrid_service.primary._transcribe_audio(state["audio_bytes"])
                 
+                # CRITICAL: Check if transcription returned empty output
+                # _transcribe_audio swallows exceptions and returns "" on failure
+                if not transcript or not transcript.strip():
+                    logger.warning("AudioIngestor Voxtral Large returned empty transcript, falling back to legacy STT")
+                    state["fallback_used"]["audio_ingestor"] = "empty_transcript"
+                    state["use_voxtral_large"] = False
+                    return self._legacy_audio_ingestion(state)
+                
                 # Analyze emotion from audio
                 user_emotion = analyze_emotion_audio(state["audio_bytes"])
                 
@@ -85,8 +93,8 @@ class AudioIngestor:
                            f"emotion={user_emotion.label}({user_emotion.confidence:.2f})")
                 
             except Exception as e:
-                logger.warning(f"AudioIngestor Voxtral Large transcription failed, falling back: {e}")
-                state["fallback_used"]["audio_ingestor"] = "voxtral_transcription_failed"
+                logger.warning(f"AudioIngestor Voxtral Large transcription exception, falling back: {e}")
+                state["fallback_used"]["audio_ingestor"] = "voxtral_transcription_exception"
                 state["use_voxtral_large"] = False
                 # Fall back to legacy pipeline
                 return self._legacy_audio_ingestion(state)
