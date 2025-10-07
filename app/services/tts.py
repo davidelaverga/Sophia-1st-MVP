@@ -32,12 +32,12 @@ def synthesize_inworld(text: str) -> bytes:
     # Enhanced payload with Deborah voice, latest model, and playground parameters
     payload = {
         "text": clean_text,
-        "voiceId": "Deborah",          # Updated from Ashley
+        "voiceId": "Yoona",          
         "modelId": "inworld-tts-1-max", # Updated to latest model
         "format": "mp3",
         "sampleRate": 22050,
-        "temperature": 1.1,            # From playground settings
-        "talking_speed": 1.0,          # From playground settings (normal speed)
+        "temperature": 0,9,            # From playground settings
+        "talking_speed": 0,9,          # From playground settings (normal speed)
     }
     try:
         logger.info("TTS: calling Inworld TTS with Deborah voice and inworld-tts-1-max model")
