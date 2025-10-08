@@ -217,8 +217,8 @@ Sophia includes a comprehensive RAG system with 20+ categories:
 ## 🚀 **Deployment**
 
 ### **Production URLs**
-- **Backend**: `https://sophia-api.fly.dev`
-- **Frontend**: `https://sophia-demo.vercel.app`
+- **Backend**: `https://sophia-1st-mvp-xjml.onrender.com`
+- **Frontend**: `sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app`
 - **Monitoring**: Grafana Cloud dashboards
 
 ### **Environment Variables**
@@ -240,6 +240,6 @@ This project is part of the Sophia DeFi AI Assistant MVP development.
 
 For deployment issues or questions:
 1. Check the [deployment guide](deployment-guide.md)
-2. Review Fly.io logs: `fly logs`
+2. Review Vercel and Render logs
 3. Verify environment variables
 4. Test API endpoints individually
