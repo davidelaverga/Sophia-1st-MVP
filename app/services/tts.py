@@ -36,8 +36,8 @@ def synthesize_inworld(text: str) -> bytes:
         "modelId": "inworld-tts-1-max", # Updated to latest model
         "format": "mp3",
         "sampleRate": 22050,
-        "temperature": 0,9,            # From playground settings
-        "talking_speed": 0,9,          # From playground settings (normal speed)
+        "temperature": 0.9,            # From playground settings
+        "talking_speed": 0.9,          # From playground settings (normal speed)
     }
     try:
         logger.info("TTS: calling Inworld TTS with Deborah voice and inworld-tts-1-max model")
