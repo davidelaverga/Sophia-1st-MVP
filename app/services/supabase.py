@@ -1,12 +1,12 @@
 import os
 import time
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv, find_dotenv
 from supabase import create_client, Client
 
 # Global client instance
-_supabase: Client | None = None
+_supabase: Optional[Client] = None
 
 # Load environment variables from .env (portable)
 load_dotenv(find_dotenv(), override=False)
@@ -41,7 +41,7 @@ def get_supabase() -> Client:
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _supabase
     
-def upload_audio_and_get_url(file_bytes: bytes, file_name: str | None = None) -> str:
+def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None) -> str:
     """Upload audio file to Supabase storage and return public URL.
     
     Note: This function doesn't require a user_id as it uses storage, not the database.
@@ -174,7 +174,7 @@ def has_user_consent(discord_id: str) -> bool:
         return False
 
 
-def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: str | None = None) -> bool:
+def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: Optional[str] = None) -> bool:
     """Persist a consent record. Returns True if stored.
     """
     try:
