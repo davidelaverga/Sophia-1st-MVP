@@ -32,11 +32,11 @@ def synthesize_inworld(text: str) -> bytes:
     # Enhanced payload with Deborah voice, latest model, and playground parameters
     payload = {
         "text": clean_text,
-        "voiceId": "Yoona",          
+        "voiceId": "Deborah",          
         "modelId": "inworld-tts-1-max", # Updated to latest model
         "format": "mp3",
         "sampleRate": 22050,
-        "temperature": 0.9,            # From playground settings
+        "temperature": 0.88,            # From playground settings
         "talking_speed": 0.9,          # From playground settings (normal speed)
     }
     try:
