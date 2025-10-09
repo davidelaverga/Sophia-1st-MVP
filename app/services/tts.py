@@ -90,8 +90,8 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
             "text": clean_text,
             "voiceId": "Deborah",          # Updated from Ashley
             "modelId": "inworld-tts-1-max", # Updated to latest model
-            "temperature": 1.1,            # From playground settings
-            "talking_speed": 1.0,          # From playground settings (normal speed)
+            "temperature": 0.88,            # From playground settings
+            "talking_speed": 0.9,          # From playground settings (normal speed)
             "audio_config": {
                 "audio_encoding": "LINEAR16",
                 "sample_rate_hertz": sample_rate_hz,
