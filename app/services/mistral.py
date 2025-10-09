@@ -1,6 +1,6 @@
 import base64
 import io
-from typing import List
+from typing import List, Optional
 from mistralai import Mistral
 from app.config import get_settings
 import logging
@@ -90,7 +90,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
         return ""
 
 
-def generate_reply_from_audio(wav_bytes: bytes, hint_text: str | None = None) -> str:
+def generate_reply_from_audio(wav_bytes: bytes, hint_text: Optional[str] = None) -> str:
     """Use Voxtral chat with audio input to directly get a reply without separate STT.
 
     If Voxtral chat fails, fall back to transcribe + text generation.

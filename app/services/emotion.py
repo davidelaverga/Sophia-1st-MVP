@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from pydantic import BaseModel
 from app.config import get_settings
 
@@ -10,7 +11,7 @@ class Emotion(BaseModel):
     confidence: float
 
 
-def _classify_with_phoenix(text: str) -> Emotion | None:
+def _classify_with_phoenix(text: str) -> Optional[Emotion]:
     try:
         # Lazy import to avoid hard dep if not installed in some envs
         from phoenix.evals import llm_classify

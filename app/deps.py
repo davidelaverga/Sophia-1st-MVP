@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import Header, HTTPException
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -7,7 +8,7 @@ from app.services.supabase import has_user_consent
 limiter = Limiter(key_func=get_remote_address)
 
 
-def verify_api_key(authorization: str | None = Header(default=None)) -> None:
+def verify_api_key(authorization: Optional[str] = Header(default=None)) -> None:
     """
     Enforces header-based API key in the form: Authorization: Bearer <KEY>
     If API_KEYS env var lists keys, require membership; otherwise accept any non-empty token.
@@ -28,7 +29,7 @@ def verify_api_key(authorization: str | None = Header(default=None)) -> None:
     return None
 
 
-def require_consent(x_discord_id: str | None = Header(default=None)) -> None:
+def require_consent(x_discord_id: Optional[str] = Header(default=None)) -> None:
     """Require GDPR consent before allowing voice/chat endpoints.
 
     Frontend must set `X-Discord-Id` header after Discord OAuth. We then check

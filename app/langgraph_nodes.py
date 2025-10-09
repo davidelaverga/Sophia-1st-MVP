@@ -40,39 +40,38 @@ class GraphState(TypedDict):
     use_voxtral_large: bool  # Flag to indicate if Voxtral Large pipeline is active
 
 class AudioIngestor:
-    """Takes audio and returns text + user emotion - now using Voxtral Large unified pipeline"""
+    """Takes audio and determines processing pipeline - Voxtral Large vs Legacy"""
     
     def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
         self.use_voxtral_large = use_voxtral_large
-        self.hybrid_service = None  # Lazy initialization to avoid crashes when MISTRAL_API_KEY is missing
-        logger.info(f"AudioIngestor initialized (Voxtral Large: {use_voxtral_large})")
+        logger.info(f"AudioIngestor initialized (Voxtral Large preference: {use_voxtral_large})")
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
+        state.setdefault("fallback_used", {})
         
-        if self.use_voxtral_large:
-            # Lazy initialization of HybridVoxtralService with fallback
-            if self.hybrid_service is None:
-                try:
-                    self.hybrid_service = HybridVoxtralService()
-                    logger.info("HybridVoxtralService initialized successfully in AudioIngestor")
-                except Exception as init_error:
-                    logger.warning(f"Failed to initialize HybridVoxtralService in AudioIngestor: {init_error}")
-                    logger.info("Falling back to legacy STT pipeline")
-                    state["use_voxtral_large"] = False
-                    state["fallback_used"]["audio_ingestor"] = "missing_credentials"
-                    return self._legacy_audio_ingestion(state)
-            
-            # NEW: Use Voxtral Large for transcription only (response generation happens in ResponseGenerator)
+        # Import shared services
+        from app.services.shared_services import shared_services
+        
+        if self.use_voxtral_large and shared_services.is_voxtral_large_available():
+            # VOXTRAL LARGE PATH: Extract transcript for IntentAnalyzer, defer response to ResponseGenerator
+            logger.info("AudioIngestor: Using Voxtral Large pipeline")
             try:
-                # Only transcribe - don't generate response yet to avoid double API calls
-                transcript = self.hybrid_service.primary._transcribe_audio(state["audio_bytes"])
+                # Quick validation that audio is processable
+                if not state.get("audio_bytes") or len(state["audio_bytes"]) < 1000:
+                    raise ValueError("Audio data too small or empty")
                 
-                # CRITICAL: Check if transcription returned empty output
-                # _transcribe_audio swallows exceptions and returns "" on failure
+                # Get shared service and extract transcript for IntentAnalyzer
+                hybrid_service = shared_services.get_hybrid_voxtral_service()
+                if not hybrid_service:
+                    raise Exception("Shared HybridVoxtralService not available")
+                
+                # Extract transcript using Voxtral Large (for IntentAnalyzer to work)
+                transcript = hybrid_service.primary._transcribe_audio(state["audio_bytes"])
+                
                 if not transcript or not transcript.strip():
-                    logger.warning("AudioIngestor Voxtral Large returned empty transcript, falling back to legacy STT")
+                    logger.warning("AudioIngestor: Voxtral Large returned empty transcript, falling back to legacy STT")
                     state["fallback_used"]["audio_ingestor"] = "empty_transcript"
                     state["use_voxtral_large"] = False
                     return self._legacy_audio_ingestion(state)
@@ -80,26 +79,27 @@ class AudioIngestor:
                 # Analyze emotion from audio
                 user_emotion = analyze_emotion_audio(state["audio_bytes"])
                 
-                state["transcript"] = transcript
+                # Set pipeline flags and populate transcript for IntentAnalyzer
+                state["use_voxtral_large"] = True
+                state["transcript"] = transcript  # Now IntentAnalyzer can work properly!
                 state["user_emotion"] = EmotionData(
                     label=user_emotion.label,
                     confidence=user_emotion.confidence
                 )
                 
-                # Mark that we're using Voxtral Large pipeline
-                state["use_voxtral_large"] = True
-                
-                logger.info(f"AudioIngestor (Voxtral Large) completed: transcript='{transcript[:50]}...', "
-                           f"emotion={user_emotion.label}({user_emotion.confidence:.2f})")
+                logger.info(
+                    f"AudioIngestor (Voxtral Large) completed: transcript='{transcript[:50]}...', "
+                    f"emotion={user_emotion.label}({user_emotion.confidence:.2f})"
+                )
                 
             except Exception as e:
-                logger.warning(f"AudioIngestor Voxtral Large transcription exception, falling back: {e}")
-                state["fallback_used"]["audio_ingestor"] = "voxtral_transcription_exception"
+                logger.warning(f"AudioIngestor: Voxtral Large processing failed, falling back: {e}")
+                state["fallback_used"]["audio_ingestor"] = "voxtral_large_failed"
                 state["use_voxtral_large"] = False
-                # Fall back to legacy pipeline
                 return self._legacy_audio_ingestion(state)
         else:
-            # LEGACY: Original STT pipeline
+            # LEGACY PATH: Full processing
+            logger.info("AudioIngestor: Using legacy STT pipeline")
             state["use_voxtral_large"] = False
             return self._legacy_audio_ingestion(state)
         
@@ -188,88 +188,117 @@ class IntentAnalyzer:
             return "small_talk"
 
 class ResponseGenerator:
-    """Decides what to say and how to say it"""
+    """Generates responses using appropriate pipeline based on AudioIngestor decision"""
     
     def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
         self.use_voxtral_large = use_voxtral_large
-        self.hybrid_service = None  # Lazy initialization to avoid crashes when MISTRAL_API_KEY is missing
-        logger.info(f"ResponseGenerator initialized (Voxtral Large: {use_voxtral_large})")
+        logger.info(f"ResponseGenerator initialized (Voxtral Large preference: {use_voxtral_large})")
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
+        state.setdefault("fallback_used", {})
         
-        # Check if we should use Voxtral Large (set by AudioIngestor)
-        use_voxtral_large = state.get("use_voxtral_large", False) and self.use_voxtral_large
+        # Check pipeline decision from AudioIngestor
+        use_voxtral_large = state.get("use_voxtral_large", False)
         
         try:
             if use_voxtral_large:
-                # Lazy initialization of HybridVoxtralService with fallback
-                if self.hybrid_service is None:
-                    try:
-                        self.hybrid_service = HybridVoxtralService()
-                        logger.info("HybridVoxtralService initialized successfully")
-                    except Exception as init_error:
-                        logger.warning(f"Failed to initialize HybridVoxtralService: {init_error}")
-                        logger.info("Falling back to legacy LLM pipeline")
-                        use_voxtral_large = False
-                        state["fallback_used"]["voxtral_init"] = "missing_credentials"
-                
-                if use_voxtral_large:
-                    # NEW: Use Voxtral Large unified response generation
-                    response = self._generate_with_voxtral_large(state)
-                    state["llm_response"] = response
-                    logger.info(f"ResponseGenerator (Voxtral Large) completed: response='{response[:50]}...'")
-                else:
-                    # Fallback to legacy due to initialization failure
-                    context = self._build_context(state)
-                    response = self._generate_with_context(
-                        state["transcript"], 
-                        state["intent"], 
-                        state["user_emotion"],
-                        context
-                    )
-                    state["llm_response"] = response
-                    logger.info(f"ResponseGenerator (legacy fallback) completed: response='{response[:50]}...'")
+                # VOXTRAL LARGE PATH: Complete processing
+                return self._process_with_voxtral_large(state)
             else:
-                # LEGACY: Use separate LLM generation
-                context = self._build_context(state)
-                response = self._generate_with_context(
-                    state["transcript"], 
-                    state["intent"], 
-                    state["user_emotion"],
-                    context
-                )
-                state["llm_response"] = response
-                logger.info(f"ResponseGenerator (legacy) completed: response='{response[:50]}...'")
-            
+                # LEGACY PATH: LLM-only processing
+                return self._process_with_legacy_llm(state)
+                
         except Exception as e:
             logger.error(f"ResponseGenerator failed: {e}")
-            # Fallback to Claude-3
+            # Final fallback to Claude-3
             state["fallback_used"]["llm"] = "claude_fallback"
-            response = self._claude_fallback(state["transcript"], state["intent"])
+            response = self._claude_fallback(state.get("transcript", ""), state.get("intent", ""))
             state["llm_response"] = response
         
         return state
     
-    def _generate_with_voxtral_large(self, state: GraphState) -> str:
-        """Generate response using Voxtral Large unified model"""
-        # Build rich context for Voxtral Large
-        context_dict = self._build_voxtral_context(state)
+    def _process_with_voxtral_large(self, state: GraphState) -> GraphState:
+        """Process using Voxtral Large unified pipeline (transcript already extracted by AudioIngestor)"""
+        from app.services.shared_services import shared_services
         
-        # Use HybridVoxtralService to generate response from audio with context
-        result = self.hybrid_service.generate_response(
-            state["audio_bytes"],
-            context=context_dict,
-            fallback_on_error=True
+        logger.info("ResponseGenerator: Processing with Voxtral Large")
+        
+        try:
+            hybrid_service = shared_services.get_hybrid_voxtral_service()
+            if not hybrid_service:
+                raise Exception("Shared HybridVoxtralService not available")
+            
+            # Build context for Voxtral Large (transcript already available from AudioIngestor)
+            context_dict = self._build_voxtral_context(state)
+            
+            # Use Voxtral Large for response generation with built-in fallback logic
+            # Build a comprehensive system prompt using existing transcript and context
+            system_prompt = self._build_voxtral_system_prompt(state.get("intent", ""))
+            prompt_with_context = self._build_voxtral_prompt_with_context(state["transcript"], context_dict, system_prompt)
+            
+            # Generate response using HybridVoxtralService (includes fallback logic)
+            result = hybrid_service.generate_response(
+                state["audio_bytes"],
+                context=context_dict,
+                system_prompt=prompt_with_context,
+                fallback_on_error=True
+            )
+            
+            # Extract response and log which service was used
+            state["llm_response"] = result["response"]
+            
+            # Track fallbacks used by the hybrid service
+            if result["service_used"] != "voxtral_large":
+                logger.warning(f"HybridVoxtralService used fallback: {result['service_used']}")
+                state["fallback_used"]["hybrid_service"] = result["service_used"]
+            
+            logger.info(
+                f"ResponseGenerator (Voxtral Large) completed: "
+                f"transcript='{state['transcript'][:50]}...', "
+                f"response='{state['llm_response'][:50]}...'"
+            )
+            
+        except Exception as e:
+            logger.warning(f"ResponseGenerator Voxtral Large failed, falling back to legacy: {e}")
+            state["fallback_used"]["response_generator"] = "voxtral_large_failed"
+            state["use_voxtral_large"] = False
+            
+            # Emergency fallback: ensure we have a transcript for legacy processing
+            if not state.get("transcript"):
+                try:
+                    state["transcript"] = transcribe_audio_with_voxtral(state["audio_bytes"])
+                    user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                    state["user_emotion"] = EmotionData(
+                        label=user_emotion.label,
+                        confidence=user_emotion.confidence
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Emergency transcript fallback failed: {fallback_error}")
+                    state["transcript"] = "I couldn't process your audio."
+                    state["user_emotion"] = EmotionData(label="neutral", confidence=0.5)
+            
+            # Process with legacy LLM
+            return self._process_with_legacy_llm(state)
+        
+        return state
+    
+    def _process_with_legacy_llm(self, state: GraphState) -> GraphState:
+        """Process using legacy LLM pipeline"""
+        logger.info("ResponseGenerator: Processing with legacy LLM")
+        
+        context = self._build_context(state)
+        response = self._generate_with_context(
+            state.get("transcript", ""),
+            state.get("intent", ""),
+            state["user_emotion"],
+            context
         )
+        state["llm_response"] = response
         
-        # Log which service was used
-        if result["service_used"] != "voxtral_large":
-            logger.warning(f"Voxtral Large fallback used: {result['service_used']}")
-            state["fallback_used"]["response_generator"] = result["service_used"]
-        
-        return result["response"]
+        logger.info(f"ResponseGenerator (legacy) completed: response='{state['llm_response'][:50]}...'")
+        return state
     
     def _build_voxtral_context(self, state: GraphState) -> Dict[str, Any]:
         """Build rich context dictionary for Voxtral Large"""
@@ -319,6 +348,46 @@ class ResponseGenerator:
             context_parts.append(f"Recent conversation types: {', '.join(context['recent_intents'])}")
         
         return " | ".join(context_parts) if context_parts else ""
+    
+    def _build_voxtral_system_prompt(self, intent: str) -> str:
+        """Build system prompt for Voxtral Large based on intent"""
+        if intent == "defi_question":
+            return (
+                "You are Sophia, a knowledgeable DeFi mentor. Use provided context to give accurate, "
+                "educational responses about DeFi concepts. Keep responses under 50 words."
+            )
+        elif intent == "emotional_support":
+            return (
+                "You are Sophia, an empathetic AI companion. Provide supportive and encouraging "
+                "responses. Keep responses under 50 words."
+            )
+        else:
+            return (
+                "You are Sophia, a friendly AI assistant. Engage in casual conversation. "
+                "Keep responses under 50 words."
+            )
+    
+    def _build_voxtral_prompt_with_context(self, transcript: str, context_dict: Dict[str, Any], system_prompt: str) -> str:
+        """Build comprehensive prompt for Voxtral Large with context"""
+        prompt_parts = [system_prompt]
+        
+        # Add conversation memory
+        if "last_topics" in context_dict and context_dict["last_topics"]:
+            prompt_parts.append(f"Previous topics: {', '.join(context_dict['last_topics'])}")
+        
+        # Add emotional context
+        if "user_emotion" in context_dict:
+            emotion_label = context_dict["user_emotion"].get("label", "neutral")
+            emotion_conf = context_dict["user_emotion"].get("confidence", 0.0)
+            prompt_parts.append(f"User appears {emotion_label} (confidence: {emotion_conf:.2f})")
+        
+        # Add RAG context for DeFi questions
+        if "rag_context" in context_dict and context_dict["rag_context"]:
+            prompt_parts.append(f"Relevant knowledge base:\n{context_dict['rag_context']}")
+        
+        prompt_parts.append(f"User question: {transcript}")
+        
+        return " | ".join(prompt_parts)
     
     def _generate_with_context(self, transcript: str, intent: str, user_emotion: EmotionData, context: str) -> str:
         """Generate response with context and emotion awareness"""
@@ -651,19 +720,36 @@ class SophiaLangGraph:
         return state
     
     def stream_llm_response(self, state: GraphState):
-        """Stream LLM response using Voxtral streaming"""
-        
+        """Stream LLM response using appropriate pipeline"""
         logger.info(f"Streaming LLM response for session {state['session_id']}")
-        
         try:
+            # Check if we should use Voxtral Large streaming
+            if state.get("use_voxtral_large", False):
+                from app.services.shared_services import shared_services
+                hybrid_service = shared_services.get_hybrid_voxtral_service()
+                
+                if hybrid_service:
+                    logger.info("Using Voxtral Large streaming")
+                    context_dict = self._build_voxtral_context_for_streaming(state)
+                    
+                    for token_data in hybrid_service.stream_response(
+                        state["audio_bytes"],
+                        context=context_dict
+                    ):
+                        yield token_data.get("token", "")
+                    return
+            
+            # Fallback to legacy streaming
+            logger.info("Using legacy LLM streaming")
+            
             # Build context like ResponseGenerator does
             response_generator = ResponseGenerator()
             context = response_generator._build_context(state)
             
             # Get RAG context for DeFi questions
             rag_context = ""
-            if state["intent"] == "defi_question":
-                rag_context = rag_system.get_context_for_llm(state["transcript"])
+            if state.get("intent") == "defi_question":
+                rag_context = rag_system.get_context_for_llm(state.get("transcript", ""))
                 logger.info(f"RAG context retrieved: {len(rag_context)} characters")
             
             # Build comprehensive prompt
@@ -675,22 +761,39 @@ class SophiaLangGraph:
             if rag_context:
                 prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
             
-            prompt_parts.append(f"User question: {state['transcript']}")
+            prompt_parts.append(f"User question: {state.get('transcript', '')}")
             
             full_prompt = " | ".join(prompt_parts)
             
-            # Stream response using Voxtral - note: Voxtral streaming doesn't use custom prompts
-            # We'll need to use the transcript and generate with context instead
+            # Stream response using legacy pipeline
             from app.services.mistral import stream_generate_llm_reply
             
-            # Use the transcript with full context for streaming
             for token in stream_generate_llm_reply(full_prompt):
                 yield token
                 
         except Exception as e:
             logger.error(f"Streaming LLM response failed: {e}")
-            # Fallback to rule-based response
-            if "defi" in state["transcript"].lower() or "crypto" in state["transcript"].lower():
+            # Final fallback
+            if "defi" in state.get("transcript", "").lower() or "crypto" in state.get("transcript", "").lower():
                 yield "I can help you with DeFi questions. What would you like to know?"
             else:
                 yield "I'm here to help. Could you please rephrase your question?"
+    
+    def _build_voxtral_context_for_streaming(self, state: GraphState) -> Dict[str, Any]:
+        """Build context for Voxtral Large streaming"""
+        # Similar to ResponseGenerator._build_voxtral_context but simplified
+        memory_context = memory_manager.get_context_for_llm(state["session_id"])
+        
+        context = {
+            "intent": state.get("intent", ""),
+            "user_emotion": {
+                "label": state["user_emotion"].label,
+                "confidence": state["user_emotion"].confidence
+            }
+        }
+        
+        # Add memory context
+        if "last_topics" in memory_context:
+            context["last_topics"] = memory_context["last_topics"]
+        
+        return context
