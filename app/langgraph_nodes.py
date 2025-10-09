@@ -55,23 +55,46 @@ class AudioIngestor:
         from app.services.shared_services import shared_services
         
         if self.use_voxtral_large and shared_services.is_voxtral_large_available():
-            # VOXTRAL LARGE PATH: Set flag and minimal processing
+            # VOXTRAL LARGE PATH: Extract transcript for IntentAnalyzer, defer response to ResponseGenerator
             logger.info("AudioIngestor: Using Voxtral Large pipeline")
             try:
                 # Quick validation that audio is processable
                 if not state.get("audio_bytes") or len(state["audio_bytes"]) < 1000:
                     raise ValueError("Audio data too small or empty")
                 
-                # Set pipeline flags
-                state["use_voxtral_large"] = True
-                state["transcript"] = ""  # Will be populated by ResponseGenerator
-                state["user_emotion"] = EmotionData(label="neutral", confidence=0.0)  # Will be analyzed later
+                # Get shared service and extract transcript for IntentAnalyzer
+                hybrid_service = shared_services.get_hybrid_voxtral_service()
+                if not hybrid_service:
+                    raise Exception("Shared HybridVoxtralService not available")
                 
-                logger.info("AudioIngestor: Voxtral Large pipeline selected successfully")
+                # Extract transcript using Voxtral Large (for IntentAnalyzer to work)
+                transcript = hybrid_service.primary._transcribe_audio(state["audio_bytes"])
+                
+                if not transcript or not transcript.strip():
+                    logger.warning("AudioIngestor: Voxtral Large returned empty transcript, falling back to legacy STT")
+                    state["fallback_used"]["audio_ingestor"] = "empty_transcript"
+                    state["use_voxtral_large"] = False
+                    return self._legacy_audio_ingestion(state)
+                
+                # Analyze emotion from audio
+                user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                
+                # Set pipeline flags and populate transcript for IntentAnalyzer
+                state["use_voxtral_large"] = True
+                state["transcript"] = transcript  # Now IntentAnalyzer can work properly!
+                state["user_emotion"] = EmotionData(
+                    label=user_emotion.label,
+                    confidence=user_emotion.confidence
+                )
+                
+                logger.info(
+                    f"AudioIngestor (Voxtral Large) completed: transcript='{transcript[:50]}...', "
+                    f"emotion={user_emotion.label}({user_emotion.confidence:.2f})"
+                )
                 
             except Exception as e:
-                logger.warning(f"AudioIngestor: Voxtral Large validation failed, falling back: {e}")
-                state["fallback_used"]["audio_ingestor"] = "audio_validation_failed"
+                logger.warning(f"AudioIngestor: Voxtral Large processing failed, falling back: {e}")
+                state["fallback_used"]["audio_ingestor"] = "voxtral_large_failed"
                 state["use_voxtral_large"] = False
                 return self._legacy_audio_ingestion(state)
         else:
@@ -197,7 +220,7 @@ class ResponseGenerator:
         return state
     
     def _process_with_voxtral_large(self, state: GraphState) -> GraphState:
-        """Process using Voxtral Large unified pipeline"""
+        """Process using Voxtral Large unified pipeline (transcript already extracted by AudioIngestor)"""
         from app.services.shared_services import shared_services
         
         logger.info("ResponseGenerator: Processing with Voxtral Large")
@@ -207,25 +230,22 @@ class ResponseGenerator:
             if not hybrid_service:
                 raise Exception("Shared HybridVoxtralService not available")
             
-            # Build context for Voxtral Large
+            # Build context for Voxtral Large (transcript already available from AudioIngestor)
             context_dict = self._build_voxtral_context(state)
             
-            # Single call handles transcript + response generation
-            result = hybrid_service.extract_transcript_and_respond(
+            # Use Voxtral Large for response generation only (transcript already extracted)
+            # Build a comprehensive prompt using existing transcript and context
+            system_prompt = self._build_voxtral_system_prompt(state.get("intent", ""))
+            prompt_with_context = self._build_voxtral_prompt_with_context(state["transcript"], context_dict, system_prompt)
+            
+            # Generate response using Voxtral Large
+            response = hybrid_service.primary.generate_response(
                 state["audio_bytes"],
-                context=context_dict
+                context=context_dict,
+                system_prompt=prompt_with_context
             )
             
-            # Populate state with results
-            state["transcript"] = result["transcript"]
-            state["llm_response"] = result["response"]
-            
-            # Analyze user emotion from audio (now that we have transcript)
-            user_emotion = analyze_emotion_audio(state["audio_bytes"])
-            state["user_emotion"] = EmotionData(
-                label=user_emotion.label,
-                confidence=user_emotion.confidence
-            )
+            state["llm_response"] = response
             
             logger.info(
                 f"ResponseGenerator (Voxtral Large) completed: "
@@ -321,6 +341,46 @@ class ResponseGenerator:
             context_parts.append(f"Recent conversation types: {', '.join(context['recent_intents'])}")
         
         return " | ".join(context_parts) if context_parts else ""
+    
+    def _build_voxtral_system_prompt(self, intent: str) -> str:
+        """Build system prompt for Voxtral Large based on intent"""
+        if intent == "defi_question":
+            return (
+                "You are Sophia, a knowledgeable DeFi mentor. Use provided context to give accurate, "
+                "educational responses about DeFi concepts. Keep responses under 50 words."
+            )
+        elif intent == "emotional_support":
+            return (
+                "You are Sophia, an empathetic AI companion. Provide supportive and encouraging "
+                "responses. Keep responses under 50 words."
+            )
+        else:
+            return (
+                "You are Sophia, a friendly AI assistant. Engage in casual conversation. "
+                "Keep responses under 50 words."
+            )
+    
+    def _build_voxtral_prompt_with_context(self, transcript: str, context_dict: Dict[str, Any], system_prompt: str) -> str:
+        """Build comprehensive prompt for Voxtral Large with context"""
+        prompt_parts = [system_prompt]
+        
+        # Add conversation memory
+        if "last_topics" in context_dict and context_dict["last_topics"]:
+            prompt_parts.append(f"Previous topics: {', '.join(context_dict['last_topics'])}")
+        
+        # Add emotional context
+        if "user_emotion" in context_dict:
+            emotion_label = context_dict["user_emotion"].get("label", "neutral")
+            emotion_conf = context_dict["user_emotion"].get("confidence", 0.0)
+            prompt_parts.append(f"User appears {emotion_label} (confidence: {emotion_conf:.2f})")
+        
+        # Add RAG context for DeFi questions
+        if "rag_context" in context_dict and context_dict["rag_context"]:
+            prompt_parts.append(f"Relevant knowledge base:\n{context_dict['rag_context']}")
+        
+        prompt_parts.append(f"User question: {transcript}")
+        
+        return " | ".join(prompt_parts)
     
     def _generate_with_context(self, transcript: str, intent: str, user_emotion: EmotionData, context: str) -> str:
         """Generate response with context and emotion awareness"""
