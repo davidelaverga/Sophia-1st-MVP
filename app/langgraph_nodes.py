@@ -233,19 +233,26 @@ class ResponseGenerator:
             # Build context for Voxtral Large (transcript already available from AudioIngestor)
             context_dict = self._build_voxtral_context(state)
             
-            # Use Voxtral Large for response generation only (transcript already extracted)
-            # Build a comprehensive prompt using existing transcript and context
+            # Use Voxtral Large for response generation with built-in fallback logic
+            # Build a comprehensive system prompt using existing transcript and context
             system_prompt = self._build_voxtral_system_prompt(state.get("intent", ""))
             prompt_with_context = self._build_voxtral_prompt_with_context(state["transcript"], context_dict, system_prompt)
             
-            # Generate response using Voxtral Large
-            response = hybrid_service.primary.generate_response(
+            # Generate response using HybridVoxtralService (includes fallback logic)
+            result = hybrid_service.generate_response(
                 state["audio_bytes"],
                 context=context_dict,
-                system_prompt=prompt_with_context
+                system_prompt=prompt_with_context,
+                fallback_on_error=True
             )
             
-            state["llm_response"] = response
+            # Extract response and log which service was used
+            state["llm_response"] = result["response"]
+            
+            # Track fallbacks used by the hybrid service
+            if result["service_used"] != "voxtral_large":
+                logger.warning(f"HybridVoxtralService used fallback: {result['service_used']}")
+                state["fallback_used"]["hybrid_service"] = result["service_used"]
             
             logger.info(
                 f"ResponseGenerator (Voxtral Large) completed: "
