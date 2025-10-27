@@ -1,0 +1,67 @@
+"""Configuration loader that exposes environment-driven settings to the backend."""
+
+import os
+from functools import lru_cache
+from typing import Optional, List
+from dotenv import load_dotenv, find_dotenv
+
+# Load .env as early as possible so Settings reads populated values.
+# find_dotenv() will search parent directories to locate the .env file.
+load_dotenv(find_dotenv(), override=False)
+
+
+class Settings:
+    APP_NAME: str = "Sophia Voice Backend"
+    API_RATE_LIMIT: str = os.getenv("API_RATE_LIMIT", "30/minute")
+    ENVIRONMENT: str = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "development")).lower()
+
+    # Auth
+    API_KEYS: List[str] = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
+
+    # External services
+    MISTRAL_API_KEY: Optional[str] = os.getenv("MISTRAL_API_KEY")
+    INWORLD_API_KEY: Optional[str] = os.getenv("INWORLD_API_KEY")  # Base64 Basic token
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+    GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
+    
+    # Redis for memory caching
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+
+    # Supabase (HTTP client for storage/REST)
+    SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
+    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
+    SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
+
+    # Optional: direct Postgres via Transaction Pooler
+    SUPABASE_DB_DSN: Optional[str] = os.getenv("SUPABASE_DB_DSN")
+    SUPABASE_DEFAULT_USER_ID: Optional[str] = os.getenv("SUPABASE_DEFAULT_USER_ID")
+
+    # OpenTelemetry (OTLP HTTP exporter)
+    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    OTEL_EXPORTER_OTLP_HEADERS: Optional[str] = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+
+    _cors_raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if _cors_raw:
+        cors_values = [origin.strip() for origin in _cors_raw.split(",") if origin.strip()]
+    else:
+        # Safe defaults for local development; production should set env var explicitly.
+        cors_values = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    CORS_ALLOWED_ORIGINS: List[str] = cors_values
+
+    _public_raw = os.getenv(
+        "API_PUBLIC_PATHS",
+        "/,/health,/docs,/openapi.json,/api",
+    )
+    API_PUBLIC_PATHS: List[str] = [path.strip() for path in _public_raw.split(",") if path.strip()]
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
