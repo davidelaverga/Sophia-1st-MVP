@@ -20,7 +20,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
     """
     settings = get_settings()
 
-    # Preferred: Mistral transcription endpoint (voxtral-mini-latest)
+    # Preferred: Mistral transcription endpoint (voxtral-large-latest for best accuracy)
     try:
         client = _client()
         # Provide a filename; SDK inspects content
@@ -45,7 +45,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
         file_name = f"audio{_detect_ext(wav_bytes)}"
         bio = io.BytesIO(wav_bytes)
         resp = client.audio.transcriptions.complete(
-            model="voxtral-mini-latest",
+            model="voxtral-large-latest",
             file={
                 "content": bio,
                 "file_name": file_name,
@@ -103,7 +103,7 @@ def generate_llm_reply(text: str) -> str:
             resp_iface = getattr(client, "responses", None)
             if resp_iface is not None:
                 r = resp_iface.create(
-                    model="mistral-small-latest",
+                    model="mistral-large-latest",
                     input=[
                         {
                             "role": "system",
@@ -124,7 +124,7 @@ def generate_llm_reply(text: str) -> str:
 
         # Chat API fallback
         r2 = client.chat.complete(
-            model="mistral-small-latest",
+            model="mistral-large-latest",
             messages=[
                 {
                     "role": "system",
@@ -171,7 +171,7 @@ def stream_generate_llm_reply(text: str):
         logger.info(f"Starting streaming LLM reply for text: {text[:50]}...")
         
         stream = client.chat.stream(
-            model="mistral-small-latest",
+            model="mistral-large-latest",
             messages=[
                 {
                     "role": "system",
