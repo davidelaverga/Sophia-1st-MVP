@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.deps import verify_api_key, limiter
-from app.services.mistral import stream_generate_reply_from_audio, generate_llm_reply
+from app.services.mistral import generate_llm_reply
 from app.services.langgraph_service import langgraph_service
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
