@@ -139,19 +139,23 @@ class LangGraphService:
             raise
 
     def stream_conversation_response(self, audio_bytes: bytes, session_id: str = None):
-        """Stream conversation response using direct Voxtral streaming - simplified approach"""
+        """Stream conversation response through LangGraph pipeline
         
-        logger.info(f"Streaming conversation directly through Voxtral for session {session_id}")
+        Flow: Audio → Voxtral ASR → Mistral LLM (streaming)
+        """
+        
+        logger.info(f"Streaming conversation through LangGraph for session {session_id}")
         
         try:
-            # Direct Voxtral streaming without complex pipeline
-            from app.services.mistral import stream_generate_reply_from_audio
+            # Process audio to get context (ASR + emotion + intent + RAG)
+            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
             
-            for token in stream_generate_reply_from_audio(audio_bytes):
+            # Stream LLM response using the processed context
+            for token in self.sophia_graph.stream_llm_response(state):
                 yield token
                 
         except Exception as e:
-            logger.error(f"Direct Voxtral streaming failed: {e}")
+            logger.error(f"LangGraph streaming failed: {e}")
             # Fallback to rule-based response
             yield "I'm having trouble processing your request. Could you please try again?"
 
