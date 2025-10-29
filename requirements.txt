@@ -21,3 +21,5 @@ pgvector
 opentelemetry-sdk==1.27.0
 opentelemetry-instrumentation-fastapi==0.48b0
 opentelemetry-exporter-otlp==1.27.0
+sentence-transformers>=3.0.0
+sentence-transformers>=3.0.0
