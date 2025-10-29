@@ -153,6 +153,114 @@ def generate_llm_reply(text: str) -> str:
         return "Here’s a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
 
 
+def generate_llm_reply_with_context(
+    user_question: str, 
+    rag_context: str = "", 
+    emotion_label: str = "neutral", 
+    memory_context: str = "",
+    intent: str = "small_talk"
+) -> str:
+    """Generate LLM reply with proper context separation.
+    
+    Args:
+        user_question: The actual user question/transcript
+        rag_context: RAG-retrieved FAQ context (if any)
+        emotion_label: Detected user emotion
+        memory_context: Conversation history context
+        intent: Detected intent (defi_question, emotional_support, small_talk)
+    
+    Returns:
+        Generated response string
+    """
+    # Handle empty input
+    if not user_question or not str(user_question).strip():
+        return "I didn't catch that. Could you rephrase your question about DeFi?"
+    
+    try:
+        # Build system message with ALL context
+        system_parts = []
+        
+        # Base personality
+        system_parts.append("You are Sophia, a knowledgeable and supportive DeFi education mentor.")
+        
+        # Add emotional context (awareness, not override)
+        if emotion_label and emotion_label != "neutral":
+            system_parts.append(f"\nUser's current emotional state: {emotion_label}. Be aware of this but prioritize factual accuracy.")
+        
+        # Add conversation history
+        if memory_context:
+            system_parts.append(f"\nConversation history: {memory_context}")
+        
+        # Add RAG context - THIS IS KEY!
+        if rag_context:
+            system_parts.append(f"\n\nRELEVANT KNOWLEDGE BASE:\n{rag_context}")
+            system_parts.append("\n⚠️ IMPORTANT: The knowledge base above contains verified information. When it's relevant to the user's question, use it as your primary source. Paraphrase naturally but stay faithful to the facts provided.")
+        
+        # Response guidelines based on intent
+        system_parts.append("\n\nResponse guidelines:")
+        if intent == "defi_question":
+            system_parts.append("- This is a DeFi educational question. Provide accurate, educational answers (50-100 words).")
+            system_parts.append("- If the knowledge base has relevant information, use it directly.")
+            system_parts.append("- Prioritize accuracy over brevity.")
+        elif intent == "emotional_support":
+            system_parts.append("- The user needs emotional support. Be empathetic while remaining educational.")
+            system_parts.append("- Keep responses supportive but still informative (40-80 words).")
+        else:
+            system_parts.append("- This is casual conversation. Be friendly and concise (20-40 words).")
+        
+        system_message = "".join(system_parts)
+        
+        # User message is JUST the question (no context duplication)
+        client = _client()
+        
+        # Try Responses API first
+        try:
+            resp_iface = getattr(client, "responses", None)
+            if resp_iface is not None:
+                r = resp_iface.create(
+                    model="mistral-large-latest",
+                    input=[
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": system_message}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": user_question}],
+                        },
+                    ],
+                )
+                out = getattr(r, "output_text", None)
+                if isinstance(out, str) and out.strip():
+                    return out.strip()
+                return str(r)
+        except Exception:
+            pass
+        
+        # Chat API fallback
+        r2 = client.chat.complete(
+            model="mistral-large-latest",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_question},
+            ],
+        )
+        content = getattr(r2.choices[0].message, "content", r2.choices[0].message)
+        return str(content).strip()
+        
+    except Exception as e:
+        logger.warning(f"LLM with context failed: {e}")
+        # Rule-based fallback
+        lower = user_question.lower()
+        if "yield" in lower:
+            return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
+        if "staking" in lower:
+            return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
+        if "defi" in lower:
+            return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
+        return "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+
+
 def stream_generate_llm_reply(text: str):
     """Yield tokens from Mistral in a streaming fashion.
 

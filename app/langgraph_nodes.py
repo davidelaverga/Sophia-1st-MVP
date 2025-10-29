@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
 
-from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply
+from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply, generate_llm_reply_with_context
 from app.services.emotion import analyze_emotion_audio
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url, get_supabase
@@ -111,15 +111,24 @@ class IntentAnalyzer:
         return state
     
     def _classify_intent(self, text: str) -> str:
-        """Simple intent classification"""
+        """Enhanced intent classification - prioritizes DeFi keywords over emotional cues"""
         text_lower = text.lower()
         
-        defi_keywords = ["defi", "yield", "staking", "liquidity", "farming", "token", 
-                        "swap", "protocol", "apy", "apr", "pool", "vault", "ethereum"]
+        # Expanded DeFi keywords for better detection
+        defi_keywords = [
+            "defi", "yield", "staking", "liquidity", "farming", "token", 
+            "swap", "protocol", "apy", "apr", "pool", "vault", "ethereum",
+            "crypto", "blockchain", "smart contract", "wallet", "gas", "fee",
+            "dex", "exchange", "collateral", "lending", "borrowing", "loan",
+            "impermanent loss", "slippage", "tvl", "flash loan", "governance",
+            "stablecoin", "usdc", "usdt", "dai", "mev", "risk", "audit"
+        ]
         
         emotional_keywords = ["sad", "worried", "anxious", "happy", "excited", 
                              "confused", "frustrated", "help me"]
         
+        # CRITICAL: DeFi keywords take priority over emotional keywords
+        # This prevents "I'm confused about yield farming" from being classified as emotional_support
         if any(keyword in text_lower for keyword in defi_keywords):
             return "defi_question"
         elif any(keyword in text_lower for keyword in emotional_keywords):
@@ -181,35 +190,23 @@ class ResponseGenerator:
     
     
     def _generate_with_context(self, transcript: str, intent: str, user_emotion: EmotionData, context: str) -> str:
-        """Generate response with context and emotion awareness"""
+        """Generate response with proper context separation (RAG in system message)"""
         # Get RAG context for DeFi questions
         rag_context = ""
         if intent == "defi_question":
             rag_context = rag_system.get_context_for_llm(transcript)
             logger.info(f"RAG context retrieved: {len(rag_context)} characters")
+            if rag_context:
+                logger.info(f"RAG context preview: {rag_context[:100]}...")
         
-        # Enhanced prompt based on intent and emotion
-        if intent == "defi_question":
-            system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Use the provided FAQ context to give accurate, educational responses about DeFi concepts. Keep responses under 50 words."
-        elif intent == "emotional_support":
-            system_prompt = "You are Sophia, an empathetic AI companion. Provide supportive and encouraging responses. Keep responses under 50 words."
-        else:
-            system_prompt = "You are Sophia, a friendly AI assistant. Engage in casual conversation. Keep responses under 50 words."
-        
-        # Build comprehensive prompt
-        prompt_parts = [f"The user seems {user_emotion.label} (confidence: {user_emotion.confidence:.2f})."]
-        
-        if context:
-            prompt_parts.append(f"Conversation context: {context}")
-        
-        if rag_context:
-            prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
-        
-        prompt_parts.append(f"User question: {transcript}")
-        
-        full_prompt = " | ".join(prompt_parts)
-        
-        return generate_llm_reply(full_prompt)
+        # Use the new context-aware function instead of cramming everything into user message
+        return generate_llm_reply_with_context(
+            user_question=transcript,
+            rag_context=rag_context,
+            emotion_label=user_emotion.label,
+            memory_context=context,
+            intent=intent
+        )
     
     def _claude_fallback(self, transcript: str, intent: str) -> str:
         """Fallback to Claude-3 if Mistral fails"""
