@@ -17,8 +17,6 @@ langgraph
 langchain
 redis
 openai
-sentence-transformers
-ragas
 pgvector
 opentelemetry-sdk==1.27.0
 opentelemetry-instrumentation-fastapi==0.48b0

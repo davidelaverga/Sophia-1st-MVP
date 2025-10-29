@@ -1,9 +1,18 @@
 import json
 import logging
+import os
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
-from sentence_transformers import SentenceTransformer
+
+# Optional heavy dependency: sentence-transformers (pulls torch, transformers)
+# We intentionally avoid installing it in production containers by default.
+# If unavailable, RAG gracefully degrades to a no-op that returns empty context.
+try:
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # ImportError and others
+    SentenceTransformer = None  # type: ignore
+
 from app.config import get_settings
 from app.services.supabase import get_supabase
 
@@ -25,23 +34,41 @@ class RAGResult:
     category: str
 
 class RAGSystem:
-    """RAG system for DeFi FAQs with vector search"""
+    """RAG system for DeFi FAQs with vector search (optional)."""
     
     def __init__(self):
         self.settings = get_settings()
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight model
         self.supabase = get_supabase()
+        self.enabled = bool(os.getenv("ENABLE_LOCAL_RAG", "0") == "1") and (SentenceTransformer is not None)
+        self.model = None
+        if self.enabled:
+            try:
+                # Use a lightweight model when enabled
+                self.model = SentenceTransformer('all-MiniLM-L6-v2')  # type: ignore
+                logger.info("RAGSystem: Local RAG enabled with sentence-transformers")
+            except Exception as e:
+                logger.warning(f"RAGSystem: Failed to initialize sentence-transformers, disabling RAG ({e})")
+                self.enabled = False
+        else:
+            if SentenceTransformer is None:
+                logger.info("RAGSystem: sentence-transformers not installed; RAG disabled (returns empty context)")
+            else:
+                logger.info("RAGSystem: ENABLE_LOCAL_RAG!=1; RAG disabled (returns empty context)")
         self.faqs = self._load_faqs()
         self.similarity_threshold = 0.7  # Cosine similarity threshold
         
     def _load_faqs(self) -> List[FAQEntry]:
-        """Load and embed DeFi FAQs"""
+        """Load and embed DeFi FAQs (embeddings only when enabled)."""
         faqs_data = self._get_default_faqs()
         faqs = []
         
         for faq_data in faqs_data:
-            # Generate embedding for the question
-            embedding = self.model.encode(faq_data["question"]).tolist()
+            embedding = None
+            if self.enabled and self.model is not None:
+                try:
+                    embedding = self.model.encode(faq_data["question"]).tolist()  # type: ignore
+                except Exception as e:
+                    logger.warning(f"RAGSystem: failed to embed FAQ '{faq_data['id']}': {e}")
             
             faq = FAQEntry(
                 id=faq_data["id"],
@@ -52,7 +79,7 @@ class RAGSystem:
             )
             faqs.append(faq)
         
-        logger.info(f"Loaded {len(faqs)} DeFi FAQs with embeddings")
+        logger.info(f"Loaded {len(faqs)} DeFi FAQs (embeddings={'enabled' if self.enabled else 'disabled'})")
         return faqs
     
     def _get_default_faqs(self) -> List[Dict[str, Any]]:
@@ -181,13 +208,19 @@ class RAGSystem:
         ]
     
     def query_faqs(self, query: str, top_k: int = 2) -> List[RAGResult]:
-        """Query FAQs using vector similarity search"""
+        """Query FAQs using vector similarity search. Returns [] when disabled."""
+        if not self.enabled or self.model is None:
+            return []
         if not self.faqs:
             logger.warning("No FAQs loaded for RAG query")
             return []
         
         # Encode the query
-        query_embedding = self.model.encode([query])
+        try:
+            query_embedding = self.model.encode([query])
+        except Exception as e:
+            logger.warning(f"RAGSystem: failed to encode query: {e}")
+            return []
         
         # Calculate cosine similarities
         results = []
