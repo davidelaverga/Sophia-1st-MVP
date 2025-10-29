@@ -6,7 +6,6 @@ from typing import Dict, Any, Optional, List, TypedDict
 from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
-from langchain.schema import BaseMessage, HumanMessage, AIMessage
 
 from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply
 from app.services.emotion import analyze_emotion_audio
