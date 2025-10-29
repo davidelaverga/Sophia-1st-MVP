@@ -657,31 +657,32 @@ async def ws_voice(websocket: WebSocket):
                     wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                     logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)}")
 
-                    # Use Voxtral audio streaming for fastest response (bypasses STT step)
-                    # Stream tokens from LangChain agent using Voxtral streaming internally
+                    # Process audio through LangGraph pipeline (non-streaming for reliability)
                     reply_tokens = []
                     tokens_sent = 0
                     try:
-                        for tok in langgraph_service.stream_conversation_response(wav_utter):
-                            if not tok:
-                                continue
-                            reply_tokens.append(tok)
-                            await _ws_send_json(websocket, {"type": "token", "text": tok})
+                        result = langgraph_service.process_conversation(
+                            audio_bytes=wav_utter,
+                            session_id=None,
+                            collect_evaluation_data=True,
+                        )
+                        reply_full = (result.get("reply") or "").strip()
+                        if not reply_full:
+                            reply_full = "I'm having trouble processing that. Could you try again?"
+                        # Simulate streaming by chunking
+                        chunk_size = 12
+                        for i in range(0, len(reply_full), chunk_size):
+                            chunk = reply_full[i:i+chunk_size]
+                            reply_tokens.append(chunk)
+                            await _ws_send_json(websocket, {"type": "token", "text": chunk})
                             tokens_sent += 1
+                        logger.info(f"WS: LangGraph processed successfully, reply_len={len(reply_full)}")
                     except Exception as e:
-                        logger.warning(f"WS: LangChain agent streaming failed: {e}")
-                    
-                    # Fallback to text-based streaming if Voxtral audio streaming failed
-                    if tokens_sent == 0:
-                        logger.warning("WS: No tokens from Voxtral stream, falling back to rule-based response")
-                        # Since we don't have transcription, use a generic DeFi response
-                        fallback_response = "I'm here to help with DeFi questions. Could you please repeat your question?"
-                        for i, char in enumerate(fallback_response):
-                            if i % 8 == 0:  # Send chunks of ~8 chars
-                                chunk = fallback_response[i:i+8]
-                                reply_tokens.append(chunk)
-                                await _ws_send_json(websocket, {"type": "token", "text": chunk})
-                                tokens_sent += 1
+                        logger.error(f"WS: LangGraph processing failed: {e}", exc_info=True)
+                        reply_full = "I'm having trouble right now. Please try again."
+                        await _ws_send_json(websocket, {"type": "token", "text": reply_full})
+                        reply_tokens.append(reply_full)
+                        tokens_sent += 1
                     
                     # Final fallback: synthetic chunking
                     if tokens_sent == 0:
