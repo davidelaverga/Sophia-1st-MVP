@@ -1,9 +1,20 @@
 import logging
+import sys
 from typing import Optional
 from pydantic import BaseModel
 from app.config import get_settings
 
 logger = logging.getLogger("emotion")
+
+# Apply nest_asyncio for async Phoenix support
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+    logger.info("✅ nest_asyncio applied successfully")
+except ImportError:
+    logger.warning("⚠️ nest_asyncio not installed")
+except Exception as e:
+    logger.warning(f"⚠️ Could not apply nest_asyncio: {e}")
 
 
 class Emotion(BaseModel):

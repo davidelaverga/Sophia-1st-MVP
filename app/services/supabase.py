@@ -14,7 +14,7 @@ load_dotenv(find_dotenv(), override=False)
 # Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio")
+SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio-uploads")
 SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
 SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
 
@@ -135,7 +135,7 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         data["id"] = str(uuid.uuid4())
     # Default optional fields to None if absent
     data.setdefault("transcript", None)
-    data.setdefault("reply", None)
+    data.setdefault("response", None)  # Changed from "reply"
     data.setdefault("user_emotion_label", None)
     data.setdefault("user_emotion_confidence", None)
     data.setdefault("sophia_emotion_label", None)
