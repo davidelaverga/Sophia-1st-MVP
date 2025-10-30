@@ -89,6 +89,13 @@ All configuration lives in environment variables. Use the provided [.env.templat
 
 🚨 **Production note:** Every deployment must set `API_KEYS`, Supabase credentials, and the external AI keys the environment relies on. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
 
+### **Supabase Database & Migrations**
+
+- Export a direct Postgres connection string from Supabase (`Settings → Database → Connection string`) and set it as `SUPABASE_DB_DSN` in your environment.
+- Apply the ORM-managed schema by running `alembic upgrade head`. The Alembic configuration automatically picks up `SUPABASE_DB_DSN` when invoked from the repo root.
+- Use the SQLAlchemy helpers in `app/db/session.py` (`session_scope`, `get_engine`, `get_session_factory`) whenever the backend needs ORM access to Supabase.
+- The declarative models in `app/db/models.py` mirror the SQL scripts in this repo (`users`, `conversation_sessions`, `emotion_scores`, `user_consents`). Regenerate migrations with `alembic revision --autogenerate -m "<message>"` after structural changes.
+
 ### **Testing & CI**
 
 - Run `pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.

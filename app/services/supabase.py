@@ -252,7 +252,7 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
 def has_user_consent(discord_id: str) -> bool:
     """Check if a given Discord user has a consent record in Supabase.
     
-    Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip text)
+    Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip_address text)
     """
     try:
         client = get_supabase()
@@ -273,7 +273,7 @@ def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip
             "discord_id": discord_id,
             "consent_hash": consent_hash,
             "timestamp": timestamp_iso,
-            "ip": ip or "",
+            "ip_address": ip or "",
         }
         client = get_supabase()
         with _supabase_span("supabase.insert_user_consent"):
