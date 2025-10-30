@@ -28,7 +28,7 @@ def insert_conversation_session_sql(data: Dict[str, Any]) -> None:
         "id",
         "user_id",
         "transcript",
-        "reply",
+        "response",  # Changed from "reply"
         "user_emotion_label",
         "user_emotion_confidence",
         "sophia_emotion_label",

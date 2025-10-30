@@ -368,7 +368,7 @@ async def chat(
         insert_conversation_session({
             "id": str(session_id),
             "transcript": transcript,
-            "reply": reply,
+            "response": reply,
             "user_emotion_label": user_emotion.label,
             "user_emotion_confidence": user_emotion.confidence,
             "sophia_emotion_label": sophia_emotion.label,
@@ -425,7 +425,7 @@ async def defi_chat(
             insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
-                "reply": result["reply"],
+                "response": result["reply"],
                 "user_emotion_label": result["user_emotion"]["label"],
                 "user_emotion_confidence": result["user_emotion"]["confidence"],
                 "sophia_emotion_label": result["sophia_emotion"]["label"],
@@ -532,7 +532,7 @@ async def defi_chat_stream(
                 insert_conversation_session({
                     "id": session_id_local,
                     "transcript": transcript,
-                    "reply": reply,
+                    "response": reply,
                     "user_emotion_label": user_emotion.label,
                     "user_emotion_confidence": user_emotion.confidence,
                     "sophia_emotion_label": (sophia_emotion.label if sophia_emotion else None),
@@ -780,7 +780,7 @@ async def ws_voice(websocket: WebSocket):
         if last_final_text or last_reply_text:
             insert_conversation_session({
                 "transcript": last_final_text,
-                "reply": last_reply_text,
+                "response": last_reply_text,
                 "audio_url": last_audio_url or None,
             })
     except Exception:
@@ -807,7 +807,7 @@ async def text_chat(
             insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
-                "reply": result["reply"],
+                "response": result["reply"],
                 "audio_url": result["audio_url"] or None,
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
