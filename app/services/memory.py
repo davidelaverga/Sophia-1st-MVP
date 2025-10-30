@@ -164,9 +164,12 @@ class MemoryManager:
     def _build_memory_from_session(self, session_data: Dict[str, Any]) -> SessionMemory:
         """Build SessionMemory from Supabase session data"""
         # This is a simplified version - in practice you'd need more sophisticated parsing
+        # Support both 'response' (new) and 'reply' (old) for backward compatibility
+        response_text = session_data.get("response") or session_data.get("reply", "")
+        
         turn = ConversationTurn(
             query=session_data.get("transcript", ""),
-            response=session_data.get("reply", ""),
+            response=response_text,
             user_emotion=session_data.get("user_emotion_label", "neutral"),
             sophia_emotion=session_data.get("sophia_emotion_label", "neutral"),
             intent="unknown",  # Would need to store this separately
