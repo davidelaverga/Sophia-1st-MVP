@@ -172,9 +172,14 @@ def generate_llm_reply_with_context(
     Returns:
         Generated response string
     """
-    # Handle empty input
+    # Handle empty input - context-aware fallback
     if not user_question or not str(user_question).strip():
-        return "I didn't catch that. Could you rephrase your question about DeFi?"
+        if intent == "defi_question":
+            return "I didn't catch that. Could you rephrase your question about DeFi?"
+        elif intent == "emotional_support":
+            return "I'm here to listen. What's on your mind?"
+        else:
+            return "I didn't catch that. Could you say that again?"
     
     try:
         # Build system message with ALL context
@@ -250,15 +255,24 @@ def generate_llm_reply_with_context(
         
     except Exception as e:
         logger.warning(f"LLM with context failed: {e}")
-        # Rule-based fallback
+        # Context-aware rule-based fallback
         lower = user_question.lower()
+        
+        # DeFi-specific keywords
         if "yield" in lower:
             return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
         if "staking" in lower:
             return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
         if "defi" in lower:
             return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-        return "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+        
+        # Intent-based fallback
+        if intent == "emotional_support":
+            return "I understand you're going through something. Remember, it's okay to take a step back and breathe. I'm here for you."
+        elif intent == "defi_question":
+            return "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+        else:
+            return "I'm here to help! Feel free to ask me about DeFi or just chat."
 
 
 def stream_generate_llm_reply(text: str):
@@ -269,7 +283,7 @@ def stream_generate_llm_reply(text: str):
     """
     # Handle empty input before attempting API
     if not text or not str(text).strip():
-        yield "I didn't catch that. Could you rephrase your question about DeFi?"
+        yield "I didn't catch that. Could you say that again?"
         return
     
     client = _client()

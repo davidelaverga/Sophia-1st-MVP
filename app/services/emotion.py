@@ -7,12 +7,13 @@ from app.config import get_settings
 logger = logging.getLogger("emotion")
 
 # Apply nest_asyncio for async Phoenix support
+# This must be applied at module import time, before FastAPI creates event loops
 try:
     import nest_asyncio
     nest_asyncio.apply()
     logger.info("✅ nest_asyncio applied successfully")
 except ImportError:
-    logger.warning("⚠️ nest_asyncio not installed")
+    logger.warning("⚠️ nest_asyncio not installed - Phoenix evaluations may fail in async context")
 except Exception as e:
     logger.warning(f"⚠️ Could not apply nest_asyncio: {e}")
 
@@ -56,6 +57,13 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
         if label not in {"positive", "neutral", "negative"}:
             label = "neutral"
         return Emotion(label=label, confidence=score)
+    except RuntimeError as e:
+        # Specifically catch event loop errors
+        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
+            logger.warning(f"Phoenix emotion model failed due to event loop conflict: {e}. Falling back to Mistral LLM.")
+        else:
+            logger.warning(f"Phoenix emotion model failed with RuntimeError: {e}")
+        return None
     except Exception as e:
         logger.warning(f"Phoenix emotion model failed: {e}")
         return None
@@ -218,6 +226,13 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         
         # Confidence not provided by default template; set midpoint
         return Emotion(label=db_label, confidence=0.8)  # Higher confidence with improved template
+    except RuntimeError as e:
+        # Specifically catch event loop errors
+        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
+            logger.warning(f"Audio emotion classification failed due to event loop conflict: {e}. Returning neutral.")
+        else:
+            logger.warning(f"Audio emotion classification failed with RuntimeError: {e}")
+        return Emotion(label="neutral", confidence=0.5)
     except Exception as e:
         logger.warning(f"Audio emotion classification failed: {e}")
         return Emotion(label="neutral", confidence=0.5)
