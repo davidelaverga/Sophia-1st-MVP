@@ -254,25 +254,59 @@ def generate_llm_reply_with_context(
         return str(content).strip()
         
     except Exception as e:
-        logger.warning(f"LLM with context failed: {e}")
+        # ✅ ENHANCED ERROR LOGGING
+        logger.error(f"❌ LLM with context failed: {type(e).__name__}: {str(e)}")
+        
+        # Check API key configuration
+        settings = get_settings()
+        has_key = bool(getattr(settings, 'MISTRAL_API_KEY', None))
+        key_length = len(settings.MISTRAL_API_KEY) if has_key else 0
+        logger.error(f"🔑 MISTRAL_API_KEY status: present={has_key}, length={key_length}")
+        
+        # Log API response details if available
+        if hasattr(e, 'response'):
+            try:
+                status = getattr(e.response, 'status_code', 'N/A')
+                body = getattr(e.response, 'text', 'N/A')[:500]
+                logger.error(f"📡 API Response Status: {status}")
+                logger.error(f"📡 API Response Body: {body}")
+            except:
+                pass
+        
+        # Log the full traceback for debugging
+        import traceback
+        logger.error(f"📋 Full traceback:\n{traceback.format_exc()}")
+        
         # Context-aware rule-based fallback
         lower = user_question.lower()
+        
+        # Small talk fallbacks (NEW - based on intent)
+        if intent == "small_talk":
+            if any(greeting in lower for greeting in ["hello", "hi", "hey", "good morning", "good evening"]):
+                return "Hello! I'm Sophia, your DeFi education assistant. How can I help you today?"
+            if "how are you" in lower or "how're you" in lower:
+                return "I'm doing great, thanks for asking! I'm here to help you learn about DeFi. What would you like to know?"
+            if "who are you" in lower or "what are you" in lower:
+                return "I'm Sophia, an AI assistant specializing in DeFi education. I help people understand decentralized finance."
+            if "your name" in lower or "you called" in lower:
+                return "My name is Sophia. I'm here to help you navigate the world of DeFi!"
+            # Generic small talk
+            return "I'm here to help! Feel free to ask me about DeFi, or we can just chat."
         
         # DeFi-specific keywords
         if "yield" in lower:
             return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
         if "staking" in lower:
             return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-        if "defi" in lower:
+        if "defi" in lower or "crypto" in lower:
             return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
         
-        # Intent-based fallback
+        # Emotional support fallback
         if intent == "emotional_support":
-            return "I understand you're going through something. Remember, it's okay to take a step back and breathe. I'm here for you."
-        elif intent == "defi_question":
-            return "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
-        else:
-            return "I'm here to help! Feel free to ask me about DeFi or just chat."
+            return "I understand you're going through something. Remember, it's okay to take a step back. I'm here for you."
+        
+        # Final generic fallback
+        return "I'm here to help! What would you like to know?"
 
 
 def stream_generate_llm_reply(text: str):
