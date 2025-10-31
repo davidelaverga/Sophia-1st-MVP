@@ -243,11 +243,24 @@ class TTSNode:
         
         try:
             # Synthesize with Inworld/Boson AI
+            logger.info(f"TTSNode: Calling Inworld TTS for text: '{state['llm_response'][:50]}...'")
             tts_bytes = synthesize_inworld(state["llm_response"])
+            
+            logger.info(f"TTSNode: Received {len(tts_bytes)} bytes from Inworld")
+            
+            # Check for mock audio
+            is_mock = tts_bytes.startswith(b"ID3mock") or len(tts_bytes) < 100
+            if is_mock:
+                logger.warning("TTSNode: Received mock audio from Inworld (likely API key issue)")
+                raise Exception("Mock audio received - triggering fallback")
             
             # Upload and get URL
             file_name = f"sophia_{int(time.time()*1000)}_{state['session_id']}.mp3"
+            logger.info(f"TTSNode: Uploading to Supabase as {file_name}")
+            
             audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
+            
+            logger.info(f"TTSNode: Successfully uploaded to {audio_url}")
             
             # Analyze Sophia's emotion from TTS output
             sophia_emotion = analyze_emotion_audio(tts_bytes)
@@ -263,12 +276,24 @@ class TTSNode:
                        f"sophia_emotion={sophia_emotion.label}({sophia_emotion.confidence:.2f})")
             
         except Exception as e:
-            logger.error(f"TTSNode Inworld failed: {e}")
-            # Fallback to Boson AI or other TTS service
-            state["fallback_used"]["tts"] = "boson_fallback"
+            logger.error(f"❌ TTSNode Inworld failed: {type(e).__name__}: {str(e)}")
+            
+            # Log detailed error info
+            import traceback
+            logger.error(f"📋 TTSNode error traceback:\n{traceback.format_exc()}")
+            
+            # Fallback to OpenAI TTS
+            state["fallback_used"]["tts"] = "openai_fallback"
             try:
-                tts_bytes = self._boson_ai_fallback(state["llm_response"])
+                logger.info("TTSNode: Attempting OpenAI TTS fallback")
+                tts_bytes = self._openai_tts_fallback(state["llm_response"])
+                
+                if not tts_bytes or len(tts_bytes) < 100:
+                    raise Exception("OpenAI TTS returned no/invalid audio")
+                
                 file_name = f"sophia_fallback_{int(time.time()*1000)}_{state['session_id']}.mp3"
+                logger.info(f"TTSNode fallback: Uploading OpenAI audio as {file_name}")
+                
                 audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
                 sophia_emotion = analyze_emotion_audio(tts_bytes)
                 
@@ -278,24 +303,34 @@ class TTSNode:
                     label=sophia_emotion.label,
                     confidence=sophia_emotion.confidence
                 )
+                logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
+                
             except Exception as fallback_error:
-                logger.error(f"TTS fallback also failed: {fallback_error}")
-                # Final fallback - empty audio
+                logger.error(f"❌ TTS fallback also failed: {type(fallback_error).__name__}: {str(fallback_error)}")
+                logger.error(f"📋 Fallback error traceback:\n{traceback.format_exc()}")
+                
+                # Final fallback - empty audio but continue
                 state["audio_url"] = ""
                 state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.5)
+                logger.warning("⚠️ TTSNode: Using empty audio URL as final fallback")
         
         return state
     
-    def _boson_ai_fallback(self, text: str) -> bytes:
-        """Fallback TTS using Boson AI or OpenAI TTS"""
+    def _openai_tts_fallback(self, text: str) -> bytes:
+        """Fallback TTS using OpenAI"""
         try:
-            # Try OpenAI TTS as fallback
             import openai
-            client = openai.OpenAI(api_key=get_settings().OPENAI_API_KEY)
+            settings = get_settings()
+            
+            if not settings.OPENAI_API_KEY:
+                logger.error("OpenAI API key not configured")
+                return b""
+            
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
             
             response = client.audio.speech.create(
                 model="tts-1",
-                voice="alloy",
+                voice="nova",  # Changed from "alloy" for better female voice
                 input=text,
                 response_format="mp3"
             )
@@ -303,8 +338,7 @@ class TTSNode:
             return response.content
             
         except Exception as e:
-            logger.error(f"Boson AI fallback failed: {e}")
-            # Return empty bytes as final fallback
+            logger.error(f"OpenAI TTS fallback failed: {e}")
             return b""
 
 class EvalLogger:
