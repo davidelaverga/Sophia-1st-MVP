@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import mimetypes
 from typing import Dict
@@ -15,21 +16,21 @@ _client_base_url_logged = False
 def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
     """Return a File-compatible payload dict for Voxtral uploads."""
 
-    default_name = "audio.wav"
     default_mime = "audio/wav"
 
-    if not wav_bytes:
-        return {
-            "file_name": default_name,
-            "content": wav_bytes,
-            "content_type": default_mime,
-        }
+    # Provide a file-like object even when the clip is empty so the SDK's
+    # multipart builder always receives a stream to upload.
+    buffer = io.BytesIO(wav_bytes or b"")
 
     # Rough magic-byte sniffing for better filenames (SDK inspects extension).
-    header = wav_bytes[:4]
+    header = (wav_bytes or b"")[:4]
     if header == b"RIFF":
         ext = ".wav"
-    elif header[:3] == b"ID3" or (wav_bytes[0] == 0xFF and (wav_bytes[1] & 0xE0) == 0xE0):
+    elif header[:3] == b"ID3" or (
+        wav_bytes
+        and wav_bytes[0] == 0xFF
+        and (wav_bytes[1] & 0xE0) == 0xE0
+    ):
         ext = ".mp3"
     elif header == b"OggS":
         ext = ".ogg"
@@ -41,9 +42,11 @@ def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
     filename = f"audio{ext}"
     mime = mimetypes.types_map.get(ext.lower(), default_mime)
 
+    buffer.name = filename
+
     return {
         "file_name": filename,
-        "content": wav_bytes,
+        "content": buffer,
         "content_type": mime,
     }
 
