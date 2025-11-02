@@ -919,7 +919,7 @@ async def text_chat_stream(
                     mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
                 except Exception:
                     mock_audio = False
-                    sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
+                sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
             except Exception:
                 logger.exception("Synthesis or upload failed in text_chat_stream")
 
