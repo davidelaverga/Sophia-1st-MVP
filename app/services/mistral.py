@@ -1,17 +1,63 @@
 import base64
-import io
-from typing import List, Optional
-from mistralai import Mistral
-from app.config import get_settings
 import logging
+import mimetypes
+from typing import List, Optional, Tuple
+from urllib.parse import urljoin
+
+from mistralai import Mistral
+
+from app.config import get_settings
+
 logger = logging.getLogger("sophia-backend")
+_client_base_url_logged = False
+
+
+def _audio_tuple_args(wav_bytes: bytes) -> Tuple[str, bytes, str]:
+    """Return (filename, data, mime_type) tuple for Voxtral uploads."""
+
+    default_name = "audio.wav"
+    default_mime = "audio/wav"
+
+    if not wav_bytes:
+        return default_name, wav_bytes, default_mime
+
+    # Rough magic-byte sniffing for better filenames (SDK inspects extension).
+    header = wav_bytes[:4]
+    if header == b"RIFF":
+        ext = ".wav"
+    elif header[:3] == b"ID3" or (wav_bytes[0] == 0xFF and (wav_bytes[1] & 0xE0) == 0xE0):
+        ext = ".mp3"
+    elif header == b"OggS":
+        ext = ".ogg"
+    elif header == bytes([0x1A, 0x45, 0xDF, 0xA3]):
+        ext = ".webm"
+    else:
+        ext = ".wav"
+
+    filename = f"audio{ext}"
+    mime = mimetypes.types_map.get(ext.lower(), default_mime)
+
+    return filename, wav_bytes, mime
 
 
 def _client() -> Mistral:
     settings = get_settings()
     if not settings.MISTRAL_API_KEY:
         raise RuntimeError("MISTRAL_API_KEY is not set")
-    return Mistral(api_key=settings.MISTRAL_API_KEY)
+    client = Mistral(
+        api_key=settings.MISTRAL_API_KEY,
+        server_url=settings.MISTRAL_API_BASE,
+    )
+
+    global _client_base_url_logged
+    if not _client_base_url_logged:
+        logger.info(
+            "Configured Mistral client base URL: %s",
+            settings.MISTRAL_API_BASE,
+        )
+        _client_base_url_logged = True
+
+    return client
 
 
 def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
@@ -23,33 +69,16 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
     # Preferred: Mistral transcription endpoint (voxtral-large-latest for best accuracy)
     try:
         client = _client()
-        # Provide a filename; SDK inspects content
-        # Detect common audio container by magic bytes to choose a helpful filename
-        def _detect_ext(data: bytes) -> str:
-            try:
-                if not data or len(data) < 4:
-                    return ".wav"
-                b0 = data[:4]
-                if b0 == b"RIFF":
-                    return ".wav"
-                if b0[:3] == b"ID3" or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
-                    return ".mp3"
-                if data[:4] == b"OggS":
-                    return ".ogg"
-                # WebM/Matroska EBML header
-                if data[:4] == bytes([0x1A, 0x45, 0xDF, 0xA3]):
-                    return ".webm"
-                return ".wav"
-            except Exception:
-                return ".wav"
-        file_name = f"audio{_detect_ext(wav_bytes)}"
-        bio = io.BytesIO(wav_bytes)
-        resp = client.audio.transcriptions.complete(
+        endpoint = urljoin(settings.MISTRAL_API_BASE.rstrip("/") + "/", "v1/audio/transcriptions")
+        logger.info(
+            "Calling Mistral transcription endpoint %s with %d bytes",
+            endpoint,
+            len(wav_bytes),
+        )
+
+        resp = client.audio.transcriptions.create(
             model="voxtral-large-latest",
-            file={
-                "content": bio,
-                "file_name": file_name,
-            },
+            file=_audio_tuple_args(wav_bytes),
         )
         # Try robust extraction from SDK response
         # Known SDK returns may have attributes like 'text' or dict-like structures
@@ -69,7 +98,37 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
             except Exception:
                 text = str(resp)
         return text
-    except Exception:
+    except Exception as e:
+        status_code = None
+        response_body = None
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            status_code = getattr(resp, "status_code", None)
+            response_body = getattr(resp, "text", None) or getattr(resp, "content", None)
+            if response_body is None:
+                try:
+                    response_body = resp.json()
+                except Exception:
+                    response_body = None
+        if status_code is None:
+            status_code = getattr(e, "status_code", None)
+        if response_body is None:
+            response_body = getattr(e, "body", None)
+        if isinstance(response_body, (bytes, bytearray)):
+            try:
+                response_body = response_body.decode("utf-8", errors="replace")
+            except Exception:
+                response_body = repr(response_body)
+        if response_body is not None and len(str(response_body)) > 1000:
+            response_body = f"{str(response_body)[:1000]}…"
+
+        logger.warning(
+            "Mistral transcription failed (status=%s, body=%s): %s",
+            status_code,
+            response_body,
+            e,
+            exc_info=True,
+        )
         # Fallback: Gemini if available; otherwise empty string
         if getattr(settings, "GOOGLE_API_KEY", None):
             try:
