@@ -51,6 +51,69 @@ def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
     }
 
 
+_RESPONSES_AVAILABLE = True
+
+
+def _extract_http_details(exc: Exception) -> Tuple[Optional[int], Optional[str]]:
+    """Best-effort extraction of status code and textual response from an exception."""
+
+    status: Optional[int] = None
+    text: Optional[str] = None
+
+    for attr in ("status_code", "status"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            try:
+                status = int(value)
+                break
+            except (TypeError, ValueError):
+                pass
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        for attr in ("status_code", "status"):
+            value = getattr(response, attr, None)
+            if value is not None:
+                try:
+                    status = int(value)
+                    break
+                except (TypeError, ValueError):
+                    pass
+
+        text_candidate = None
+        for attr in ("text", "content", "body"):
+            value = getattr(response, attr, None)
+            if callable(value):
+                try:
+                    value = value()
+                except Exception:
+                    value = None
+            if value is None:
+                continue
+            if isinstance(value, bytes):
+                try:
+                    value = value.decode("utf-8", "ignore")
+                except Exception:
+                    value = None
+            if isinstance(value, str) and value.strip():
+                text_candidate = value.strip()
+                break
+        if text_candidate:
+            text = text_candidate
+
+    if text is None:
+        for attr in ("message", "detail"):
+            value = getattr(exc, attr, None)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
+
+    if text is not None and len(text) > 500:
+        text = text[:497] + "..."
+
+    return status, text
+
+
 def _client() -> Mistral:
     settings = get_settings()
     if not settings.MISTRAL_API_KEY:
@@ -166,12 +229,13 @@ def generate_llm_reply(text: str) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
         return "I didn’t catch that. Could you rephrase your question about DeFi?"
+    global _RESPONSES_AVAILABLE
     try:
         client = _client()
         # Prefer Responses API when available; fallback to Chat API for older SDKs
-        try:
-            resp_iface = getattr(client, "responses", None)
-            if resp_iface is not None:
+        resp_iface = getattr(client, "responses", None)
+        if resp_iface is not None and _RESPONSES_AVAILABLE:
+            try:
                 r = resp_iface.create(
                     model="mistral-large-latest",
                     input=[
@@ -189,10 +253,26 @@ def generate_llm_reply(text: str) -> str:
                 if isinstance(out, str) and out.strip():
                     return out.strip()
                 return str(r)
-        except Exception:
-            pass
+            except Exception as responses_exc:
+                _RESPONSES_AVAILABLE = False
+                status, body = _extract_http_details(responses_exc)
+                if status is not None and 400 <= status < 500:
+                    consequence = "Payload may be invalid; continuing with Chat API."
+                else:
+                    consequence = "Disabling Responses API for this process and using Chat API."
+                details = []
+                if status is not None:
+                    details.append(f"status={status}")
+                if body:
+                    details.append(f"response={body}")
+                detail_str = ", ".join(details) if details else "no additional diagnostics"
+                logger.warning(
+                    "Mistral Responses API call failed (%s). %s",
+                    detail_str,
+                    consequence,
+                )
 
-        # Chat API fallback
+        # Chat API fallback (current production path)
         r2 = client.chat.complete(
             model="mistral-large-latest",
             messages=[
