@@ -1,7 +1,7 @@
 import base64
 import logging
 import mimetypes
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
 from mistralai import Mistral
@@ -12,14 +12,18 @@ logger = logging.getLogger("sophia-backend")
 _client_base_url_logged = False
 
 
-def _audio_tuple_args(wav_bytes: bytes) -> Tuple[str, bytes, str]:
-    """Return (filename, data, mime_type) tuple for Voxtral uploads."""
+def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
+    """Return a File-compatible payload dict for Voxtral uploads."""
 
     default_name = "audio.wav"
     default_mime = "audio/wav"
 
     if not wav_bytes:
-        return default_name, wav_bytes, default_mime
+        return {
+            "file_name": default_name,
+            "content": wav_bytes,
+            "content_type": default_mime,
+        }
 
     # Rough magic-byte sniffing for better filenames (SDK inspects extension).
     header = wav_bytes[:4]
@@ -37,7 +41,11 @@ def _audio_tuple_args(wav_bytes: bytes) -> Tuple[str, bytes, str]:
     filename = f"audio{ext}"
     mime = mimetypes.types_map.get(ext.lower(), default_mime)
 
-    return filename, wav_bytes, mime
+    return {
+        "file_name": filename,
+        "content": wav_bytes,
+        "content_type": mime,
+    }
 
 
 def _client() -> Mistral:
@@ -76,9 +84,9 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
             len(wav_bytes),
         )
 
-        resp = client.audio.transcriptions.create(
+        resp = client.audio.transcriptions.complete(
             model="voxtral-large-latest",
-            file=_audio_tuple_args(wav_bytes),
+            file=_audio_file_payload(wav_bytes),
         )
         # Try robust extraction from SDK response
         # Known SDK returns may have attributes like 'text' or dict-like structures
