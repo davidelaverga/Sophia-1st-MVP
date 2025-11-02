@@ -1,3 +1,17 @@
+# ========================================
+# CRITICAL: Apply nest_asyncio FIRST - before ANY other imports
+# This MUST be at the absolute top of the file
+# ========================================
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+    _NEST_ASYNC_APPLIED = True
+except:
+    _NEST_ASYNC_APPLIED = False
+
+# ========================================
+# NOW import everything else
+# ========================================
 import logging
 import sys
 from typing import Optional
@@ -6,16 +20,11 @@ from app.config import get_settings
 
 logger = logging.getLogger("emotion")
 
-# Apply nest_asyncio for async Phoenix support
-# This must be applied at module import time, before FastAPI creates event loops
-try:
-    import nest_asyncio
-    nest_asyncio.apply()
-    logger.info("✅ nest_asyncio applied successfully")
-except ImportError:
-    logger.warning("⚠️ nest_asyncio not installed - Phoenix evaluations may fail in async context")
-except Exception as e:
-    logger.warning(f"⚠️ Could not apply nest_asyncio: {e}")
+# Log nest_asyncio status AFTER logger is ready
+if _NEST_ASYNC_APPLIED:
+    logger.info("✅ nest_asyncio applied successfully at module import")
+else:
+    logger.warning("⚠️ nest_asyncio not available - emotion analysis may fail")
 
 
 class Emotion(BaseModel):
