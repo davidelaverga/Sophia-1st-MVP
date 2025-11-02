@@ -46,30 +46,72 @@ class AudioIngestor:
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
         state.setdefault("fallback_used", {})
-        
+
         try:
             # Transcribe using Voxtral + Phoenix emotion analysis
             transcript = transcribe_audio_with_voxtral(state["audio_bytes"])
+            logger.debug(
+                "AudioIngestor: transcribe_audio_with_voxtral returned %s (len=%d)",
+                repr(transcript[:75] if isinstance(transcript, str) else transcript),
+                len(transcript) if isinstance(transcript, str) else -1,
+            )
+
+            # Try Whisper immediately if Voxtral produced an empty transcript
+            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+                logger.warning(
+                    "AudioIngestor: Voxtral returned empty transcript, trying Whisper fallback"
+                )
+                state["fallback_used"]["stt"] = "voxtral_empty_whisper_fallback"
+                transcript = self._whisper_fallback(state["audio_bytes"])
+                whisper_preview = transcript[:50] if isinstance(transcript, str) else transcript
+                logger.info(
+                    "AudioIngestor: Whisper fallback returned %s (len=%d)",
+                    repr(whisper_preview),
+                    len(transcript) if isinstance(transcript, str) else -1,
+                )
+
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
-            
+
             state["transcript"] = transcript
+            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+                logger.error(
+                    "❌ AudioIngestor produced EMPTY transcript for session %s after all fallbacks!",
+                    state["session_id"],
+                )
+                transcript_preview = "EMPTY"
+            else:
+                transcript_preview = transcript[:50] if isinstance(transcript, str) else transcript
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label, 
+                label=user_emotion.label,
                 confidence=user_emotion.confidence
             )
-            
-            logger.info(f"AudioIngestor completed: transcript='{transcript[:50]}...', "
-                       f"emotion={user_emotion.label}({user_emotion.confidence:.2f})")
+
+            logger.info(
+                "AudioIngestor completed: transcript='%s...', emotion=%s(%.2f)",
+                transcript_preview,
+                user_emotion.label,
+                user_emotion.confidence,
+            )
             
         except Exception as e:
             logger.error(f"AudioIngestor failed: {e}")
             # Set fallback flag and try Whisper fallback
             state["fallback_used"]["stt"] = "whisper_fallback"
             state["transcript"] = self._whisper_fallback(state["audio_bytes"])
+            logger.debug(
+                "AudioIngestor: whisper fallback returned %s (len=%d)",
+                repr(state["transcript"][:75] if isinstance(state["transcript"], str) else state["transcript"]),
+                len(state["transcript"]) if isinstance(state["transcript"], str) else -1,
+            )
+            if not state["transcript"]:
+                logger.warning(
+                    "AudioIngestor whisper fallback produced empty transcript for session %s",
+                    state["session_id"],
+                )
             # Still analyze emotion with Phoenix
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label, 
+                label=user_emotion.label,
                 confidence=user_emotion.confidence
             )
         
@@ -100,13 +142,23 @@ class IntentAnalyzer:
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"IntentAnalyzer processing session {state['session_id']}")
-        
+
         transcript = state["transcript"]
-        
+        logger.debug(
+            "IntentAnalyzer: received transcript %s (len=%d)",
+            repr(transcript[:75] if isinstance(transcript, str) else transcript),
+            len(transcript) if isinstance(transcript, str) else -1,
+        )
+        if not transcript:
+            logger.warning(
+                "IntentAnalyzer received empty transcript for session %s",
+                state["session_id"],
+            )
+
         # Simple rule-based intent classification
         intent = self._classify_intent(transcript)
         state["intent"] = intent
-        
+
         logger.info(f"IntentAnalyzer completed: intent={intent}")
         return state
     
@@ -146,14 +198,25 @@ class ResponseGenerator:
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
         state.setdefault("fallback_used", {})
-        
+
         try:
+            transcript = state.get("transcript", "")
+            logger.debug(
+                "ResponseGenerator: using transcript %s (len=%d)",
+                repr(transcript[:75] if isinstance(transcript, str) else transcript),
+                len(transcript) if isinstance(transcript, str) else -1,
+            )
+            if not transcript:
+                logger.warning(
+                    "ResponseGenerator received empty transcript for session %s",
+                    state["session_id"],
+                )
             # Build context from memory and state
             context = self._build_context(state)
-            
+
             # Generate response with Mistral LLM
             response = self._generate_with_context(
-                state.get("transcript", ""),
+                transcript,
                 state.get("intent", ""),
                 state["user_emotion"],
                 context
