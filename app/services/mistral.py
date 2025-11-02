@@ -1,7 +1,7 @@
 import base64
 import logging
 import mimetypes
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from urllib.parse import urljoin
 
 from mistralai import Mistral
