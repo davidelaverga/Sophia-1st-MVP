@@ -162,15 +162,7 @@ def generate_llm_reply_with_context(
 ) -> str:
     """Generate LLM reply with proper context separation."""
     
-    # Log inputs for debugging
-    logger.info(f"🎯 generate_llm_reply_with_context called:")
-    logger.info(f"   user_question: '{user_question[:100]}'")
-    logger.info(f"   intent: {intent}")
-    logger.info(f"   emotion: {emotion_label}")
-    logger.info(f"   rag_context length: {len(rag_context)}")
-    logger.info(f"   memory_context length: {len(memory_context)}")
-    
-    # Handle empty input - context-aware fallback
+    # Handle empty input first - before any logging that might crash
     if not user_question or not str(user_question).strip():
         logger.warning(f"⚠️ Empty user_question received with intent={intent}")
         if intent == "defi_question":
@@ -179,6 +171,14 @@ def generate_llm_reply_with_context(
             return "I'm here to listen. What's on your mind?"
         else:
             return "I didn't catch that. Could you say that again?"
+    
+    # Log inputs for debugging (AFTER type guard to prevent crashes)
+    logger.info(f"🎯 generate_llm_reply_with_context called:")
+    logger.info(f"   user_question: '{user_question[:100]}'")
+    logger.info(f"   intent: {intent}")
+    logger.info(f"   emotion: {emotion_label}")
+    logger.info(f"   rag_context length: {len(rag_context) if rag_context else 0}")
+    logger.info(f"   memory_context length: {len(memory_context) if memory_context else 0}")
     
     try:
         # Build system message with ALL context
