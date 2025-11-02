@@ -160,20 +160,19 @@ def generate_llm_reply_with_context(
     memory_context: str = "",
     intent: str = "small_talk"
 ) -> str:
-    """Generate LLM reply with proper context separation.
+    """Generate LLM reply with proper context separation."""
     
-    Args:
-        user_question: The actual user question/transcript
-        rag_context: RAG-retrieved FAQ context (if any)
-        emotion_label: Detected user emotion
-        memory_context: Conversation history context
-        intent: Detected intent (defi_question, emotional_support, small_talk)
+    # Log inputs for debugging
+    logger.info(f"🎯 generate_llm_reply_with_context called:")
+    logger.info(f"   user_question: '{user_question[:100]}'")
+    logger.info(f"   intent: {intent}")
+    logger.info(f"   emotion: {emotion_label}")
+    logger.info(f"   rag_context length: {len(rag_context)}")
+    logger.info(f"   memory_context length: {len(memory_context)}")
     
-    Returns:
-        Generated response string
-    """
     # Handle empty input - context-aware fallback
     if not user_question or not str(user_question).strip():
+        logger.warning(f"⚠️ Empty user_question received with intent={intent}")
         if intent == "defi_question":
             return "I didn't catch that. Could you rephrase your question about DeFi?"
         elif intent == "emotional_support":
@@ -185,10 +184,10 @@ def generate_llm_reply_with_context(
         # Build system message with ALL context
         system_parts = []
         
-        # Base personality
+        # Base personality  
         system_parts.append("You are Sophia, a knowledgeable and supportive DeFi education mentor.")
         
-        # Add emotional context (awareness, not override)
+        # Add emotional context
         if emotion_label and emotion_label != "neutral":
             system_parts.append(f"\nUser's current emotional state: {emotion_label}. Be aware of this but prioritize factual accuracy.")
         
@@ -196,32 +195,38 @@ def generate_llm_reply_with_context(
         if memory_context:
             system_parts.append(f"\nConversation history: {memory_context}")
         
-        # Add RAG context - THIS IS KEY!
+        # Add RAG context
         if rag_context:
             system_parts.append(f"\n\nRELEVANT KNOWLEDGE BASE:\n{rag_context}")
-            system_parts.append("\n⚠️ IMPORTANT: The knowledge base above contains verified information. When it's relevant to the user's question, use it as your primary source. Paraphrase naturally but stay faithful to the facts provided.")
+            system_parts.append("\n⚠️ IMPORTANT: Use the knowledge base when relevant.")
         
         # Response guidelines based on intent
         system_parts.append("\n\nResponse guidelines:")
         if intent == "defi_question":
-            system_parts.append("- This is a DeFi educational question. Provide accurate, educational answers (50-100 words).")
-            system_parts.append("- If the knowledge base has relevant information, use it directly.")
-            system_parts.append("- Prioritize accuracy over brevity.")
+            system_parts.append("- This is a DeFi educational question. Provide accurate answers (50-100 words).")
         elif intent == "emotional_support":
-            system_parts.append("- The user needs emotional support. Be empathetic while remaining educational.")
-            system_parts.append("- Keep responses supportive but still informative (40-80 words).")
-        else:
-            system_parts.append("- This is casual conversation. Be friendly and concise (20-40 words).")
+            system_parts.append("- Be empathetic while remaining educational (40-80 words).")
+        else:  # small_talk
+            system_parts.append("- This is casual conversation. Be friendly, warm, and conversational (20-40 words).")
+            system_parts.append("- You can engage in general conversation, not just DeFi topics.")
+            system_parts.append("- If asked about yourself, share that you're Sophia, an AI assistant for DeFi education.")
         
         system_message = "".join(system_parts)
         
-        # User message is JUST the question (no context duplication)
+        logger.info(f"📝 System message built: {len(system_message)} chars")
+        logger.info(f"📝 System message preview: {system_message[:200]}...")
+        
+        # User message is JUST the question
         client = _client()
         
+        logger.info(f"🚀 Calling Mistral API...")
+        
         # Try Responses API first
+        response_text = None
         try:
             resp_iface = getattr(client, "responses", None)
             if resp_iface is not None:
+                logger.info("   Using Responses API")
                 r = resp_iface.create(
                     model="mistral-large-latest",
                     input=[
@@ -236,22 +241,34 @@ def generate_llm_reply_with_context(
                     ],
                 )
                 out = getattr(r, "output_text", None)
+                logger.info(f"✅ Responses API returned: type={type(out)}, len={len(str(out)) if out else 0}")
+                logger.info(f"   Response preview: {str(out)[:200] if out else 'None'}")
+                
                 if isinstance(out, str) and out.strip():
-                    return out.strip()
-                return str(r)
-        except Exception:
-            pass
+                    response_text = out.strip()
+                else:
+                    response_text = str(r)
+                    logger.warning(f"⚠️ output_text not found, using str(r): {response_text[:100]}")
+        except Exception as e:
+            logger.warning(f"⚠️ Responses API failed: {type(e).__name__}: {str(e)}")
         
         # Chat API fallback
-        r2 = client.chat.complete(
-            model="mistral-large-latest",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_question},
-            ],
-        )
-        content = getattr(r2.choices[0].message, "content", r2.choices[0].message)
-        return str(content).strip()
+        if not response_text:
+            logger.info("   Using Chat API (fallback)")
+            r2 = client.chat.complete(
+                model="mistral-large-latest",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_question},
+                ],
+            )
+            content = getattr(r2.choices[0].message, "content", r2.choices[0].message)
+            response_text = str(content).strip()
+            logger.info(f"✅ Chat API returned: len={len(response_text)}")
+            logger.info(f"   Response preview: {response_text[:200]}")
+        
+        logger.info(f"🎉 Mistral API SUCCESS - returning response: '{response_text[:100]}'")
+        return response_text
         
     except Exception as e:
         # ✅ ENHANCED ERROR LOGGING
