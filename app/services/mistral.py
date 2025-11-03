@@ -1,7 +1,7 @@
 import base64
 import logging
 import mimetypes
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import urljoin
 
 from mistralai import Mistral
@@ -12,8 +12,8 @@ logger = logging.getLogger("sophia-backend")
 _client_base_url_logged = False
 
 
-def _audio_file_payload(wav_bytes: bytes) -> Tuple[str, bytes, str]:
-    """Return a tuple compatible with the Voxtral SDK's file parameter."""
+def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
+    """Return a dict compatible with the Voxtral SDK's file parameter."""
 
     default_mime = "audio/wav"
 
@@ -40,7 +40,11 @@ def _audio_file_payload(wav_bytes: bytes) -> Tuple[str, bytes, str]:
     filename = f"audio{ext}"
     mime = mimetypes.types_map.get(ext.lower(), default_mime)
 
-    return filename, raw_bytes, mime
+    return {
+        "file_name": filename,
+        "content": raw_bytes,
+        "content_type": mime,
+    }
 
 
 _RESPONSES_AVAILABLE = True
