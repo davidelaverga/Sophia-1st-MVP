@@ -2,7 +2,7 @@ import base64
 import io
 import logging
 import mimetypes
-from typing import Dict
+from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import urljoin
 
 from mistralai import Mistral
