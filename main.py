@@ -13,16 +13,11 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.deps import verify_api_key, limiter
-from app.services.mistral import generate_llm_reply
+from app.services import emotion as emotion_service
+from app.services import mistral as mistral_service
+from app.services import supabase as supabase_service
+from app.services import tts as tts_service
 from app.services.langgraph_service import langgraph_service
-from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
-from app.services.tts import synthesize_inworld, synthesize_inworld_stream
-from app.services.supabase import (
-    get_supabase,
-    upload_audio_and_get_url,
-    insert_emotion_score,
-    insert_conversation_session,
-)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -113,9 +108,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 import os
 if os.path.exists("frontend"):
     app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
-    print("✅ Frontend static files mounted at /frontend")
+    logger.info("Frontend static files mounted at /frontend")
 else:
-    print("ℹ️ Frontend directory not found - running in backend-only mode (frontend served by Vercel)")
+    logger.info(
+        "Frontend directory not found - running in backend-only mode (frontend served by Vercel)"
+    )
 
 # Simple health endpoint for Fly.io checks and container orchestration
 @app.get("/health")
@@ -167,20 +164,21 @@ class TextChatRequest(BaseModel):
 
 
 @app.get("/")
-def root():
+def root(request: Request):
     """Backend status - frontend served separately on Vercel"""
-    if os.path.exists("frontend/index.html"):
-        # Full-stack deployment: serve frontend
+    accepts = request.headers.get("accept", "")
+    if "text/html" in accepts.lower() and os.path.exists("frontend/index.html"):
+        # Full-stack deployment: serve frontend to browser clients requesting HTML
         return FileResponse("frontend/index.html")
-    else:
-        # Backend-only deployment: return API info
-        return {
-            "message": "Sophia AI Backend is running",
-            "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
-            "api_status": "ok",
-            "deployment_mode": "backend-only",
-            "docs_url": "/docs"
-        }
+
+    # Backend-only deployment: return API info (default for API clients/tests)
+    return {
+        "message": "Sophia AI Backend is running",
+        "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
+        "api_status": "ok",
+        "deployment_mode": "backend-only",
+        "docs_url": "/docs",
+    }
 
 @app.get("/api")
 def api_root():
@@ -195,24 +193,49 @@ async def transcribe(
     file: UploadFile = File(...),
     api_key_ok: None = Depends(verify_api_key),
 ):
-    # Accept common audio formats
-    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+    # Accept common audio formats (extension and content type)
+    allowed_extensions = [
+        '.wav',
+        '.webm',
+        '.mp4',
+        '.ogg',
+        '.flac',
+        '.m4a',
+        '.aac',
+    ]
+    allowed_content_types = {
+        'audio/wav',
+        'audio/x-wav',
+        'audio/webm',
+        'audio/ogg',
+        'audio/flac',
+        'audio/mp4',
+        'audio/aac',
+    }
+    filename = (file.filename or '').lower()
+    content_type = (file.content_type or '').lower()
+    if not any(filename.endswith(ext) for ext in allowed_extensions) or content_type not in allowed_content_types:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "File must be a supported audio format."
+                " Supported formats: wav, webm, mp4, ogg, flac, m4a, aac"
+            ),
+        )
 
     session_id = uuid.uuid4()
 
     try:
         wav_bytes = await file.read()
-        text = transcribe_audio_with_voxtral(wav_bytes)
+        text = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
     except Exception as e:
         logger.exception("Transcription failed")
         raise HTTPException(status_code=500, detail="Transcription failed")
 
-    user_emotion = analyze_emotion_audio(wav_bytes)
+    user_emotion = emotion_service.analyze_emotion_audio(wav_bytes)
 
     try:
-        insert_emotion_score(session_id, role="user", emotion=user_emotion)
+        supabase_service.insert_emotion_score(session_id, role="user", emotion=user_emotion)
     except Exception:
         logger.warning("Failed to persist user emotion score; continuing")
 
@@ -230,7 +253,7 @@ async def generate_response(
     api_key_ok: None = Depends(verify_api_key),
 ):
     try:
-        reply = generate_llm_reply(body.text)
+        reply = mistral_service.generate_llm_reply(body.text)
     except Exception:
         logger.exception("LLM response generation failed")
         raise HTTPException(status_code=500, detail="Response generation failed")
@@ -252,7 +275,7 @@ async def generate_response_stream(
     first token and incremental updates.
     """
     try:
-        generator = stream_generate_llm_reply(body.text)
+        generator = mistral_service.stream_generate_llm_reply(body.text)
         return StreamingResponse(generator, media_type="text/plain")
     except Exception:
         logger.exception("Streaming response generation failed")
@@ -270,7 +293,7 @@ async def synthesize(
     api_key_ok: None = Depends(verify_api_key),
 ):
     try:
-        audio_bytes = synthesize_inworld(body.text)
+        audio_bytes = tts_service.synthesize_inworld(body.text)
     except Exception:
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail="Synthesis failed")
@@ -278,16 +301,16 @@ async def synthesize(
     try:
         file_name = f"sophia_{int(time.time()*1000)}.mp3"
         # Fix argument order: first bytes, then optional file_name
-        audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+        audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
     except Exception:
         logger.exception("Audio upload failed")
         raise HTTPException(status_code=500, detail="Audio upload failed")
 
-    sophia_emotion = analyze_emotion_audio(audio_bytes)
+    sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
 
     try:
         session_id = uuid.uuid4()
-        insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+        supabase_service.insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
     except Exception:
         logger.warning("Failed to persist sophia emotion score; continuing")
 
@@ -301,10 +324,35 @@ async def chat(
     file: UploadFile = File(...),
     api_key_ok: None = Depends(verify_api_key),
 ):
-    # Accept common audio formats
-    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+    # Accept common audio formats (extension and content type)
+    allowed_extensions = [
+        '.wav',
+        '.webm',
+        '.mp4',
+        '.ogg',
+        '.flac',
+        '.m4a',
+        '.aac',
+    ]
+    allowed_content_types = {
+        'audio/wav',
+        'audio/x-wav',
+        'audio/webm',
+        'audio/ogg',
+        'audio/flac',
+        'audio/mp4',
+        'audio/aac',
+    }
+    filename = (file.filename or '').lower()
+    content_type = (file.content_type or '').lower()
+    if not any(filename.endswith(ext) for ext in allowed_extensions) or content_type not in allowed_content_types:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "File must be a supported audio format."
+                " Supported formats: wav, webm, mp4, ogg, flac, m4a, aac"
+            ),
+        )
 
     session_id = uuid.uuid4()
 
@@ -314,14 +362,14 @@ async def chat(
         try:
             wav_bytes = await file.read()
             with tracer.start_as_current_span("stt_transcription") as stt_span:
-                transcript = transcribe_audio_with_voxtral(wav_bytes)
+                transcript = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
                 stt_span.set_attribute("transcript.length", len(transcript))
         except Exception:
             logger.exception("Transcription failed in chat")
             raise HTTPException(status_code=500, detail="Transcription failed")
 
         with tracer.start_as_current_span("emotion_analysis_user") as emotion_span:
-            user_emotion = analyze_emotion_audio(wav_bytes)
+            user_emotion = emotion_service.analyze_emotion_audio(wav_bytes)
             emotion_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
             emotion_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
             emotion_span.set_attribute("emotion.type", "user")
@@ -333,7 +381,7 @@ async def chat(
 
         try:
             with tracer.start_as_current_span("llm_generation") as llm_span:
-                reply = generate_llm_reply(transcript)
+                reply = mistral_service.generate_llm_reply(transcript)
                 llm_span.set_attribute("reply.length", len(reply))
         except Exception:
             logger.exception("LLM generation failed in chat")
@@ -341,16 +389,16 @@ async def chat(
 
         try:
             with tracer.start_as_current_span("tts_synthesis_upload"):
-                audio_bytes = synthesize_inworld(reply)
+                audio_bytes = tts_service.synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
                 # Fix argument order: first bytes, then optional file_name
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
         except Exception:
             logger.exception("Synthesis or upload failed in chat")
             raise HTTPException(status_code=500, detail="Synthesis failed")
 
         with tracer.start_as_current_span("emotion_analysis_sophia") as sophia_emotion_span:
-            sophia_emotion = analyze_emotion_audio(audio_bytes)
+            sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
             sophia_emotion_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
             sophia_emotion_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
             sophia_emotion_span.set_attribute("emotion.type", "sophia")
@@ -365,7 +413,7 @@ async def chat(
 
     # Insert conversation first (let DB set timestamps), then emotion scores to satisfy FK
     try:
-        insert_conversation_session({
+        supabase_service.insert_conversation_session({
             "id": str(session_id),
             "transcript": transcript,
             "response": reply,
@@ -376,11 +424,11 @@ async def chat(
             "audio_url": audio_url or None,
         })
         try:
-            insert_emotion_score(session_id, role="user", emotion=user_emotion)
+            supabase_service.insert_emotion_score(session_id, role="user", emotion=user_emotion)
         except Exception:
             logger.warning("Persist user emotion failed; continuing")
         try:
-            insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+            supabase_service.insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
         except Exception:
             logger.warning("Persist sophia emotion failed; continuing")
     except Exception:
@@ -422,7 +470,7 @@ async def defi_chat(
         
         # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
-            insert_conversation_session({
+            supabase_service.insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
                 "response": result["reply"],
@@ -435,11 +483,11 @@ async def defi_chat(
                 "context_memory": str(result["context_memory"]),
             })
             try:
-                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+                supabase_service.insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
             except Exception as e:
                 logger.warning(f"Failed to persist user emotion: {e}")
             try:
-                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+                supabase_service.insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
             except Exception as e:
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
@@ -478,8 +526,8 @@ async def defi_chat_stream(
         nonlocal session_id
         try:
             # STT
-            transcript = transcribe_audio_with_voxtral(wav_bytes)
-            user_emotion = analyze_emotion_audio(wav_bytes)
+            transcript = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
+            user_emotion = emotion_service.analyze_emotion_audio(wav_bytes)
             if session_id is None:
                 session_id_local = str(uuid.uuid4())
                 session_id = session_id_local
@@ -493,7 +541,7 @@ async def defi_chat_stream(
 
             # Stream LLM
             reply_accum = []
-            for chunk in stream_generate_llm_reply(transcript):
+            for chunk in mistral_service.stream_generate_llm_reply(transcript):
                 if not chunk:
                     continue
                 reply_accum.append(chunk)
@@ -506,9 +554,9 @@ async def defi_chat_stream(
 
             # Synthesize TTS and upload
             try:
-                audio_bytes = synthesize_inworld(reply)
+                audio_bytes = tts_service.synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
             except Exception:
                 logger.exception("Synthesis or upload failed in defi_chat_stream")
                 audio_url = None
@@ -523,13 +571,13 @@ async def defi_chat_stream(
                         mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
                     except Exception:
                         mock_audio = False
-                    sophia_emotion = analyze_emotion_audio(audio_bytes)
+                    sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
             except Exception:
                 logger.warning("Sophia emotion analysis failed; continuing")
 
             # Persist conversation first (no explicit created_at), then emotions to satisfy FK
             try:
-                insert_conversation_session({
+                supabase_service.insert_conversation_session({
                     "id": session_id_local,
                     "transcript": transcript,
                     "response": reply,
@@ -540,12 +588,12 @@ async def defi_chat_stream(
                     "audio_url": audio_url or None,
                 })
                 try:
-                    insert_emotion_score(session_id_local, role="user", emotion=user_emotion)
+                    supabase_service.insert_emotion_score(session_id_local, role="user", emotion=user_emotion)
                 except Exception as e:
                     logger.warning(f"Failed to persist user emotion: {e}")
                 try:
                     if sophia_emotion:
-                        insert_emotion_score(session_id_local, role="sophia", emotion=sophia_emotion)
+                        supabase_service.insert_emotion_score(session_id_local, role="sophia", emotion=sophia_emotion)
                 except Exception as e:
                     logger.warning(f"Failed to persist sophia emotion: {e}")
             except Exception as e:
@@ -609,6 +657,9 @@ def _avg_abs_pcm16(buf: bytes) -> float:
 async def ws_voice(websocket: WebSocket):
     # In production, protect with auth (API key/session) via headers or query.
     await websocket.accept()
+    session_id = str(uuid.uuid4())
+    log_prefix = f"[ws_voice:{session_id}]"
+    logger.info(f"{log_prefix} connection accepted")
     SAMPLE_RATE = 16000
     BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
     CHUNK_MS = 200
@@ -627,6 +678,9 @@ async def ws_voice(websocket: WebSocket):
     last_reply_text = ""
     last_audio_url: Optional[str] = None
 
+    first_chunk_logged = False
+    turn_index = 0
+
     try:
         while True:
             msg = await websocket.receive()
@@ -635,6 +689,9 @@ async def ws_voice(websocket: WebSocket):
                 if not chunk:
                     continue
                 pcm_buffer.extend(chunk)
+                if not first_chunk_logged:
+                    logger.debug(f"{log_prefix} first audio chunk received len={len(chunk)}")
+                    first_chunk_logged = True
 
                 # Skip partial transcripts for faster experience - go directly to Voxtral
                 # User doesn't need to see transcription, just fast response
@@ -647,7 +704,7 @@ async def ws_voice(websocket: WebSocket):
                     if not in_speech:
                         in_speech = True
                         utter_start_pos = max(0, len(pcm_buffer) - len(recent))
-                        logger.info(f"WS: speech started at {utter_start_pos} bytes (amp={amp:.1f})")
+                        logger.info(f"{log_prefix} speech started at {utter_start_pos} bytes (amp={amp:.1f})")
                     last_voice_activity = now
 
                 # Endpoint: long enough silence after speech - no transcription needed
@@ -655,20 +712,31 @@ async def ws_voice(websocket: WebSocket):
                     # Extract utterance audio segment for direct Voxtral processing
                     utter_bytes = bytes(pcm_buffer[utter_start_pos:])
                     wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
-                    logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)}")
+                    logger.info(f"{log_prefix} endpoint detected; utterance bytes={len(utter_bytes)}")
 
                     # Process audio through LangGraph pipeline (non-streaming for reliability)
                     reply_tokens = []
                     tokens_sent = 0
+                    turn_index += 1
+                    logger.debug(f"{log_prefix} turn {turn_index} processing via LangGraph")
                     try:
                         result = langgraph_service.process_conversation(
                             audio_bytes=wav_utter,
-                            session_id=None,
+                            session_id=session_id,
                             collect_evaluation_data=True,
                         )
+                        # Align local session identifier with whatever LangGraph persisted
+                        langgraph_session_id = result.get("session_id")
+                        if langgraph_session_id and langgraph_session_id != session_id:
+                            logger.debug(
+                                f"{log_prefix} adopting LangGraph session_id {langgraph_session_id}"
+                            )
+                            session_id = langgraph_session_id
+                            log_prefix = f"[ws_voice:{session_id}]"
                         reply_full = (result.get("reply") or "").strip()
                         if not reply_full:
                             reply_full = "I'm having trouble processing that. Could you try again?"
+                        logger.debug(f"{log_prefix} turn {turn_index} LangGraph reply received len={len(reply_full)}")
                         # Simulate streaming by chunking
                         chunk_size = 12
                         for i in range(0, len(reply_full), chunk_size):
@@ -676,21 +744,21 @@ async def ws_voice(websocket: WebSocket):
                             reply_tokens.append(chunk)
                             await _ws_send_json(websocket, {"type": "token", "text": chunk})
                             tokens_sent += 1
-                        logger.info(f"WS: LangGraph processed successfully, reply_len={len(reply_full)}")
+                        logger.info(f"{log_prefix} LangGraph processed successfully, reply_len={len(reply_full)}")
                     except Exception as e:
-                        logger.error(f"WS: LangGraph processing failed: {e}", exc_info=True)
+                        logger.exception(f"{log_prefix} LangGraph processing failed: {e}")
                         reply_full = "I'm having trouble right now. Please try again."
                         await _ws_send_json(websocket, {"type": "token", "text": reply_full})
                         reply_tokens.append(reply_full)
                         tokens_sent += 1
-                    
+
                     # Final fallback: synthetic chunking
                     if tokens_sent == 0:
                         try:
-                            logger.info("WS: no tokens streamed; using minimal fallback")
+                            logger.info(f"{log_prefix} no tokens streamed; using minimal fallback")
                             full = "Okay."
                         except Exception as e:
-                            logger.warning(f"WS: generate_llm_reply fallback failed: {e}")
+                            logger.warning(f"{log_prefix} generate_llm_reply fallback failed: {e}")
                             full = "Okay."
                         chunk_size = 16
                         for i in range(0, len(full), chunk_size):
@@ -699,8 +767,10 @@ async def ws_voice(websocket: WebSocket):
                         reply_full = full.strip() or "Okay."
                     else:
                         reply_full = "".join(reply_tokens).strip() or "Okay."
-                    logger.info(f"WS: token streaming complete; tokens_sent={tokens_sent}, reply_len={len(reply_full)}")
+                    logger.debug(f"{log_prefix} turn {turn_index} tokens streamed={tokens_sent}")
+                    logger.info(f"{log_prefix} token streaming complete; tokens_sent={tokens_sent}, reply_len={len(reply_full)}")
                     await _ws_send_json(websocket, {"type": "reply_done", "text": reply_full})
+                    logger.debug(f"{log_prefix} turn {turn_index} reply_done event sent")
 
                     # Streaming TTS: split reply into short sentences; for each sentence synthesize once
                     # and emit base64 audio chunks immediately. Also keep URL events for backward compat.
@@ -709,49 +779,52 @@ async def ws_voice(websocket: WebSocket):
                     audio_url_last = None
                     for i, sent in enumerate(sentences):
                         try:
-                            logger.info(f"WS: TTS streaming for sentence {i+1}/{len(sentences)}, len={len(sent)}")
+                            logger.debug(f"{log_prefix} TTS streaming sentence {i+1}/{len(sentences)} len={len(sent)}")
                             import base64 as _b64
                             streamed_any = False
                             try:
                                 # Stream each sentence as individual audio chunks
-                                for pcm_chunk in synthesize_inworld_stream(sent, sample_rate_hz=48000) or []:
+                                for pcm_chunk in tts_service.synthesize_inworld_stream(sent, sample_rate_hz=48000) or []:
                                     streamed_any = True
                                     b64 = _b64.b64encode(pcm_chunk).decode('ascii')
                                     # audio/wav because first chunk includes WAV header, subsequent are PCM
                                     await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": b64, "eos": False})
+                                    logger.debug(f"{log_prefix} streamed audio chunk sentence={i+1}")
                             except Exception:
-                                logger.exception("WS: inworld streaming failed; falling back to non-streaming TTS for this sentence")
-                            
+                                logger.exception(f"{log_prefix} inworld streaming failed; falling back to non-streaming TTS for this sentence")
+
                             if not streamed_any:
                                 # Fallback: synthesize whole sentence as complete audio
                                 try:
-                                    audio_bytes = synthesize_inworld(sent)
+                                    audio_bytes = tts_service.synthesize_inworld(sent)
                                     mock_check = str(audio_bytes).startswith("b'ID3mock")
-                                    logger.info(f"WS: fallback TTS bytes={len(audio_bytes)} (mock={mock_check})")
-                                    
+                                    logger.info(f"{log_prefix} fallback TTS bytes={len(audio_bytes)} (mock={mock_check})")
+
                                     # Send complete sentence audio as single chunk for immediate playback
                                     b64 = _b64.b64encode(audio_bytes).decode('ascii')
                                     await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/mpeg", "b64": b64, "eos": False})
-                                    
+
                                     # Also upload the full sentence MP3 to storage (optional/back-compat)
                                     try:
                                         file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                        audio_url_chunk = upload_audio_and_get_url(audio_bytes, file_name)
+                                        audio_url_chunk = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
                                         audio_url_last = audio_url_chunk
-                                        logger.info(f"WS: uploaded audio chunk -> {audio_url_chunk}")
+                                        logger.info(f"{log_prefix} uploaded audio chunk -> {audio_url_chunk}")
                                         await _ws_send_json(websocket, {"type": "audio_url_chunk", "audio_url": audio_url_chunk})
                                     except Exception:
-                                        logger.warning("WS: upload of TTS sentence failed; continuing with streamed chunks only")
+                                        logger.warning(f"{log_prefix} upload of TTS sentence failed; continuing with streamed chunks only")
                                 except Exception as e:
-                                    logger.error(f"WS: fallback TTS synthesis failed for sentence: {e}")
+                                    logger.error(f"{log_prefix} fallback TTS synthesis failed for sentence: {e}")
                         except Exception:
-                            logger.exception("WS: TTS or upload chunk failed")
+                            logger.exception(f"{log_prefix} TTS or upload chunk failed")
                             continue
-                    
+
                     # Signal end-of-stream for this reply's audio
                     await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": "", "eos": True})
+                    logger.debug(f"{log_prefix} turn {turn_index} audio eos sent")
                     # Also send final audio_url for compatibility
                     await _ws_send_json(websocket, {"type": "audio_url", "audio_url": audio_url_last})
+                    logger.debug(f"{log_prefix} turn {turn_index} final audio_url event sent {audio_url_last}")
 
                     # Update summary for end-of-call persistence
                     # Note: WebSocket uses direct audio processing, no explicit transcript
@@ -765,26 +838,31 @@ async def ws_voice(websocket: WebSocket):
                     last_partial_emit = now
                     last_voice_activity = now
             elif msg.get("type") == "websocket.disconnect":
+                logger.info(f"{log_prefix} disconnect frame received from client")
                 break
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        logger.info(f"{log_prefix} client disconnected code={getattr(exc, 'code', None)} reason={getattr(exc, 'reason', None)}")
     except Exception as e:
+        logger.exception(f"{log_prefix} unexpected error: {e}")
         await _ws_send_json(websocket, {"type": "error", "detail": str(e)})
         try:
             await websocket.close()
         except Exception:
-            pass
-
-    # Persist a single conversation summary at hangup (best-effort, no emotions to keep it fast)
-    try:
-        if last_final_text or last_reply_text:
-            insert_conversation_session({
-                "transcript": last_final_text,
-                "response": last_reply_text,
-                "audio_url": last_audio_url or None,
-            })
-    except Exception:
-        pass
+            logger.debug(f"{log_prefix} websocket close during error handling failed")
+    finally:
+        logger.info(f"{log_prefix} closing session")
+        # Persist a single conversation summary at hangup (best-effort, no emotions to keep it fast)
+        try:
+            if last_final_text or last_reply_text:
+                supabase_service.insert_conversation_session({
+                    "id": session_id,
+                    "transcript": last_final_text,
+                    "response": last_reply_text,
+                    "audio_url": last_audio_url or None,
+                })
+                logger.debug(f"{log_prefix} persisted conversation summary")
+        except Exception as persist_exc:
+            logger.warning(f"{log_prefix} failed to persist conversation summary: {persist_exc}")
 @app.post("/text-chat", response_model=DefiChatResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
 async def text_chat(
@@ -804,7 +882,7 @@ async def text_chat(
         
         # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
-            insert_conversation_session({
+            supabase_service.insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
                 "response": result["reply"],
@@ -813,11 +891,11 @@ async def text_chat(
                 "context_memory": str(result["context_memory"]),
             })
             try:
-                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+                supabase_service.insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
             except Exception as e:
                 logger.warning(f"Failed to persist user emotion: {e}")
             try:
-                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+                supabase_service.insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
             except Exception as e:
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
@@ -849,7 +927,7 @@ async def text_chat_stream(
             import json as _json
             # Stream LLM tokens
             reply_accum = []
-            for chunk in stream_generate_llm_reply(body.message):
+            for chunk in mistral_service.stream_generate_llm_reply(body.message):
                 if not chunk:
                     continue
                 reply_accum.append(chunk)
@@ -864,14 +942,14 @@ async def text_chat_stream(
             sophia_emotion = None
             mock_audio = False
             try:
-                audio_bytes = synthesize_inworld(reply)
+                audio_bytes = tts_service.synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
                 try:
                     mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
                 except Exception:
                     mock_audio = False
-                sophia_emotion = analyze_emotion_audio(audio_bytes)
+                sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
             except Exception:
                 logger.exception("Synthesis or upload failed in text_chat_stream")
 

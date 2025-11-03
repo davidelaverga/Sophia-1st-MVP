@@ -1,17 +1,137 @@
 import base64
 import io
-from typing import List, Optional, Dict, Any, Tuple
-from mistralai import Mistral
-from app.config import get_settings
 import logging
+import mimetypes
+from typing import List, Optional, Dict, Any, Tuple
+from urllib.parse import urljoin
+
+from mistralai import Mistral
+
+from app.config import get_settings
+
 logger = logging.getLogger("sophia-backend")
+_client_base_url_logged = False
+
+
+def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
+    """Return a File-compatible payload dict for Voxtral uploads."""
+
+    default_mime = "audio/wav"
+
+    # Provide a file-like object even when the clip is empty so the SDK's
+    # multipart builder always receives a stream to upload.
+    buffer = io.BytesIO(wav_bytes or b"")
+
+    # Rough magic-byte sniffing for better filenames (SDK inspects extension).
+    header = (wav_bytes or b"")[:4]
+    if header == b"RIFF":
+        ext = ".wav"
+    elif header[:3] == b"ID3" or (
+        wav_bytes
+        and wav_bytes[0] == 0xFF
+        and (wav_bytes[1] & 0xE0) == 0xE0
+    ):
+        ext = ".mp3"
+    elif header == b"OggS":
+        ext = ".ogg"
+    elif header == bytes([0x1A, 0x45, 0xDF, 0xA3]):
+        ext = ".webm"
+    else:
+        ext = ".wav"
+
+    filename = f"audio{ext}"
+    mime = mimetypes.types_map.get(ext.lower(), default_mime)
+
+    buffer.name = filename
+
+    return {
+        "file_name": filename,
+        "content": buffer,
+        "content_type": mime,
+    }
+
+
+_RESPONSES_AVAILABLE = True
+
+
+def _extract_http_details(exc: Exception) -> Tuple[Optional[int], Optional[str]]:
+    """Best-effort extraction of status code and textual response from an exception."""
+
+    status: Optional[int] = None
+    text: Optional[str] = None
+
+    for attr in ("status_code", "status"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            try:
+                status = int(value)
+                break
+            except (TypeError, ValueError):
+                pass
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        for attr in ("status_code", "status"):
+            value = getattr(response, attr, None)
+            if value is not None:
+                try:
+                    status = int(value)
+                    break
+                except (TypeError, ValueError):
+                    pass
+
+        text_candidate = None
+        for attr in ("text", "content", "body"):
+            value = getattr(response, attr, None)
+            if callable(value):
+                try:
+                    value = value()
+                except Exception:
+                    value = None
+            if value is None:
+                continue
+            if isinstance(value, bytes):
+                try:
+                    value = value.decode("utf-8", "ignore")
+                except Exception:
+                    value = None
+            if isinstance(value, str) and value.strip():
+                text_candidate = value.strip()
+                break
+        if text_candidate:
+            text = text_candidate
+
+    if text is None:
+        for attr in ("message", "detail"):
+            value = getattr(exc, attr, None)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
+
+    if text is not None and len(text) > 500:
+        text = text[:497] + "..."
+
+    return status, text
 
 
 def _client() -> Mistral:
     settings = get_settings()
     if not settings.MISTRAL_API_KEY:
         raise RuntimeError("MISTRAL_API_KEY is not set")
-    return Mistral(api_key=settings.MISTRAL_API_KEY)
+    client = Mistral(
+        api_key=settings.MISTRAL_API_KEY,
+        server_url=settings.MISTRAL_API_BASE,
+    )
+
+    global _client_base_url_logged
+    if not _client_base_url_logged:
+        logger.info(
+            "Configured Mistral client base URL: %s",
+            settings.MISTRAL_API_BASE,
+        )
+        _client_base_url_logged = True
+
+    return client
 
 
 def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
@@ -23,33 +143,16 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
     # Preferred: Mistral transcription endpoint (voxtral-large-latest for best accuracy)
     try:
         client = _client()
-        # Provide a filename; SDK inspects content
-        # Detect common audio container by magic bytes to choose a helpful filename
-        def _detect_ext(data: bytes) -> str:
-            try:
-                if not data or len(data) < 4:
-                    return ".wav"
-                b0 = data[:4]
-                if b0 == b"RIFF":
-                    return ".wav"
-                if b0[:3] == b"ID3" or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
-                    return ".mp3"
-                if data[:4] == b"OggS":
-                    return ".ogg"
-                # WebM/Matroska EBML header
-                if data[:4] == bytes([0x1A, 0x45, 0xDF, 0xA3]):
-                    return ".webm"
-                return ".wav"
-            except Exception:
-                return ".wav"
-        file_name = f"audio{_detect_ext(wav_bytes)}"
-        bio = io.BytesIO(wav_bytes)
+        endpoint = urljoin(settings.MISTRAL_API_BASE.rstrip("/") + "/", "v1/audio/transcriptions")
+        logger.info(
+            "Calling Mistral transcription endpoint %s with %d bytes",
+            endpoint,
+            len(wav_bytes),
+        )
+
         resp = client.audio.transcriptions.complete(
             model="voxtral-large-latest",
-            file={
-                "content": bio,
-                "file_name": file_name,
-            },
+            file=_audio_file_payload(wav_bytes),
         )
         # Try robust extraction from SDK response
         # Known SDK returns may have attributes like 'text' or dict-like structures
@@ -69,7 +172,37 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
             except Exception:
                 text = str(resp)
         return text
-    except Exception:
+    except Exception as e:
+        status_code = None
+        response_body = None
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            status_code = getattr(resp, "status_code", None)
+            response_body = getattr(resp, "text", None) or getattr(resp, "content", None)
+            if response_body is None:
+                try:
+                    response_body = resp.json()
+                except Exception:
+                    response_body = None
+        if status_code is None:
+            status_code = getattr(e, "status_code", None)
+        if response_body is None:
+            response_body = getattr(e, "body", None)
+        if isinstance(response_body, (bytes, bytearray)):
+            try:
+                response_body = response_body.decode("utf-8", errors="replace")
+            except Exception:
+                response_body = repr(response_body)
+        if response_body is not None and len(str(response_body)) > 1000:
+            response_body = f"{str(response_body)[:1000]}…"
+
+        logger.warning(
+            "Mistral transcription failed (status=%s, body=%s): %s",
+            status_code,
+            response_body,
+            e,
+            exc_info=True,
+        )
         # Fallback: Gemini if available; otherwise empty string
         if getattr(settings, "GOOGLE_API_KEY", None):
             try:
@@ -96,12 +229,13 @@ def generate_llm_reply(text: str) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
         return "I didn’t catch that. Could you rephrase your question about DeFi?"
+    global _RESPONSES_AVAILABLE
     try:
         client = _client()
         # Prefer Responses API when available; fallback to Chat API for older SDKs
-        try:
-            resp_iface = getattr(client, "responses", None)
-            if resp_iface is not None:
+        resp_iface = getattr(client, "responses", None)
+        if resp_iface is not None and _RESPONSES_AVAILABLE:
+            try:
                 r = resp_iface.create(
                     model="mistral-large-latest",
                     input=[
@@ -119,10 +253,26 @@ def generate_llm_reply(text: str) -> str:
                 if isinstance(out, str) and out.strip():
                     return out.strip()
                 return str(r)
-        except Exception:
-            pass
+            except Exception as responses_exc:
+                _RESPONSES_AVAILABLE = False
+                status, body = _extract_http_details(responses_exc)
+                if status is not None and 400 <= status < 500:
+                    consequence = "Payload may be invalid; continuing with Chat API."
+                else:
+                    consequence = "Disabling Responses API for this process and using Chat API."
+                details = []
+                if status is not None:
+                    details.append(f"status={status}")
+                if body:
+                    details.append(f"response={body}")
+                detail_str = ", ".join(details) if details else "no additional diagnostics"
+                logger.warning(
+                    "Mistral Responses API call failed (%s). %s",
+                    detail_str,
+                    consequence,
+                )
 
-        # Chat API fallback
+        # Chat API fallback (current production path)
         r2 = client.chat.complete(
             model="mistral-large-latest",
             messages=[

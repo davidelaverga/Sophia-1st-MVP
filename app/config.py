@@ -17,6 +17,7 @@ class Settings:
 
     # External services
     MISTRAL_API_KEY: Optional[str] = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_API_BASE: str = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai")
     INWORLD_API_KEY: Optional[str] = os.getenv("INWORLD_API_KEY")  # Base64 Basic token
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")

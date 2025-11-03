@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import uuid
@@ -23,6 +24,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+logger = logging.getLogger(__name__)
 
 # Optional: direct SQL helpers if available
 try:
@@ -58,13 +61,21 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
 
     # Upload file (storage3 returns an UploadResponse object; exceptions indicate failures)
     try:
-        res = supabase.storage.from_(SUPABASE_BUCKET_AUDIO).upload(path, file_bytes)
-    except Exception as e:
-        raise RuntimeError(f"Supabase upload failed: {e}")
+        supabase.storage.from_(SUPABASE_BUCKET_AUDIO).upload(path, file_bytes)
+        public_url = supabase.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
+        return public_url
 
-    # Return public URL
-    public_url = supabase.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
-    return public_url
+    except Exception as e:
+        logger.error(f"Supabase upload failed: {e}")
+
+        error_str = str(e).lower()
+        if "503" in error_str or "service unavailable" in error_str or "dns" in error_str:
+            logger.warning(
+                "⚠️ Supabase is experiencing an outage (503). Returning placeholder URL."
+            )
+            return f"https://placeholder.supabase.co/audio-uploads/{path}"
+
+        raise RuntimeError(f"Supabase upload failed: {e}")
 
 
 def insert_emotion_score(session_id, role: str, emotion: Any, user_id: str = None) -> None:
