@@ -1,6 +1,6 @@
 import base64
 import io
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple
 from mistralai import Mistral
 from app.config import get_settings
 import logging
