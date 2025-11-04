@@ -147,7 +147,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
         )
 
         resp = client.audio.transcriptions.complete(
-            model="voxtral-large-latest",
+            model="voxtral-mini-latest",
             file=_audio_file_payload(wav_bytes),
         )
         # Try robust extraction from SDK response
