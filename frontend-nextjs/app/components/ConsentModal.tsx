@@ -10,12 +10,16 @@ interface ConsentModalProps {
 }
 
 export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
-  const { user } = useSupabase()
+  const { user, accessToken } = useSupabase()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   const handleAccept = async () => {
     if (!user) return
+    if (!accessToken) {
+      setError('Missing authentication token. Please sign in again.')
+      return
+    }
 
     setIsSubmitting(true)
     setError('')
@@ -25,7 +29,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
           userId: user.id,

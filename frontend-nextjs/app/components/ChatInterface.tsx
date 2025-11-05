@@ -20,9 +20,10 @@ interface ChatInterfaceProps {
   setMessages: (messages: Message[] | ((prev: Message[]) => Message[])) => void
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
+  accessToken: string | null
 }
 
-export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading }: ChatInterfaceProps) {
+export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading, accessToken }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -51,11 +52,15 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setIsLoading(true)
 
     try {
+      if (!accessToken) {
+        throw new Error('Missing Supabase access token. Please refresh the page or sign in again.')
+      }
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/text-chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
           message: userMessage.content,
