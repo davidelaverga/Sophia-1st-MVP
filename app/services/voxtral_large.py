@@ -23,7 +23,10 @@ class VoxtralLargeService:
         if not self.settings.MISTRAL_API_KEY:
             raise RuntimeError("MISTRAL_API_KEY is not set")
         self.client = Mistral(api_key=self.settings.MISTRAL_API_KEY)
-        self.model = "voxtral-large-latest"  # The unified model
+        # Voxtral currently exposes its unified audio model as "voxtral-mini-latest".
+        # The previous "voxtral-large-latest" identifier is invalid and causes the API
+        # to reject requests, so we point to the supported model here.
+        self.model = "voxtral-mini-latest"
     
     def generate_response(
         self, 
@@ -206,7 +209,7 @@ class VoxtralLargeService:
             bio = io.BytesIO(audio_bytes)
             
             resp = self.client.audio.transcriptions.complete(
-                model="voxtral-large-latest",
+                model=self.model,
                 file={
                     "content": bio,
                     "file_name": file_name,

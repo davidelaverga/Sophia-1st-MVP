@@ -23,6 +23,7 @@ load_dotenv(find_dotenv(), override=False)
 _supabase: Optional[Client] = None
 SUPABASE_BUCKET_AUDIO: str = "audio"
 SUPABASE_AUDIO_PREFIX: str = "uploads/"
+SUPABASE_SIGNED_URL_TTL: int = 3600
 SUPABASE_DB_DSN: Optional[str] = None
 _DEFAULT_USER_ID: Optional[str] = None
 
@@ -112,7 +113,7 @@ def _supabase_span(name: str, **attrs):
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
 
-    global _supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN
+    global _supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN, SUPABASE_SIGNED_URL_TTL
     if _supabase is not None:
         return _supabase
 
@@ -124,6 +125,7 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
 
     SUPABASE_BUCKET_AUDIO = settings.SUPABASE_BUCKET_AUDIO or "audio"
     SUPABASE_AUDIO_PREFIX = settings.SUPABASE_AUDIO_PREFIX or "uploads/"
+    SUPABASE_SIGNED_URL_TTL = max(1, int(getattr(settings, "SUPABASE_SIGNED_URL_TTL", 3600)))
     SUPABASE_DB_DSN = settings.SUPABASE_DB_DSN
     _default_user_id(settings)
 
@@ -164,8 +166,8 @@ def get_supabase(access_token: Optional[str] = None) -> Client:
     return _client_with_access_token(access_token)
     
 def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None) -> str:
-    """Upload audio file to Supabase storage and return public URL.
-    
+    """Upload audio file to Supabase storage and return a signed URL.
+
     Note: This function doesn't require a user_id as it uses storage, not the database.
     """
     if not file_name:
@@ -186,9 +188,35 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
         except Exception as e:
             raise RuntimeError(f"Supabase upload failed: {e}")
 
-    with _supabase_span("supabase.audio.public_url", path=path):
-        public_url = client.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
-    return public_url
+    with _supabase_span(
+        "supabase.audio.signed_url",
+        path=path,
+        expires_in=SUPABASE_SIGNED_URL_TTL,
+    ):
+        try:
+            signed = client.storage.from_(SUPABASE_BUCKET_AUDIO).create_signed_url(
+                path,
+                SUPABASE_SIGNED_URL_TTL,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Supabase signed URL generation failed: {e}")
+
+    signed_url = None
+    if isinstance(signed, dict):
+        signed_url = signed.get("signedURL") or signed.get("signed_url")
+    if not signed_url:
+        raise RuntimeError("Supabase signed URL generation returned no URL")
+
+    # Supabase returns a relative path; prepend the base URL when needed.
+    if signed_url.startswith("http://") or signed_url.startswith("https://"):
+        return signed_url
+
+    settings = get_settings()
+    base_url = (settings.SUPABASE_URL or "").rstrip("/")
+    if base_url:
+        return f"{base_url}{signed_url}"
+    # As a last resort return the relative URL so the caller can handle it.
+    return signed_url
 
 
 def insert_emotion_score(
