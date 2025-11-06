@@ -1,0 +1,160 @@
+# ========================================
+# Python
+# ========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ========================================
+# Environment Variables & Secrets
+# ========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+
+# ========================================
+# Testing
+# ========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+test_audio_queue_simple.py
+*.log
+
+# ========================================
+# Docker
+# ========================================
+docker-compose.override.yml
+
+# ========================================
+# IDEs & Editors
+# ========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# ========================================
+# Frontend (Next.js/React)
+# ========================================
+frontend-nextjs/node_modules/
+frontend-nextjs/.next/
+frontend-nextjs/out/
+frontend-nextjs/.env
+frontend-nextjs/.env.local
+frontend-nextjs/.env.production.local
+frontend-nextjs/npm-debug.log*
+frontend-nextjs/yarn-debug.log*
+frontend-nextjs/yarn-error.log*
+
+# ========================================
+# Audio & Media Files (large binaries)
+# ========================================
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.flac
+*.m4a
+
+# ========================================
+# Archives
+# ========================================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ========================================
+# Temporary & Cache Files
+# ========================================
+*.tmp
+*.temp
+*.cache
+.ipynb_checkpoints/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# ========================================
+# Project-Specific
+# ========================================
+# Old/duplicate code
+New folder/
+main copy.py
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mkdocs
+/site
+
+# ========================================
+# OS-specific
+# ========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
