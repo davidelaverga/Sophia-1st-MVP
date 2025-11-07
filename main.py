@@ -196,17 +196,55 @@ async def ws_voice(websocket: WebSocket):
     if discord_id:
         metadata["discord_id"] = discord_id
 
+    def _pcm16_to_wav(pcm_bytes: bytes, *, sample_rate: int = 48000, channels: int = 1) -> bytes:
+        """Wrap raw PCM16 bytes with a minimal WAV header so browsers can play each chunk."""
+        import struct
+
+        data_size = len(pcm_bytes)
+        byte_rate = sample_rate * channels * 2
+        block_align = channels * 2
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF",
+            36 + data_size,
+            b"WAVE",
+            b"fmt ",
+            16,
+            1,
+            channels,
+            sample_rate,
+            byte_rate,
+            block_align,
+            16,
+            b"data",
+            data_size,
+        )
+        return header + pcm_bytes
+
     async def send_audio_callback(segment: AudioSegment):
         import base64 as _b64
 
-        b64_data = _b64.b64encode(segment.audio_data).decode("ascii")
+        eos = bool(segment.metadata.get("eos"))
+        payload_bytes = segment.audio_data or b""
+        mime = segment.mime_type or "audio/mpeg"
+
+        if payload_bytes:
+            has_wav_header = payload_bytes[:4] == b"RIFF"
+            if has_wav_header:
+                mime = "audio/wav"
+            elif mime in {"audio/pcm", "audio/x-raw"}:
+                sample_rate = int(segment.metadata.get("sample_rate", 48000))
+                payload_bytes = _pcm16_to_wav(payload_bytes, sample_rate=sample_rate)
+                mime = "audio/wav"
+
+        b64_data = _b64.b64encode(payload_bytes).decode("ascii") if payload_bytes else ""
         await _ws_send_json(
             websocket,
             {
                 "type": "audio_chunk",
-                "mime": segment.mime_type,
+                "mime": mime,
                 "b64": b64_data,
-                "eos": segment.metadata.get("eos", False),
+                "eos": eos,
             },
         )
 
@@ -295,8 +333,13 @@ async def ws_voice(websocket: WebSocket):
                                     await audio_queue.enqueue(
                                         session_id=session_id,
                                         audio_data=pcm_chunk,
-                                        mime_type="audio/wav",
-                                        metadata={"sentence": sent, "chunk_index": idx, "eos": False},
+                                        mime_type="audio/pcm",
+                                        metadata={
+                                            "sentence": sent,
+                                            "chunk_index": idx,
+                                            "eos": False,
+                                            "sample_rate": 48000,
+                                        },
                                     )
                             except Exception:
                                 logger.exception("WS: streaming TTS failed; falling back to full synthesis")
@@ -325,9 +368,23 @@ async def ws_voice(websocket: WebSocket):
                         await audio_queue.enqueue(
                             session_id=session_id,
                             audio_data=b"",
-                            mime_type="audio/wav",
-                            metadata={"eos": True},
+                            mime_type="audio/pcm",
+                            metadata={"eos": True, "sample_rate": 48000},
                         )
+                        if audio_url_last is None:
+                            try:
+                                cancel_check()
+                                storage_audio = synthesize_inworld(
+                                    reply_full,
+                                    cancel_check=cancel_check,
+                                )
+                                file_name = f"sophia_{int(time.time()*1000)}.mp3"
+                                audio_url_last = supabase_service.upload_audio_and_get_url(storage_audio, file_name)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.warning("WS: failed to synthesize/upload archival audio for reply")
+
                         await _ws_send_json(websocket, {"type": "audio_url", "audio_url": audio_url_last})
 
                         last_final_text = f"[Audio processed: {len(utter_bytes)} bytes]"

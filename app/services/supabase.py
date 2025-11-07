@@ -318,7 +318,12 @@ def has_user_consent(discord_id: str, access_token: Optional[str] = None) -> boo
         return bool(getattr(res, "data", []) or [])
     except Exception as e:
         import logging
+
         logging.warning(f"has_user_consent lookup failed: {e}")
+        payload = getattr(e, "args", [None])[0]
+        if isinstance(payload, dict) and payload.get("code") == "PGRST205":
+            logging.info("user_consents table missing; bypassing consent requirement for this environment.")
+            return True
         return False
 
 
