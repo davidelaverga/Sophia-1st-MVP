@@ -33,17 +33,17 @@ Sophia is a voice-enabled DeFi agent built with FastAPI, featuring a sophisticat
 
 ### Setup and Running
 ```bash
-pip install -r requirements.txt
-python main.py
+uv sync
+uv run python main.py
 # Or with uvicorn:
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Testing
 ```bash
-pytest -q                              # Run all tests
-python test_sophia_langgraph.py        # Comprehensive LangGraph system test
-python run_tests.py                    # Run all test files
+uv run pytest -q                              # Run all tests
+uv run python test_sophia_langgraph.py        # Comprehensive LangGraph system test
+uv run python run_tests.py                    # Run all test files
 ```
 
 ### Environment Variables Required
