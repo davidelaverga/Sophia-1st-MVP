@@ -747,7 +747,7 @@ def _looks_like_audio(data: bytes) -> bool:
 @app.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket):
     # Support both headers and query params for auth (query params needed for browser WebSocket)
-    api_key = websocket.query_params.get("api_key") or websocket.headers.get("Authorization")
+    api_key = websocket.query_params.get("token") or websocket.headers.get("Authorization")
     discord_id = websocket.query_params.get("discord_id") or websocket.headers.get("X-Discord-Id")
 
     # Add "Bearer " prefix if not present (for query param compatibility)
@@ -755,7 +755,7 @@ async def ws_voice(websocket: WebSocket):
         api_key = f"Bearer {api_key}"
 
     try:
-        verify_api_key(authorization=api_key)
+        supabase_token = verify_api_key(authorization=api_key)
     except HTTPException as exc:
         await websocket.close(code=1008, reason=exc.detail)
         return
