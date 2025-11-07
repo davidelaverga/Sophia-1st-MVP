@@ -64,29 +64,37 @@ export default function LiveCall() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   
   const playNextInQueue = () => {
-    if (playingRef.current) return
+    if (playingRef.current) {
+      console.log('⏸️ playNextInQueue: already playing, skipping')
+      return
+    }
     const url = ttsQueueRef.current.shift()
-    if (!url) return
-    
+    if (!url) {
+      console.log('⏸️ playNextInQueue: queue is empty')
+      return
+    }
+
+    console.log('▶️ playNextInQueue: playing audio from URL:', url.substring(0, 50) + '...')
     playingRef.current = true
     const audio = new Audio(url)
     currentAudioRef.current = audio
-    
+
     audio.onended = () => {
+      console.log('✅ Audio playback ended, playing next...')
       playingRef.current = false
       currentAudioRef.current = null
       // Continue to next chunk in queue
       playNextInQueue()
     }
-    audio.onerror = () => {
-      console.warn("Audio playback error, continuing to next chunk")
+    audio.onerror = (err) => {
+      console.error("❌ Audio playback error:", err)
       playingRef.current = false
       currentAudioRef.current = null
       // Continue to next chunk even on error
       playNextInQueue()
     }
     audio.play().catch((err) => {
-      console.warn("Audio play failed:", err)
+      console.error("❌ Audio play failed:", err)
       playingRef.current = false
       currentAudioRef.current = null
       // Continue to next chunk even on play failure
@@ -131,7 +139,25 @@ export default function LiveCall() {
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data)
-        if (data.type === "token") {
+        console.log('📩 WS message received:', data.type, data)
+
+        if (data.type === "barge_in") {
+          // Barge-in signal from backend: stop current playback immediately
+          console.log('🛑 BARGE-IN received! Stopping playback...', data)
+
+          // Stop current audio playback
+          if (currentAudioRef.current) {
+            currentAudioRef.current.pause()
+            currentAudioRef.current.currentTime = 0
+            currentAudioRef.current = null
+          }
+
+          // Clear audio queue
+          ttsQueueRef.current = []
+          playingRef.current = false
+
+          console.log('✅ Playback stopped, queue cleared')
+        } else if (data.type === "token") {
           setTokens((prev) => prev + (data.text || ""))
         } else if (data.type === "reply_done") {
           setReply(data.text || "")
@@ -139,8 +165,10 @@ export default function LiveCall() {
           setTokens("")
         } else if (data.type === "audio_url_chunk") {
           const u = data.audio_url as string
+          console.log('🎵 Received audio_url_chunk:', u)
           if (u && /^https?:\/\//.test(u)) {
             ttsQueueRef.current.push(u)
+            console.log('✅ Pushed to queue, starting playback...')
             playNextInQueue()
           }
         } else if (data.type === "audio_chunk") {
@@ -148,37 +176,47 @@ export default function LiveCall() {
           try {
             const eos = !!data.eos
             const b64 = data.b64 as string
-            
+            console.log('🎵 Received audio_chunk, b64 length:', b64?.length, 'eos:', eos, 'mime:', data.mime)
+
             if (b64 && !eos) {
               // Queue each chunk for sequential playback
               const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
               const blob = new Blob([bin], { type: data.mime || 'audio/wav' })
               const url = URL.createObjectURL(blob)
+              console.log('✅ Created blob URL:', url, 'size:', bin.length, 'bytes')
               ttsQueueRef.current.push(url)
-              
+
               // Only start playback if nothing is currently playing
               if (!playingRef.current) {
+                console.log('▶️ Starting playback...')
                 playNextInQueue()
+              } else {
+                console.log('⏸️ Already playing, queued for later')
               }
-              
+
               // Revoke URL after some time
               setTimeout(() => URL.revokeObjectURL(url), 30000)
             }
-            
+
             if (eos) {
+              console.log('🏁 End of stream')
               // End of stream - clear any remaining buffers
               audioChunkBuffersRef.current = []
             }
-          } catch {}
+          } catch (err) {
+            console.error('❌ Error processing audio_chunk:', err)
+          }
         } else if (data.type === "audio_url") {
+          console.log('🎵 Received audio_url:', data.audio_url)
           if (data.audio_url && /^https?:\/\//.test(data.audio_url)) {
             // If we didn't stream chunks, play the single URL
             ttsQueueRef.current.push(data.audio_url)
+            console.log('✅ Pushed final audio_url to queue')
             playNextInQueue()
           }
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error('❌ Error parsing WS message:', err)
       }
     }
 

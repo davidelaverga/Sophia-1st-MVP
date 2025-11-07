@@ -1,11 +1,12 @@
 'use client'
 
 import LiveCall from "./components/LiveCall";
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { LogOut } from 'lucide-react'
 import ChatInterface from './components/ChatInterface'
 import ConsentModal from './components/ConsentModal'
 import { useSupabase } from './providers'
+import type { Database } from '../lib/database.types'
 
 interface Message {
   id: string
@@ -24,7 +25,6 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false)
   const [hasConsent, setHasConsent] = useState(false)
   const [showConsent, setShowConsent] = useState(false)
-  const lastSyncedUserIdRef = useRef<string | null>(null)
 
   const checkConsent = useCallback(async (userId: string) => {
     try {
@@ -70,48 +70,6 @@ export default function Home() {
     }
     checkConsent(user.id)
   }, [user, loading, checkConsent])
-
-  useEffect(() => {
-    if (!user) return
-    const userId = user.id
-    if (!userId) return
-    if (lastSyncedUserIdRef.current === userId) return
-
-    let cancelled = false
-    const ensureUserRow = async () => {
-      try {
-        const metadata = user.user_metadata || {}
-        const discordId = metadata.provider_id || metadata.sub || metadata.provider_token || metadata.user_id || null
-        const payload: Record<string, string> = {
-          id: userId,
-          email: user.email || `${userId}@placeholder.sophia`,
-        }
-        if (discordId) {
-          payload.discord_id = String(discordId)
-        }
-
-        const { error } = await supabase
-          .from('users')
-          .upsert(payload, { onConflict: 'id' })
-
-        if (error) {
-          console.error('Failed to upsert users row:', error)
-          return
-        }
-
-        if (!cancelled) {
-          lastSyncedUserIdRef.current = userId
-        }
-      } catch (err) {
-        console.error('Unexpected error syncing user row:', err)
-      }
-    }
-
-    ensureUserRow()
-    return () => {
-      cancelled = true
-    }
-  }, [user, supabase])
 
   const handleConsentAccepted = () => {
     setHasConsent(true)
