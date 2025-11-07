@@ -18,10 +18,12 @@ langchain==0.3.27
 redis==7.0.1
 openai==2.6.1
 sentence-transformers==5.1.2
-ragas==0.3.7
+ragas==0.2.7
 pgvector==0.4.1
 opentelemetry-sdk==1.27.0
 opentelemetry-instrumentation-fastapi==0.48b0
 opentelemetry-exporter-otlp==1.27.0
 SQLAlchemy==2.0.36
 alembic==1.13.2
+PyJWT==2.10.1
+cryptography==43.0.3

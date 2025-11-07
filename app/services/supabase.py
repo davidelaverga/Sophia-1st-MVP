@@ -6,6 +6,10 @@ from contextlib import contextmanager
 from typing import Any, Dict, Optional
 from dotenv import load_dotenv, find_dotenv
 from supabase import Client, create_client
+try:
+    from supabase import ClientOptions  # type: ignore
+except ImportError:  # pragma: no cover - for environments without recent supabase package
+    ClientOptions = None  # type: ignore
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -128,12 +132,36 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
     return _supabase
 
 
-def get_supabase() -> Client:
-    """Return the shared Supabase client, initialising it if necessary."""
-
+def _service_supabase() -> Client:
     if _supabase is not None:
         return _supabase
     return init_supabase()
+
+
+def _client_with_access_token(access_token: str) -> Client:
+    settings = get_settings()
+    if ClientOptions is not None:
+        options = ClientOptions(headers={"Authorization": f"Bearer {access_token}"})  # type: ignore[arg-type]
+        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY, options=options)
+    else:  # pragma: no cover - fallback for older SDKs
+        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        postgrest_client = getattr(client, "postgrest", None)
+        if postgrest_client is None:
+            raise RuntimeError("Supabase client is missing postgrest interface required for RLS queries.")
+        session = getattr(postgrest_client, "session", None)
+        headers = getattr(session, "headers", None)
+        if headers is None:
+            raise RuntimeError("Supabase postgrest client session has no headers object.")
+        headers["Authorization"] = f"Bearer {access_token}"
+    return client
+
+
+def get_supabase(access_token: Optional[str] = None) -> Client:
+    """Return a Supabase client. If `access_token` is provided, scope the client to that user."""
+
+    if not access_token:
+        return _service_supabase()
+    return _client_with_access_token(access_token)
     
 def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None) -> str:
     """Upload audio file to Supabase storage and return public URL.
@@ -169,6 +197,7 @@ def insert_emotion_score(
     emotion: Any,
     user_id: str = None,
     discord_id: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> None:
     """Insert a row into the emotion_scores table using the test user ID if none provided.
     
@@ -184,7 +213,7 @@ def insert_emotion_score(
         "user_id": resolved_user_id,
     }
     
-    client = get_supabase()
+    client = get_supabase(access_token)
 
     try:
         with _supabase_span("supabase.insert_emotion_score", session_id=str(session_id), role=role):
@@ -193,7 +222,7 @@ def insert_emotion_score(
         import logging
         logging.warning(f"emotion_scores insert failed: {e}")
         # Don't raise the exception, just log it and continue
-    if SUPABASE_DB_DSN and insert_emotion_score_sql:
+    if not access_token and SUPABASE_DB_DSN and insert_emotion_score_sql:
         try:
             with _supabase_span("supabase.sql.insert_emotion_score", session_id=str(session_id), role=role):
                 insert_emotion_score_sql(payload)
@@ -202,7 +231,7 @@ def insert_emotion_score(
             pass
 
 
-def insert_conversation_session(data: Dict[str, Any]) -> None:
+def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str] = None) -> None:
     """Insert a conversation session row using SQL if DSN is set; otherwise REST.
     
     Note: This function will always use the test user ID if no user_id is provided.
@@ -227,9 +256,9 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
     data.setdefault("sophia_emotion_confidence", None)
     data.setdefault("audio_url", None)
             
-    client = get_supabase()
+    client = get_supabase(access_token)
 
-    if SUPABASE_DB_DSN and insert_conversation_session_sql:
+    if not access_token and SUPABASE_DB_DSN and insert_conversation_session_sql:
         try:
             with _supabase_span("supabase.sql.insert_conversation", session_id=data.get("id")):
                 insert_conversation_session_sql(data)
@@ -249,13 +278,13 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         # Don't raise the exception, just log it and continue
 
 
-def has_user_consent(discord_id: str) -> bool:
+def has_user_consent(discord_id: str, access_token: Optional[str] = None) -> bool:
     """Check if a given Discord user has a consent record in Supabase.
     
     Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip_address text)
     """
     try:
-        client = get_supabase()
+        client = get_supabase(access_token)
         with _supabase_span("supabase.get_user_consent"):
             res = client.table("user_consents").select("discord_id").eq("discord_id", discord_id).limit(1).execute()
         return bool(getattr(res, "data", []) or [])
@@ -265,7 +294,7 @@ def has_user_consent(discord_id: str) -> bool:
         return False
 
 
-def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: Optional[str] = None) -> bool:
+def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: Optional[str] = None, access_token: Optional[str] = None) -> bool:
     """Persist a consent record. Returns True if stored.
     """
     try:
@@ -275,7 +304,7 @@ def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip
             "timestamp": timestamp_iso,
             "ip_address": ip or "",
         }
-        client = get_supabase()
+        client = get_supabase(access_token)
         with _supabase_span("supabase.insert_user_consent"):
             client.table("user_consents").insert(payload).execute()
         return True

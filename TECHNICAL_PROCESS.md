@@ -120,7 +120,7 @@ The state object (`GraphState`) carries audio bytes, transcript, emotions, inten
 | `SUPABASE_DEFAULT_USER_ID` | Optional UUID used for test inserts when no authenticated user is provided (must not be all zeros). |
 | `REDIS_*` | Session memory cache host, port, database. |
 | `OTEL_EXPORTER_OTLP_*` | External telemetry export endpoint and headers. |
-| `API_KEYS`, `API_RATE_LIMIT` | Auth and throttling configuration. |
+| `API_RATE_LIMIT` | Auth throttling configuration. |
 | `APP_ENV` | Application environment (`development`, `staging`, or `production`) used for config validation strictness. |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list of trusted origins for CORS; defaults to localhost hosts in development. |
 | `API_PUBLIC_PATHS` | Comma-separated list of HTTP paths that bypass API-key enforcement (e.g., `/health,/docs`). |
@@ -128,7 +128,7 @@ The state object (`GraphState`) carries audio bytes, transcript, emotions, inten
 Environment variables are loaded via `dotenv` early in process startup to ensure settings are available everywhere.
 
 ### Configuration Guardrails
-- `validate_settings` runs during application bootstrap, aborting launch if mandatory settings (e.g., Supabase credentials, production API keys) are missing or malformed.
+- `validate_settings` runs during application bootstrap, aborting launch if mandatory settings (e.g., Supabase credentials) are missing or malformed.
 - Supported environments are `development`, `staging`, and `production`; any other value for `APP_ENV` halts startup.
 - In non-production modes missing optional keys trigger warnings so developers know related features will fall back to mocks while still allowing local work.
 - Supabase helpers reject the all-zero UUID, falling back to a configured `SUPABASE_DEFAULT_USER_ID` or a generated value to keep data consistent.

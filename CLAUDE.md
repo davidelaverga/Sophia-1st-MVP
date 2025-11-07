@@ -59,7 +59,6 @@ SUPABASE_KEY=your_key
 SUPABASE_DB_DSN=your_db_dsn
 REDIS_HOST=localhost                  # Optional, defaults to localhost
 REDIS_PORT=6379                       # Optional
-API_KEYS=your_api_key                 # For authentication
 ```
 
 ### Key API Endpoints
@@ -106,7 +105,7 @@ docker run -p 8000:8000 sophia-backend
 ```
 
 ## Important Notes
-- All endpoints require API key authentication via `API_KEYS` environment variable
+- All endpoints require a Supabase JWT. The backend fetches signing keys from `<iss>/.well-known/jwks.json`.
 - Rate limited to 30 requests/minute by default
 - Audio files must be WAV format
 - Session IDs are UUIDs, auto-generated if not provided

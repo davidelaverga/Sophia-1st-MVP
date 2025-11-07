@@ -15,12 +15,19 @@ from typing import Dict, Any
 
 # Configuration
 BASE_URL = "http://localhost:8000"
-API_KEY = os.getenv("API_KEYS", "").split(",")[0] if os.getenv("API_KEYS") else "test-key"
+ACCESS_TOKEN_ENV = "SUPABASE_ACCESS_TOKEN"
+
 
 class SophiaAPITester:
-    def __init__(self, base_url: str = BASE_URL, api_key: str = API_KEY):
+    def __init__(self, base_url: str = BASE_URL, auth_token: str | None = None):
         self.base_url = base_url
-        self.headers = {"Authorization": f"Bearer {api_key}"}
+        token = auth_token or os.getenv(ACCESS_TOKEN_ENV)
+        if not token:
+            raise ValueError(
+                f"Missing Supabase access token. Provide a JWT via the '{ACCESS_TOKEN_ENV}' environment variable "
+                "or pass an explicit auth_token to SophiaAPITester."
+            )
+        self.headers = {"Authorization": f"Bearer {token}"}
         self.session_id = None
     
     def create_test_audio(self, text: str = "Hello Sophia, what is DeFi?", duration: float = 2.0) -> bytes:

@@ -35,7 +35,6 @@ class MemoryManager:
     def __init__(self):
         self.settings = get_settings()
         self.redis_client = self._init_redis()
-        self.supabase = get_supabase()
         self.max_turns = 3  # Keep last 3 turns in memory
         
     def _init_redis(self):
@@ -52,7 +51,7 @@ class MemoryManager:
             logger.warning(f"Redis connection failed: {e}. Using in-memory fallback.")
             return None
     
-    def get_session_memory(self, session_id: str) -> Optional[SessionMemory]:
+    def get_session_memory(self, session_id: str, access_token: Optional[str] = None) -> Optional[SessionMemory]:
         """Retrieve session memory from Redis or Supabase"""
         
         # Try Redis first for fast access
@@ -67,7 +66,8 @@ class MemoryManager:
         
         # Fallback to Supabase
         try:
-            result = self.supabase.table("conversation_sessions").select("*").eq("id", session_id).execute()
+            supabase_client = get_supabase(access_token)
+            result = supabase_client.table("conversation_sessions").select("*").eq("id", session_id).execute()
             if result.data:
                 session_data = result.data[0]
                 return self._build_memory_from_session(session_data)
@@ -76,11 +76,11 @@ class MemoryManager:
         
         return None
     
-    def update_session_memory(self, session_id: str, new_turn: ConversationTurn) -> SessionMemory:
+    def update_session_memory(self, session_id: str, new_turn: ConversationTurn, access_token: Optional[str] = None) -> SessionMemory:
         """Update session memory with new conversation turn"""
         
         # Get existing memory or create new
-        memory = self.get_session_memory(session_id)
+        memory = self.get_session_memory(session_id, access_token=access_token)
         if not memory:
             memory = SessionMemory(
                 session_id=session_id,
@@ -128,9 +128,9 @@ class MemoryManager:
         
         return memory
     
-    def get_context_for_llm(self, session_id: str) -> Dict[str, Any]:
+    def get_context_for_llm(self, session_id: str, access_token: Optional[str] = None) -> Dict[str, Any]:
         """Get formatted context for LLM prompt"""
-        memory = self.get_session_memory(session_id)
+        memory = self.get_session_memory(session_id, access_token=access_token)
         if not memory:
             return {}
         

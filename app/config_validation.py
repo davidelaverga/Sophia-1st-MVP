@@ -42,13 +42,8 @@ def validate_settings(settings: Settings) -> None:
             raise SystemExit(
                 f"Production environment requires the following API keys to be configured: {missing}."
             )
-        if not settings.API_KEYS:
-            raise SystemExit("Production environment requires API_KEYS to be configured with at least one value.")
     else:
         # Warn about optional integrations so developers understand fallback behaviour.
         for name in PRODUCTION_ONLY_VARS:
             if not getattr(settings, name, None):
                 logger.warning("Optional config '%s' is not set; related functionality will use mock or degraded behaviour.", name)
-        if not settings.API_KEYS:
-            logger.warning("API_KEYS is empty in %s mode; ensure this is intentional before exposing the API.", env)
-

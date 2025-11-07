@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
+import { useSupabase } from "../providers"
 
 function httpToWs(url: string) {
   if (url.startsWith("https://")) return url.replace("https://", "wss://")
@@ -46,6 +47,7 @@ function downsampleTo16kPCM(intput: Float32Array, inputSampleRate: number): Arra
 }
 
 export default function LiveCall() {
+  const { user, accessToken } = useSupabase()
   const [connected, setConnected] = useState(false)
   const [listening, setListening] = useState(false)
   const [partial, setPartial] = useState("")
@@ -94,12 +96,30 @@ export default function LiveCall() {
 
   // Messages UI state
   const [tokens, setTokens] = useState<string>("")
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  const discordId = useMemo(() => {
+    const meta = user?.user_metadata || {}
+    return meta.provider_id || meta.sub || meta.provider_token || user?.id || null
+  }, [user])
 
   const startCall = async () => {
     if (connected) return
+    if (!accessToken) {
+      setAuthError("Missing Supabase session. Please sign in again.")
+      return
+    }
+    if (!discordId) {
+      setAuthError("Missing Discord identity. Refresh login to retry.")
+      return
+    }
+    setAuthError(null)
+
     const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
-    const wsUrl = httpToWs(base) + "/ws/voice"
-    const ws = new WebSocket(wsUrl)
+    const wsUrl = new URL(httpToWs(base) + "/ws/voice")
+    wsUrl.searchParams.set("token", accessToken)
+    wsUrl.searchParams.set("discord_id", discordId)
+    const ws = new WebSocket(wsUrl.toString())
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
@@ -241,6 +261,11 @@ export default function LiveCall() {
         <button onClick={endCall} disabled={!connected} className="px-4 py-2 rounded-xl bg-red-600 text-white disabled:bg-gray-600">End</button>
         <span className="text-sm text-gray-300">{connected ? (listening ? "Live (mic on)" : "Connected") : "Disconnected"}</span>
       </div>
+      {authError && (
+        <div className="text-sm text-red-400">
+          {authError}
+        </div>
+      )}
       <div className="text-sm text-gray-300"><span className="font-semibold text-gray-100">Sophia:</span> {tokens}</div>
       {reply && (
         <div className="text-sm text-gray-100 font-medium">Final reply: {reply}</div>

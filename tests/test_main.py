@@ -2,22 +2,53 @@
 
 import os
 import io
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_KEY", "test-service-key")
-os.environ.setdefault("API_KEYS", "test-key")
 os.environ.setdefault("SUPABASE_DEFAULT_USER_ID", "11111111-1111-1111-1111-111111111111")
 
 from fastapi.testclient import TestClient
 
 import main as app_module
+import app.deps as deps_module
+
+TEST_ISS = "https://example.supabase.co/auth/v1"
+_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_PUBLIC_KEY_PEM = _PRIVATE_KEY.public_key().public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+)
+
+
+class _StubJWKClient:
+    def get_signing_key_from_jwt(self, token: str):
+        return SimpleNamespace(key=_PUBLIC_KEY_PEM, algorithm="RS256")
+
+
+def _stub_get_jwk_client(issuer: str):
+    return _StubJWKClient()
+
+
+deps_module._get_jwk_client = _stub_get_jwk_client
 
 client = TestClient(app_module.app)
 
 
+def _encode_token(payload: dict | None = None) -> str:
+    body = {"sub": "user-123", "iss": TEST_ISS}
+    if payload:
+        body.update(payload)
+    return jwt.encode(body, _PRIVATE_KEY, algorithm="RS256", headers={"kid": "test-key"})
+
+
 def auth(include_discord: bool = False, discord_id: str = "user-123"):
-    headers = {"Authorization": "Bearer test-key"}
+    headers = {"Authorization": f"Bearer {_encode_token()}"}
     if include_discord:
         headers["X-Discord-Id"] = discord_id
     return headers

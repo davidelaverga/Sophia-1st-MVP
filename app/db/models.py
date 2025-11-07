@@ -15,7 +15,15 @@ from .base import Base
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_users_email"),
+        Index(
+            "uq_users_discord_id",
+            "discord_id",
+            unique=True,
+            postgresql_where=text("discord_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -23,6 +31,7 @@ class User(Base):
         default=uuid.uuid4,
         server_default=text("gen_random_uuid()"),
     )
+    discord_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -83,11 +83,19 @@ All configuration lives in environment variables. Use the provided [.env.templat
 
 - **Core settings:** `APP_ENV`, rate limiting, logging level.
 - **Supabase:** `SUPABASE_URL`, `SUPABASE_KEY`, optional `SUPABASE_DB_DSN`, and a non-zero `SUPABASE_DEFAULT_USER_ID`.
-- **API security:** `API_KEYS`, `CORS_ALLOWED_ORIGINS`, and paths that should remain public (`API_PUBLIC_PATHS`).
+- **API security:** Supabase access tokens are verified against the issuer JWKS at `<iss>/.well-known/jwks.json`; ensure the frontend forwards the `Authorization` header and configure `CORS_ALLOWED_ORIGINS` plus any public paths in `API_PUBLIC_PATHS`.
 - **AI providers:** Mistral, Inworld, Google (Gemini), OpenAI, and Anthropic keys as needed.
 - **Observability:** OTLP endpoint and headers for OpenTelemetry exporters.
 
-🚨 **Production note:** Every deployment must set `API_KEYS`, Supabase credentials, and the external AI keys the environment relies on. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
+🚨 **Production note:** Every deployment must provide Supabase credentials and external AI keys. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
+
+**Postgres driver tip:** When populating `SUPABASE_DB_DSN`, prefer the psycopg v3 dialect prefix so SQLAlchemy and Alembic stay on the modern driver. Example:
+
+```
+SUPABASE_DB_DSN="postgresql+psycopg://postgres:postgres@<host>:<port>/<database>"
+```
+
+If you omit the `+psycopg` suffix SQLAlchemy will fall back to `psycopg2`, which this project no longer installs.
 
 ### **Supabase Database & Migrations**
 

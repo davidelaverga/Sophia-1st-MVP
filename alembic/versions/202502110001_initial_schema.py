@@ -15,6 +15,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
         "users",
@@ -187,3 +188,4 @@ def downgrade() -> None:
     op.drop_table("emotion_scores")
     op.drop_table("conversation_sessions")
     op.drop_table("users")
+    op.execute("DROP EXTENSION IF EXISTS vector")

@@ -1,7 +1,7 @@
 """Wrapper service that executes SophiaLangGraph and coordinates evaluation flows."""
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.langgraph_nodes import SophiaLangGraph
 from app.services.evaluations import evaluation_manager
 import threading
@@ -14,15 +14,24 @@ class LangGraphService:
     def __init__(self):
         self.sophia_graph = SophiaLangGraph()
     
-    def process_conversation(self, audio_bytes: bytes, session_id: str = None, 
-                           collect_evaluation_data: bool = True) -> Dict[str, Any]:
+    def process_conversation(
+        self,
+        audio_bytes: bytes,
+        session_id: str = None,
+        collect_evaluation_data: bool = True,
+        supabase_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Process conversation through LangGraph pipeline"""
         
         logger.info(f"Processing conversation through LangGraph for session {session_id}")
         
         try:
             # Run through LangGraph
-            final_state = self.sophia_graph.process_conversation(audio_bytes, session_id)
+            final_state = self.sophia_graph.process_conversation(
+                audio_bytes,
+                session_id,
+                supabase_token=supabase_token,
+            )
             
             # Collect evaluation data if requested (instead of running full evaluation)
             if collect_evaluation_data:
@@ -78,15 +87,24 @@ class LangGraphService:
             logger.error(f"LangGraph conversation processing failed: {e}")
             raise
     
-    def process_text_conversation(self, message: str, session_id: str = None, 
-                                collect_evaluation_data: bool = True) -> Dict[str, Any]:
+    def process_text_conversation(
+        self,
+        message: str,
+        session_id: str = None,
+        collect_evaluation_data: bool = True,
+        supabase_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Process text-only conversation through LangGraph pipeline"""
         
         logger.info(f"Processing text conversation through LangGraph for session {session_id}")
         
         try:
             # Run through LangGraph with text input
-            final_state = self.sophia_graph.process_text_conversation(message, session_id)
+            final_state = self.sophia_graph.process_text_conversation(
+                message,
+                session_id,
+                supabase_token=supabase_token,
+            )
             
             # Collect evaluation data if requested
             if collect_evaluation_data:

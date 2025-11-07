@@ -153,8 +153,9 @@ export async function POST(request: NextRequest) {
       // Only insert columns that exist in the users table schema
       // Based on error: avatar_url, created_at, updated_at may not exist
       const userRecord: any = {
+        id: user.id,
         discord_id: discordIdString,
-        username: username
+        // username: username
       }
 
       // Add email only if provided

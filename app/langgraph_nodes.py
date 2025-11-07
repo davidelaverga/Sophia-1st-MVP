@@ -14,7 +14,7 @@ from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_rep
 from app.services.voxtral_large import HybridVoxtralService
 from app.services.emotion import analyze_emotion_audio
 from app.services.tts import synthesize_inworld
-from app.services.supabase import upload_audio_and_get_url, get_supabase
+from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.config import get_settings
@@ -305,7 +305,10 @@ class ResponseGenerator:
     def _build_voxtral_context(self, state: GraphState) -> Dict[str, Any]:
         """Build rich context dictionary for Voxtral Large"""
         # Get memory context
-        memory_context = memory_manager.get_context_for_llm(state["session_id"])
+        memory_context = memory_manager.get_context_for_llm(
+            state["session_id"],
+            access_token=state.get("supabase_token")
+        )
         state["context_memory"] = memory_context
         
         # Build context dictionary
@@ -338,7 +341,10 @@ class ResponseGenerator:
     def _build_context(self, state: GraphState) -> str:
         """Build context from memory and current state"""
         # Get context from memory manager
-        context = memory_manager.get_context_for_llm(state["session_id"])
+        context = memory_manager.get_context_for_llm(
+            state["session_id"],
+            access_token=state.get("supabase_token")
+        )
         state["context_memory"] = context
         
         context_parts = []
@@ -559,7 +565,11 @@ class EvalLogger:
             intent=state["intent"],
             timestamp=time.time()
         )
-        memory_manager.update_session_memory(state["session_id"], conversation_turn)
+        memory_manager.update_session_memory(
+            state["session_id"],
+            conversation_turn,
+            access_token=state.get("supabase_token"),
+        )
         
         # Log to console for debugging
         logger.info(f"EvalLogger completed: {eval_entry}")
@@ -602,7 +612,12 @@ class SophiaLangGraph:
         
         return workflow.compile()
     
-    def process_conversation(self, audio_bytes: bytes, session_id: Optional[str] = None) -> GraphState:
+    def process_conversation(
+        self,
+        audio_bytes: bytes,
+        session_id: Optional[str] = None,
+        supabase_token: Optional[str] = None,
+    ) -> GraphState:
         """Process a complete conversation turn through the graph"""
         
         if not session_id:
@@ -622,7 +637,8 @@ class SophiaLangGraph:
             "tts_bytes": b"",
             "evaluation_logs": [],
             "fallback_used": {},
-            "use_voxtral_large": False  # Will be set by AudioIngestor
+            "use_voxtral_large": False,  # Will be set by AudioIngestor
+            "supabase_token": supabase_token,
         }
         
         logger.info(f"Starting LangGraph processing for session {session_id}")
@@ -634,7 +650,12 @@ class SophiaLangGraph:
         
         return final_state
     
-    def process_text_conversation(self, message: str, session_id: Optional[str] = None) -> GraphState:
+    def process_text_conversation(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        supabase_token: Optional[str] = None,
+    ) -> GraphState:
         """Process a text-only conversation turn, bypassing audio processing"""
         
         if not session_id:
@@ -654,7 +675,8 @@ class SophiaLangGraph:
             "tts_bytes": b"",
             "evaluation_logs": [],
             "fallback_used": {},
-            "use_voxtral_large": False  # Text-only uses legacy pipeline
+            "use_voxtral_large": False,  # Text-only uses legacy pipeline
+            "supabase_token": supabase_token,
         }
         
         logger.info(f"Starting LangGraph text processing for session {session_id} with message: '{message[:50]}...'")
@@ -784,7 +806,10 @@ class SophiaLangGraph:
     def _build_voxtral_context_for_streaming(self, state: GraphState) -> Dict[str, Any]:
         """Build context for Voxtral Large streaming"""
         # Similar to ResponseGenerator._build_voxtral_context but simplified
-        memory_context = memory_manager.get_context_for_llm(state["session_id"])
+        memory_context = memory_manager.get_context_for_llm(
+            state["session_id"],
+            access_token=state.get("supabase_token")
+        )
         
         context = {
             "intent": state.get("intent", ""),
