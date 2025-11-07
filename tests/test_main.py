@@ -3,6 +3,8 @@
 import os
 import io
 from types import SimpleNamespace
+
+import types
 from unittest.mock import patch
 
 import jwt
@@ -29,6 +31,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app import config as app_config
+from app.services.session_manager import SessionTurnManager
 
 app_config.get_settings.cache_clear()
 sys.modules.pop("main", None)
@@ -168,6 +171,71 @@ def test_chat(mock_emotion, mock_session, mock_ins, mock_up, mock_tts, mock_gen,
     assert r.status_code == 200
     data = r.json()
     assert set(["transcript","reply","user_emotion","sophia_emotion","audio_url"]).issubset(data.keys())
+
+
+@patch("app.deps.has_user_consent", return_value=True)
+def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkeypatch):
+    """Ensure /chat pushes cancel callbacks through STT, LLM, and TTS while releasing the session turn."""
+    assert Emotion is not None
+    app_module = sys.modules["main"]
+
+    fake_manager = SessionTurnManager()
+    raise_calls = []
+
+    original_raise = fake_manager.raise_if_cancelled
+
+    def _tracked_raise(self, turn_id):
+        raise_calls.append(turn_id)
+        return original_raise(turn_id)
+
+    fake_manager.raise_if_cancelled = types.MethodType(_tracked_raise, fake_manager)
+    monkeypatch.setattr(app_module.shared_services, "get_session_turn_manager", lambda: fake_manager, raising=False)
+
+    cancelled_stages = []
+
+    def _fake_transcribe(_bytes, cancel_check=None):
+        assert callable(cancel_check)
+        cancel_check()
+        cancelled_stages.append("stt")
+        return "What is APY?"
+
+    def _fake_generate(_text, cancel_check=None):
+        assert callable(cancel_check)
+        cancel_check()
+        cancelled_stages.append("llm")
+        return "APY stands for annual percentage yield."
+
+    def _fake_tts(_text, cancel_check=None):
+        assert callable(cancel_check)
+        cancel_check()
+        cancelled_stages.append("tts")
+        return b"ID3mock-mp3"
+
+    emotion_values = [
+        Emotion(label="neutral", confidence=0.75),
+        Emotion(label="positive", confidence=0.82),
+    ]
+
+    def _fake_emotion(_payload):
+        return emotion_values.pop(0)
+
+    monkeypatch.setattr(app_module.mistral_service, "transcribe_audio_with_voxtral", _fake_transcribe, raising=False)
+    monkeypatch.setattr(app_module.mistral_service, "generate_llm_reply", _fake_generate, raising=False)
+    monkeypatch.setattr(app_module, "synthesize_inworld", _fake_tts, raising=False)
+    monkeypatch.setattr(app_module, "analyze_emotion_audio", _fake_emotion, raising=False)
+    monkeypatch.setattr(app_module.supabase_service, "upload_audio_and_get_url", lambda *_args, **_kwargs: "https://example.com/audio.mp3", raising=False)
+    monkeypatch.setattr(app_module.supabase_service, "insert_conversation_session", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(app_module.supabase_service, "insert_emotion_score", lambda *_args, **_kwargs: None, raising=False)
+
+    wav_bytes = b"RIFF....WAVEfmt "
+    files = {"file": ("u.wav", io.BytesIO(wav_bytes), "audio/wav")}
+    response = client.post("/chat", headers=auth(include_discord=True), files=files)
+
+    assert response.status_code == 200
+    assert set(cancelled_stages) == {"stt", "llm", "tts"}
+    assert len(raise_calls) >= len(cancelled_stages)
+    assert not fake_manager._active_by_session
+    assert not fake_manager._turn_index
 
 
 def test_chat_missing_consent_header_returns_403(client):

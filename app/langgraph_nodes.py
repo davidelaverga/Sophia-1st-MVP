@@ -1,10 +1,11 @@
 """LangGraph state machine defining audio ingestion, intent analysis, response, and TTS nodes."""
 
 import base64
+import asyncio
 import logging
 import time
 import uuid
-from typing import Dict, Any, Optional, List, TypedDict
+from typing import Callable, Dict, Any, Optional, List, TypedDict
 from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
@@ -26,6 +27,9 @@ class EmotionData:
     label: str
     confidence: float
 
+CancelCallback = Callable[[], None]
+
+
 class GraphState(TypedDict):
     session_id: str
     audio_bytes: bytes
@@ -40,6 +44,18 @@ class GraphState(TypedDict):
     evaluation_logs: List[Dict[str, Any]]
     fallback_used: Dict[str, str]
     use_voxtral_large: bool  # Flag to indicate if Voxtral Large pipeline is active
+    cancel_check: Optional[CancelCallback]
+
+
+def _maybe_cancel(state: GraphState) -> None:
+    cancel = state.get("cancel_check")
+    if callable(cancel):
+        cancel()
+
+
+def _raise_if_cancelled(exc: Exception) -> None:
+    if isinstance(exc, asyncio.CancelledError):
+        raise exc
 
 class AudioIngestor:
     """Takes audio and determines processing pipeline - Voxtral Large vs Legacy"""
@@ -52,6 +68,7 @@ class AudioIngestor:
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
         state.setdefault("fallback_used", {})
+        _maybe_cancel(state)
         
         # Import shared services
         from app.services.shared_services import shared_services
@@ -60,6 +77,7 @@ class AudioIngestor:
             # VOXTRAL LARGE PATH: Extract transcript for IntentAnalyzer, defer response to ResponseGenerator
             logger.info("AudioIngestor: Using Voxtral Large pipeline")
             try:
+                _maybe_cancel(state)
                 # Quick validation that audio is processable
                 if not state.get("audio_bytes") or len(state["audio_bytes"]) < 1000:
                     raise ValueError("Audio data too small or empty")
@@ -70,6 +88,7 @@ class AudioIngestor:
                     raise Exception("Shared HybridVoxtralService not available")
                 
                 # Extract transcript using Voxtral Large (for IntentAnalyzer to work)
+                _maybe_cancel(state)
                 transcript = hybrid_service.primary._transcribe_audio(state["audio_bytes"])
                 
                 if not transcript or not transcript.strip():
@@ -96,6 +115,7 @@ class AudioIngestor:
                 
             except Exception as e:
                 logger.warning(f"AudioIngestor: Voxtral Large processing failed, falling back: {e}")
+                _raise_if_cancelled(e)
                 state["fallback_used"]["audio_ingestor"] = "voxtral_large_failed"
                 state["use_voxtral_large"] = False
                 return self._legacy_audio_ingestion(state)
@@ -110,8 +130,12 @@ class AudioIngestor:
     def _legacy_audio_ingestion(self, state: GraphState) -> GraphState:
         """Legacy audio ingestion using separate STT"""
         try:
+            _maybe_cancel(state)
             # Transcribe using Voxtral + Phoenix emotion analysis
-            transcript = transcribe_audio_with_voxtral(state["audio_bytes"])
+            transcript = transcribe_audio_with_voxtral(
+                state["audio_bytes"],
+                cancel_check=state.get("cancel_check"),
+            )
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
             
             state["transcript"] = transcript
@@ -125,9 +149,11 @@ class AudioIngestor:
             
         except Exception as e:
             logger.error(f"AudioIngestor failed: {e}")
+            _raise_if_cancelled(e)
             # Set fallback flag and try Whisper fallback
             state["fallback_used"]["stt"] = "whisper_fallback"
-            state["transcript"] = self._whisper_fallback(state["audio_bytes"])
+            _maybe_cancel(state)
+            state["transcript"] = self._whisper_fallback(state, state["audio_bytes"])
             # Still analyze emotion with Phoenix
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
             state["user_emotion"] = EmotionData(
@@ -137,9 +163,10 @@ class AudioIngestor:
         
         return state
     
-    def _whisper_fallback(self, audio_bytes: bytes) -> str:
+    def _whisper_fallback(self, state: GraphState, audio_bytes: bytes) -> str:
         """Fallback to OpenAI Whisper for STT"""
         try:
+            _maybe_cancel(state)
             import openai
             client = openai.OpenAI(api_key=self.settings.OPENAI_API_KEY)
             
@@ -155,6 +182,7 @@ class AudioIngestor:
             return transcript.text
         except Exception as e:
             logger.error(f"Whisper fallback failed: {e}")
+            _raise_if_cancelled(e)
             return ""
 
 class IntentAnalyzer:
@@ -200,6 +228,7 @@ class ResponseGenerator:
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
         state.setdefault("fallback_used", {})
+        _maybe_cancel(state)
         
         # Check pipeline decision from AudioIngestor
         use_voxtral_large = state.get("use_voxtral_large", False)
@@ -214,9 +243,15 @@ class ResponseGenerator:
                 
         except Exception as e:
             logger.error(f"ResponseGenerator failed: {e}")
+            _raise_if_cancelled(e)
+            _maybe_cancel(state)
             # Final fallback to Claude-3
             state["fallback_used"]["llm"] = "claude_fallback"
-            response = self._claude_fallback(state.get("transcript", ""), state.get("intent", ""))
+            response = self._claude_fallback(
+                state.get("transcript", ""),
+                state.get("intent", ""),
+                cancel_check=state.get("cancel_check"),
+            )
             state["llm_response"] = response
         
         return state
@@ -226,6 +261,7 @@ class ResponseGenerator:
         from app.services.shared_services import shared_services
         
         logger.info("ResponseGenerator: Processing with Voxtral Large")
+        cancel_check = state.get("cancel_check")
         
         try:
             hybrid_service = shared_services.get_hybrid_voxtral_service()
@@ -245,7 +281,8 @@ class ResponseGenerator:
                 state["audio_bytes"],
                 context=context_dict,
                 system_prompt=prompt_with_context,
-                fallback_on_error=True
+                fallback_on_error=True,
+                cancel_check=cancel_check,
             )
             
             # Extract response and log which service was used
@@ -264,13 +301,18 @@ class ResponseGenerator:
             
         except Exception as e:
             logger.warning(f"ResponseGenerator Voxtral Large failed, falling back to legacy: {e}")
+            _raise_if_cancelled(e)
+            _maybe_cancel(state)
             state["fallback_used"]["response_generator"] = "voxtral_large_failed"
             state["use_voxtral_large"] = False
             
             # Emergency fallback: ensure we have a transcript for legacy processing
             if not state.get("transcript"):
                 try:
-                    state["transcript"] = transcribe_audio_with_voxtral(state["audio_bytes"])
+                    state["transcript"] = transcribe_audio_with_voxtral(
+                        state["audio_bytes"],
+                        cancel_check=cancel_check,
+                    )
                     user_emotion = analyze_emotion_audio(state["audio_bytes"])
                     state["user_emotion"] = EmotionData(
                         label=user_emotion.label,
@@ -289,13 +331,16 @@ class ResponseGenerator:
     def _process_with_legacy_llm(self, state: GraphState) -> GraphState:
         """Process using legacy LLM pipeline"""
         logger.info("ResponseGenerator: Processing with legacy LLM")
+        _maybe_cancel(state)
+        cancel_check = state.get("cancel_check")
         
         context = self._build_context(state)
         response = self._generate_with_context(
             state.get("transcript", ""),
             state.get("intent", ""),
             state["user_emotion"],
-            context
+            context,
+            cancel_check=cancel_check,
         )
         state["llm_response"] = response
         
@@ -397,8 +442,18 @@ class ResponseGenerator:
         
         return " | ".join(prompt_parts)
     
-    def _generate_with_context(self, transcript: str, intent: str, user_emotion: EmotionData, context: str) -> str:
+    def _generate_with_context(
+        self,
+        transcript: str,
+        intent: str,
+        user_emotion: EmotionData,
+        context: str,
+        *,
+        cancel_check: Optional[CancelCallback] = None,
+    ) -> str:
         """Generate response with context and emotion awareness"""
+        if cancel_check:
+            cancel_check()
         # Get RAG context for DeFi questions
         rag_context = ""
         if intent == "defi_question":
@@ -426,11 +481,20 @@ class ResponseGenerator:
         
         full_prompt = " | ".join(prompt_parts)
         
-        return generate_llm_reply(full_prompt)
+        if cancel_check:
+            cancel_check()
+        return generate_llm_reply(full_prompt, cancel_check=cancel_check)
     
-    def _claude_fallback(self, transcript: str, intent: str) -> str:
+    def _claude_fallback(
+        self,
+        transcript: str,
+        intent: str,
+        cancel_check: Optional[CancelCallback] = None,
+    ) -> str:
         """Fallback to Claude-3 if Mistral fails"""
         try:
+            if cancel_check:
+                cancel_check()
             import anthropic
             client = anthropic.Anthropic(api_key=self.settings.ANTHROPIC_API_KEY)
             
@@ -448,6 +512,8 @@ class ResponseGenerator:
                 system=system_prompt,
                 messages=[{"role": "user", "content": transcript}]
             )
+            if cancel_check:
+                cancel_check()
             
             return response.content[0].text.strip()
             
@@ -460,10 +526,14 @@ class TTSNode:
     
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"TTSNode processing session {state['session_id']}")
+        _maybe_cancel(state)
         
         try:
             # Synthesize with Inworld/Boson AI
-            tts_bytes = synthesize_inworld(state["llm_response"])
+            tts_bytes = synthesize_inworld(
+                state["llm_response"],
+                cancel_check=state.get("cancel_check"),
+            )
             
             # Upload and get URL
             file_name = f"sophia_{int(time.time()*1000)}_{state['session_id']}.mp3"
@@ -484,10 +554,15 @@ class TTSNode:
             
         except Exception as e:
             logger.error(f"TTSNode Inworld failed: {e}")
+            _raise_if_cancelled(e)
+            _maybe_cancel(state)
             # Fallback to Boson AI or other TTS service
             state["fallback_used"]["tts"] = "boson_fallback"
             try:
-                tts_bytes = self._boson_ai_fallback(state["llm_response"])
+                tts_bytes = self._boson_ai_fallback(
+                    state["llm_response"],
+                    cancel_check=state.get("cancel_check"),
+                )
                 file_name = f"sophia_fallback_{int(time.time()*1000)}_{state['session_id']}.mp3"
                 audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
                 sophia_emotion = analyze_emotion_audio(tts_bytes)
@@ -500,15 +575,22 @@ class TTSNode:
                 )
             except Exception as fallback_error:
                 logger.error(f"TTS fallback also failed: {fallback_error}")
+                _raise_if_cancelled(fallback_error)
                 # Final fallback - empty audio
                 state["audio_url"] = ""
                 state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.5)
         
         return state
     
-    def _boson_ai_fallback(self, text: str) -> bytes:
+    def _boson_ai_fallback(
+        self,
+        text: str,
+        cancel_check: Optional[CancelCallback] = None,
+    ) -> bytes:
         """Fallback TTS using Boson AI or OpenAI TTS"""
         try:
+            if cancel_check:
+                cancel_check()
             # Try OpenAI TTS as fallback
             import openai
             client = openai.OpenAI(api_key=get_settings().OPENAI_API_KEY)
@@ -519,7 +601,8 @@ class TTSNode:
                 input=text,
                 response_format="mp3"
             )
-            
+            if cancel_check:
+                cancel_check()
             return response.content
             
         except Exception as e:
@@ -617,6 +700,7 @@ class SophiaLangGraph:
         audio_bytes: bytes,
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> GraphState:
         """Process a complete conversation turn through the graph"""
         
@@ -639,6 +723,7 @@ class SophiaLangGraph:
             "fallback_used": {},
             "use_voxtral_large": False,  # Will be set by AudioIngestor
             "supabase_token": supabase_token,
+            "cancel_check": cancel_check,
         }
         
         logger.info(f"Starting LangGraph processing for session {session_id}")
@@ -655,6 +740,7 @@ class SophiaLangGraph:
         message: str,
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> GraphState:
         """Process a text-only conversation turn, bypassing audio processing"""
         
@@ -677,6 +763,7 @@ class SophiaLangGraph:
             "fallback_used": {},
             "use_voxtral_large": False,  # Text-only uses legacy pipeline
             "supabase_token": supabase_token,
+            "cancel_check": cancel_check,
         }
         
         logger.info(f"Starting LangGraph text processing for session {session_id} with message: '{message[:50]}...'")
@@ -746,6 +833,8 @@ class SophiaLangGraph:
     def stream_llm_response(self, state: GraphState):
         """Stream LLM response using appropriate pipeline"""
         logger.info(f"Streaming LLM response for session {state['session_id']}")
+        _maybe_cancel(state)
+        cancel_check = state.get("cancel_check")
         try:
             # Check if we should use Voxtral Large streaming
             if state.get("use_voxtral_large", False):
@@ -758,8 +847,11 @@ class SophiaLangGraph:
                     
                     for token_data in hybrid_service.stream_response(
                         state["audio_bytes"],
-                        context=context_dict
+                        context=context_dict,
+                        cancel_check=cancel_check,
                     ):
+                        if cancel_check:
+                            cancel_check()
                         yield token_data.get("token", "")
                     return
             
@@ -792,11 +884,14 @@ class SophiaLangGraph:
             # Stream response using legacy pipeline
             from app.services.mistral import stream_generate_llm_reply
             
-            for token in stream_generate_llm_reply(full_prompt):
+            for token in stream_generate_llm_reply(full_prompt, cancel_check=cancel_check):
+                if cancel_check:
+                    cancel_check()
                 yield token
                 
         except Exception as e:
             logger.error(f"Streaming LLM response failed: {e}")
+            _raise_if_cancelled(e)
             # Final fallback
             if "defi" in state.get("transcript", "").lower() or "crypto" in state.get("transcript", "").lower():
                 yield "I can help you with DeFi questions. What would you like to know?"

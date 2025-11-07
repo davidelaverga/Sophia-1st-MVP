@@ -20,6 +20,7 @@ class LangGraphService:
         session_id: str = None,
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
+        cancel_check=None,
     ) -> Dict[str, Any]:
         """Process conversation through LangGraph pipeline"""
         
@@ -31,6 +32,7 @@ class LangGraphService:
                 audio_bytes,
                 session_id,
                 supabase_token=supabase_token,
+                cancel_check=cancel_check,
             )
             
             # Collect evaluation data if requested (instead of running full evaluation)
@@ -93,6 +95,7 @@ class LangGraphService:
         session_id: str = None,
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
+        cancel_check=None,
     ) -> Dict[str, Any]:
         """Process text-only conversation through LangGraph pipeline"""
         
@@ -104,6 +107,7 @@ class LangGraphService:
                 message,
                 session_id,
                 supabase_token=supabase_token,
+                cancel_check=cancel_check,
             )
             
             # Collect evaluation data if requested

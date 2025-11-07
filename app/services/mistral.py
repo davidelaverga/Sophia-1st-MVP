@@ -2,11 +2,21 @@
 
 import base64
 import io
-from typing import List, Optional
+from typing import Callable, List, Optional
 from mistralai import Mistral
 from app.config import get_settings
 import logging
 logger = logging.getLogger("sophia-backend")
+
+CancelCallback = Callable[[], None]
+
+
+def _noop_cancel() -> None:
+    return None
+
+
+def _ensure_cancel(cb: Optional[CancelCallback]) -> CancelCallback:
+    return cb if cb is not None else _noop_cancel
 
 
 def _client() -> Mistral:
@@ -16,15 +26,21 @@ def _client() -> Mistral:
     return Mistral(api_key=settings.MISTRAL_API_KEY)
 
 
-def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
+def transcribe_audio_with_voxtral(
+    wav_bytes: bytes,
+    cancel_check: Optional[CancelCallback] = None,
+) -> str:
     """Transcribe audio using Mistral Voxtral if available; fallback to Gemini.
     Returns plain text transcript.
     """
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     settings = get_settings()
 
     # Preferred: Mistral transcription endpoint (voxtral-mini-latest)
     try:
         client = _client()
+        cancel()
         # Provide a filename; SDK inspects content
         # Detect common audio container by magic bytes to choose a helpful filename
         def _detect_ext(data: bytes) -> str:
@@ -53,6 +69,7 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
                 "file_name": file_name,
             },
         )
+        cancel()
         # Try robust extraction from SDK response
         # Known SDK returns may have attributes like 'text' or dict-like structures
         text = None
@@ -70,12 +87,14 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
                 text = (resp.get("text") or resp.get("output_text") or resp.get("transcript") or "").strip()
             except Exception:
                 text = str(resp)
+        cancel()
         return text
     except Exception:
         # Fallback: Gemini if available; otherwise empty string
         if getattr(settings, "GOOGLE_API_KEY", None):
             try:
                 import google.generativeai as genai
+                cancel()
                 genai.configure(api_key=settings.GOOGLE_API_KEY)
                 model = genai.GenerativeModel("gemini-1.5-flash")
                 audio_inline = {
@@ -86,17 +105,24 @@ def transcribe_audio_with_voxtral(wav_bytes: bytes) -> str:
                 }
                 prompt = "Transcribe this audio. Return only the transcription text, no extra words."
                 gresp = model.generate_content([{"text": prompt}, audio_inline])
+                cancel()
                 return (gresp.text or "").strip()
             except Exception:
                 pass
         return ""
 
 
-def generate_reply_from_audio(wav_bytes: bytes, hint_text: Optional[str] = None) -> str:
+def generate_reply_from_audio(
+    wav_bytes: bytes,
+    hint_text: Optional[str] = None,
+    cancel_check: Optional[CancelCallback] = None,
+) -> str:
     """Use Voxtral chat with audio input to directly get a reply without separate STT.
 
     If Voxtral chat fails, fall back to transcribe + text generation.
     """
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     try:
         client = _client()
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
@@ -114,10 +140,12 @@ def generate_reply_from_audio(wav_bytes: bytes, hint_text: Optional[str] = None)
         else:
             messages[0]["content"].append({"type": "text", "text": "Respond briefly as a safe DeFi mentor."})
 
+        cancel()
         resp = client.chat.complete(
             model="voxtral-mini-latest",
             messages=messages,
         )
+        cancel()
         content = getattr(resp.choices[0].message, "content", resp.choices[0].message)
         if isinstance(content, list):
             text_parts: List[str] = []
@@ -132,20 +160,22 @@ def generate_reply_from_audio(wav_bytes: bytes, hint_text: Optional[str] = None)
         logger.warning(f"Voxtral chat with audio failed; falling back to STT+LLM: {e}")
         # Fallback: STT then text generation
         try:
-            text = transcribe_audio_with_voxtral(wav_bytes)
+            text = transcribe_audio_with_voxtral(wav_bytes, cancel_check=cancel_check)
             if text:
-                return generate_llm_reply(text)
+                return generate_llm_reply(text, cancel_check=cancel_check)
         except Exception:
             pass
         return "I couldn’t fully parse that audio. Could you repeat or speak a bit slower?"
 
 
-def generate_llm_reply(text: str) -> str:
+def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
         return "I didn’t catch that. Could you rephrase your question about DeFi?"
     try:
         client = _client()
+        cancel = _ensure_cancel(cancel_check)
+        cancel()
         # Prefer Responses API when available; fallback to Chat API for older SDKs
         try:
             resp_iface = getattr(client, "responses", None)
@@ -163,6 +193,7 @@ def generate_llm_reply(text: str) -> str:
                         },
                     ],
                 )
+                cancel()
                 out = getattr(r, "output_text", None)
                 if isinstance(out, str) and out.strip():
                     return out.strip()
@@ -171,6 +202,7 @@ def generate_llm_reply(text: str) -> str:
             pass
 
         # Chat API fallback
+        cancel()
         r2 = client.chat.complete(
             model="mistral-small-latest",
             messages=[
@@ -181,6 +213,7 @@ def generate_llm_reply(text: str) -> str:
                 {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
         )
+        cancel()
         content = getattr(r2.choices[0].message, "content", r2.choices[0].message)
         return str(content).strip()
     except Exception as e:
@@ -201,12 +234,17 @@ def generate_llm_reply(text: str) -> str:
         return "Here’s a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
 
 
-def stream_generate_llm_reply(text: str):
+def stream_generate_llm_reply(
+    text: str,
+    cancel_check: Optional[CancelCallback] = None,
+):
     """Yield tokens from Mistral in a streaming fashion.
 
     This uses the Mistral Python SDK streaming API and yields plain text chunks
     as they arrive so the caller can forward them to clients immediately.
     """
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     def _extract_text_pieces(delta_content):
         """Normalize various SDK chunk formats into iterable text fragments."""
         if not delta_content:
@@ -239,7 +277,7 @@ def stream_generate_llm_reply(text: str):
     if not text or not str(text).strip():
         yield "I didn't catch that. Could you rephrase your question about DeFi?"
         return
-    
+    cancel()
     client = _client()
     
     # Use Chat streaming with proper error handling
@@ -256,9 +294,11 @@ def stream_generate_llm_reply(text: str):
                 {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
         )
+        cancel()
         
         tokens_yielded = 0
         for event in stream:
+            cancel()
             try:
                 chunk = getattr(event, "data", event)
 
@@ -269,6 +309,7 @@ def stream_generate_llm_reply(text: str):
                         if not delta:
                             continue
                         for piece in _extract_text_pieces(getattr(delta, "content", None)):
+                            cancel()
                             yield piece
                             tokens_yielded += 1
                     continue
@@ -276,18 +317,21 @@ def stream_generate_llm_reply(text: str):
                 delta = getattr(chunk, "delta", None)
                 if delta:
                     for piece in _extract_text_pieces(getattr(delta, "content", None)):
+                        cancel()
                         yield piece
                         tokens_yielded += 1
                     continue
 
                 content = getattr(chunk, "content", None)
                 for piece in _extract_text_pieces(content if content is not None else chunk):
+                    cancel()
                     yield piece
                     tokens_yielded += 1
             except Exception as e:
                 logger.warning(f"Error processing stream chunk: {e}")
                 continue
                 
+        cancel()
         logger.info(f"Streaming completed, yielded {tokens_yielded} tokens")
         
         if tokens_yielded == 0:
@@ -295,12 +339,16 @@ def stream_generate_llm_reply(text: str):
             # Fallback to rule-based response if streaming failed
             lower = text.lower()
             if "yield" in lower:
+                cancel()
                 yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
             elif "staking" in lower:
+                cancel()
                 yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
             elif "defi" in lower:
+                cancel()
                 yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
             else:
+                cancel()
                 yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
         
     except Exception as e:
@@ -308,24 +356,34 @@ def stream_generate_llm_reply(text: str):
         # Final rule fallback
         lower = text.lower()
         if "yield" in lower:
+            cancel()
             yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
         elif "staking" in lower:
+            cancel()
             yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
         elif "defi" in lower:
+            cancel()
             yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
         else:
+            cancel()
             yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
 
 
-def stream_generate_reply_from_audio(wav_bytes: bytes):
+def stream_generate_reply_from_audio(
+    wav_bytes: bytes,
+    cancel_check: Optional[CancelCallback] = None,
+):
     """Stream tokens directly from Voxtral using audio input + chat completion.
     
     This bypasses separate STT and uses Voxtral's native audio understanding
     with streaming for the fastest possible response times.
     """
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     try:
         client = _client()
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+        cancel()
         
         logger.info("Starting Voxtral audio streaming...")
         
@@ -350,6 +408,7 @@ def stream_generate_reply_from_audio(wav_bytes: bytes):
         
         tokens_yielded = 0
         for chunk in stream:
+            cancel()
             try:
                 # Handle CompletionEvent wrapper from newer Mistral SDK
                 if hasattr(chunk, 'data'):
@@ -361,15 +420,18 @@ def stream_generate_reply_from_audio(wav_bytes: bytes):
                 if hasattr(chunk_data, 'choices') and chunk_data.choices:
                     delta = chunk_data.choices[0].delta
                     if hasattr(delta, 'content') and delta.content:
+                        cancel()
                         yield delta.content
-                        tokens_yielded += 1
+                    tokens_yielded += 1
                 elif hasattr(chunk_data, 'delta') and chunk_data.delta:
                     if hasattr(chunk_data.delta, 'content') and chunk_data.delta.content:
+                        cancel()
                         yield chunk_data.delta.content
-                        tokens_yielded += 1
-                elif hasattr(chunk_data, 'content') and chunk_data.content:
-                    yield chunk_data.content
                     tokens_yielded += 1
+                elif hasattr(chunk_data, 'content') and chunk_data.content:
+                    cancel()
+                    yield chunk_data.content
+                tokens_yielded += 1
             except Exception as e:
                 logger.warning(f"Error processing Voxtral stream chunk: {e}")
                 continue
@@ -382,7 +444,8 @@ def stream_generate_reply_from_audio(wav_bytes: bytes):
             try:
                 text = transcribe_audio_with_voxtral(wav_bytes)
                 if text:
-                    for token in stream_generate_llm_reply(text):
+                   for token in stream_generate_llm_reply(text):
+                        cancel()
                         yield token
                 else:
                     yield "I couldn't understand the audio. Could you try speaking more clearly?"
@@ -395,8 +458,9 @@ def stream_generate_reply_from_audio(wav_bytes: bytes):
         try:
             text = transcribe_audio_with_voxtral(wav_bytes)
             if text:
-                for token in stream_generate_llm_reply(text):
-                    yield token
+                   for token in stream_generate_llm_reply(text):
+                        cancel()
+                        yield token
             else:
                 yield "I couldn't understand the audio. Could you try speaking more clearly?"
         except Exception:

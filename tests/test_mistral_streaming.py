@@ -1,9 +1,11 @@
+import asyncio
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services import mistral as mistral_service
+import pytest
 
 
 class _Event:
@@ -77,3 +79,27 @@ def test_stream_generate_llm_reply_handles_completion_event(monkeypatch):
     tokens = list(mistral_service.stream_generate_llm_reply("How are markets?"))
 
     assert tokens == ["Hello", " ", "world"]
+
+
+def test_stream_generate_llm_reply_raises_when_cancel_requested(monkeypatch):
+    """Cancellation callback should be honored between streamed chunks."""
+    events = [
+        _completion_event("Alpha"),
+        _completion_event("Beta"),
+    ]
+    dummy_stream = _DummyStream(events)
+    dummy_client = _DummyClient(dummy_stream)
+    monkeypatch.setattr(mistral_service, "_client", lambda: dummy_client)
+
+    call_counter = {"count": 0}
+
+    def _cancel_check():
+        call_counter["count"] += 1
+        if call_counter["count"] >= 6:
+            raise asyncio.CancelledError()
+
+    stream = mistral_service.stream_generate_llm_reply("Walk me through staking.", cancel_check=_cancel_check)
+
+    assert next(stream) == "Alpha"
+    with pytest.raises(asyncio.CancelledError):
+        next(stream)

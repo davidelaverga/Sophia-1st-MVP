@@ -1,14 +1,28 @@
 """Inworld TTS client with streaming support and graceful fallbacks."""
 
 import base64
+from typing import Callable, Optional
+
 import requests
 from app.config import get_settings
 import logging
 logger = logging.getLogger("sophia-backend")
 
+CancelCallback = Callable[[], None]
 
-def synthesize_inworld(text: str) -> bytes:
+
+def _noop_cancel() -> None:
+    return None
+
+
+def _ensure_cancel(cb: Optional[CancelCallback]) -> CancelCallback:
+    return cb if cb is not None else _noop_cancel
+
+
+def synthesize_inworld(text: str, cancel_check: Optional[CancelCallback] = None) -> bytes:
     """Call Inworld TTS and return MP3 bytes. Requires INWORLD_API_KEY (Basic base64 token)."""
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     settings = get_settings()
     if not settings.INWORLD_API_KEY:
         # simple mock tone if key missing
@@ -42,10 +56,12 @@ def synthesize_inworld(text: str) -> bytes:
         "talking_speed": 1.0,          # From playground settings (normal speed)
     }
     try:
+        cancel()
         logger.info("TTS: calling Inworld TTS with Deborah voice and inworld-tts-1-max model")
         r = requests.post(url, json=payload, headers=headers_basic, timeout=30)
         r.raise_for_status()
         data = r.json()
+        cancel()
         audio_b64 = data.get("audioContent")
         if not audio_b64:
             # Return mock audio to avoid breaking UX
@@ -67,12 +83,18 @@ def synthesize_inworld(text: str) -> bytes:
         return b"ID3mock-mp3"
 
 
-def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
+def synthesize_inworld_stream(
+    text: str,
+    sample_rate_hz: int = 48000,
+    cancel_check: Optional[CancelCallback] = None,
+):
     """Yield accumulated LINEAR16 PCM bytes from Inworld streaming TTS.
 
     Following Inworld docs pattern: accumulate audio data before yielding larger chunks
     for smoother playback. Yields complete audio segments instead of tiny fragments.
     """
+    cancel = _ensure_cancel(cancel_check)
+    cancel()
     settings = get_settings()
     if not settings.INWORLD_API_KEY:
         logger.warning("TTS stream: INWORLD_API_KEY missing; aborting")
@@ -102,6 +124,7 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
         logger.info("TTS stream: POST :stream with Deborah voice and inworld-tts-1-max model")
         r = requests.post(url, json=payload, headers=headers, stream=True, timeout=60)
         r.raise_for_status()
+        cancel()
         
         # Accumulate audio data like in Inworld docs
         all_audio_data = []
@@ -109,6 +132,7 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
         chunk_count = 0
         
         for line in r.iter_lines():
+            cancel()
             if not line:
                 continue
             try:
@@ -119,6 +143,7 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
                     
                 bs = base64.b64decode(audio_b64)
                 chunk_count += 1
+                cancel()
                 
                 if wav_header is None and len(bs) > 44:
                     # Extract WAV header from first chunk
@@ -134,12 +159,14 @@ def synthesize_inworld_stream(text: str, sample_rate_hz: int = 48000):
                 # So ~48000 bytes = ~0.5 seconds
                 if len(all_audio_data) >= 48000:
                     if wav_header:
+                        cancel()
                         # Create complete WAV with header + accumulated data
                         complete_audio = bytearray(wav_header)
                         complete_audio.extend(all_audio_data)
                         yield bytes(complete_audio)
                         wav_header = None  # Only include header in first yield
                     else:
+                        cancel()
                         yield bytes(all_audio_data)
                     all_audio_data = []
                     
