@@ -88,7 +88,7 @@ export default function Home() {
       setIsLoading(true)
       console.log('🔐 Starting Discord sign-in...')
       const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'bitbucket',
+        provider: 'discord',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
         }
