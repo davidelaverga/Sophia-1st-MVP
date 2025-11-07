@@ -276,12 +276,14 @@ async def transcribe(
         raise HTTPException(status_code=500, detail="Transcription failed")
 
     user_emotion = analyze_emotion_audio(wav_bytes)
+    supabase_user_id, _ = extract_identity_from_token(supabase_token)
 
     try:
         supabase_service.insert_emotion_score(
             session_id,
             role="user",
             emotion=user_emotion,
+            user_id=supabase_user_id,
             access_token=supabase_token,
         )
     except Exception:
@@ -340,6 +342,7 @@ async def synthesize(
     body: SynthesizeRequest,
     supabase_token: str = Depends(verify_api_key),
 ):
+    supabase_user_id, _ = extract_identity_from_token(supabase_token)
     try:
         audio_bytes = synthesize_inworld(body.text)
     except Exception:
@@ -362,6 +365,7 @@ async def synthesize(
             session_id,
             role="sophia",
             emotion=sophia_emotion,
+            user_id=supabase_user_id,
             access_token=supabase_token,
         )
     except Exception:
@@ -453,7 +457,7 @@ async def chat(
             "sophia_emotion_confidence": sophia_emotion.confidence,
             "audio_url": audio_url or None,
             "user_id": supabase_user_id,
-            "discord_id": discord_id,
+            # "discord_id": discord_id,
         }, access_token=supabase_token)
         try:
             supabase_service.insert_emotion_score(
@@ -531,7 +535,7 @@ async def defi_chat(
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
                 "user_id": supabase_user_id,
-                "discord_id": discord_id,
+                # "discord_id": discord_id,
             }, access_token=supabase_token)
             try:
                 supabase_service.insert_emotion_score(
@@ -654,7 +658,7 @@ async def defi_chat_stream(
                     "sophia_emotion_confidence": (sophia_emotion.confidence if sophia_emotion else None),
                     "audio_url": audio_url or None,
                     "user_id": supabase_user_id,
-                    "discord_id": discord_id,
+                    # "discord_id": discord_id,
                 }, access_token=supabase_token)
                 try:
                     supabase_service.insert_emotion_score(
@@ -1050,7 +1054,7 @@ async def ws_voice(websocket: WebSocket):
                 "reply": last_reply_text,
                 "audio_url": last_audio_url or None,
                 "user_id": supabase_user_id,
-                "discord_id": discord_id,
+                # "discord_id": discord_id,
             }, access_token=supabase_token)
     except Exception:
         pass
@@ -1084,7 +1088,7 @@ async def text_chat(
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
                 "user_id": supabase_user_id,
-                "discord_id": discord_id,
+                # "discord_id": discord_id,
             }, access_token=supabase_token)
             try:
                 supabase_service.insert_emotion_score(
