@@ -16,7 +16,14 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.config_validation import validate_settings
-from app.deps import verify_api_key, limiter, require_consent, extract_user_id_from_token
+from app.deps import (
+    verify_api_key,
+    limiter,
+    require_consent,
+    extract_user_id_from_token,
+    extract_discord_id_from_token,
+    extract_identity_from_token,
+)
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
@@ -371,8 +378,7 @@ async def chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     # Accept common audio formats
     allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
@@ -492,8 +498,7 @@ async def defi_chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     """Enhanced chat endpoint using LangGraph for DeFi conversations"""
     
     # Accept common audio formats
@@ -577,8 +582,7 @@ async def defi_chat_stream(
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
     """
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     # IMPORTANT: Read the uploaded file BEFORE starting the generator.
     # Starlette may close the underlying SpooledTemporaryFile once the coroutine
     # returns control, which would make subsequent reads fail within the
@@ -748,9 +752,6 @@ def _looks_like_audio(data: bytes) -> bool:
 async def ws_voice(websocket: WebSocket):
     # Support both headers and query params for auth (query params needed for browser WebSocket)
     api_key = websocket.query_params.get("token") or websocket.headers.get("Authorization")
-    discord_id = websocket.query_params.get("discord_id") or websocket.headers.get("X-Discord-Id")
-
-    # Add "Bearer " prefix if not present (for query param compatibility)
     if api_key and not api_key.lower().startswith("bearer "):
         api_key = f"Bearer {api_key}"
 
@@ -759,8 +760,13 @@ async def ws_voice(websocket: WebSocket):
     except HTTPException as exc:
         await websocket.close(code=1008, reason=exc.detail)
         return
+
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
+    if not discord_id:
+        discord_id = websocket.query_params.get("discord_id")
+
     try:
-        require_consent(request=None, x_discord_id=discord_id, supabase_token=supabase_token)
+        require_consent(request=None, discord_id=discord_id, supabase_token=supabase_token)
     except HTTPException as exc:
         await websocket.close(code=1008, reason=exc.detail)
         return
@@ -790,7 +796,7 @@ async def ws_voice(websocket: WebSocket):
     last_final_text = ""
     last_reply_text = ""
     last_audio_url: Optional[str] = None
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    supabase_user_id = supabase_user_id or extract_user_id_from_token(supabase_token)
 
     # ==================================================================================
     # Audio Queue Manager - Task #42333: Barge-In Support
@@ -1057,8 +1063,7 @@ async def text_chat(
     consent_ok: None = Depends(require_consent),
 ):
     """Text-only chat endpoint for DeFi conversations"""
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
 
     try:
         # Process text message directly through LangGraph with text input

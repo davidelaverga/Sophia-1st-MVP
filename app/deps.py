@@ -1,6 +1,6 @@
 """FastAPI dependencies for API-key auth, rate limiting, and consent enforcement."""
 
-from typing import Optional
+from typing import Any, Optional
 import threading
 from urllib.parse import urljoin
 from fastapi import Header, HTTPException, Request
@@ -72,12 +72,11 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized: invalid token signature") from exc
 
 
-def extract_user_id_from_token(token: Optional[str]) -> Optional[str]:
-    """Return the Supabase user id embedded in the JWT (the `sub` claim)."""
+def _decode_jwt_payload(token: Optional[str]) -> Optional[dict[str, Any]]:
     if not token:
         return None
     try:
-        claims = jwt_decode(
+        return jwt_decode(
             token,
             options={
                 "verify_signature": False,
@@ -90,17 +89,50 @@ def extract_user_id_from_token(token: Optional[str]) -> Optional[str]:
     except InvalidTokenError:
         return None
 
+
+def extract_identity_from_token(token: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Return `(user_id, discord_id)` extracted from a Supabase JWT."""
+    claims = _decode_jwt_payload(token)
+    if not claims:
+        return None, None
+
+    user_id: Optional[str] = None
+    discord_id: Optional[str] = None
+
     sub = claims.get("sub")
     if isinstance(sub, str) and sub:
-        return sub
+        user_id = sub
 
     user = claims.get("user")
     if isinstance(user, dict):
-        user_id = user.get("id")
-        if isinstance(user_id, str) and user_id:
-            return user_id
+        candidate = user.get("id")
+        if isinstance(candidate, str) and candidate:
+            user_id = user_id or candidate
 
-    return None
+    user_metadata = claims.get("user_metadata")
+    if isinstance(user_metadata, dict):
+        for key in ("provider_id", "sub", "provider_token", "user_id"):
+            value = user_metadata.get(key)
+            if isinstance(value, str) and value:
+                discord_id = value
+                break
+
+    if not discord_id:
+        discord_id = user_id
+
+    return user_id, discord_id
+
+
+def extract_user_id_from_token(token: Optional[str]) -> Optional[str]:
+    """Return the Supabase user id embedded in the JWT (the `sub` claim)."""
+    user_id, _ = extract_identity_from_token(token)
+    return user_id
+
+
+def extract_discord_id_from_token(token: Optional[str]) -> Optional[str]:
+    """Best-effort extraction of the Discord id stored in Supabase user metadata."""
+    _, discord_id = extract_identity_from_token(token)
+    return discord_id
 
 
 def verify_api_key(
@@ -118,33 +150,37 @@ def verify_api_key(
     _verify_jwt_signature_via_jwks(token)
     if request is not None:
         request.state.supabase_token = token
-        request.state.supabase_user_id = extract_user_id_from_token(token)
+        user_id, discord_id = extract_identity_from_token(token)
+        request.state.supabase_user_id = user_id
+        request.state.supabase_discord_id = discord_id
     return token
 
 
 def require_consent(
     request: Request = None,
-    x_discord_id: Optional[str] = Header(default=None),
+    discord_id: Optional[str] = None,
     supabase_token: Optional[str] = None,
 ) -> None:
-    """Require GDPR consent before allowing voice/chat endpoints.
-
-    Frontend must set `X-Discord-Id` header after Discord OAuth. We then check
-    Supabase table `user_consents` for a record. If none, reject with 403.
-    """
+    """Require GDPR consent before allowing voice/chat endpoints."""
     settings = get_settings()
     # Allow bypass in local dev if explicitly disabled
     if getattr(settings, "REQUIRE_CONSENT", "true").lower() in {"0", "false", "no"}:
         return None
 
-    if not x_discord_id:
-        raise HTTPException(status_code=403, detail="Consent required: missing X-Discord-Id header")
-
     token = supabase_token
     if token is None and request is not None:
         token = getattr(request.state, "supabase_token", None)
 
-    if not has_user_consent(x_discord_id, access_token=token):
+    if not discord_id:
+        if token:
+            discord_id = extract_discord_id_from_token(token)
+        if not discord_id and request is not None:
+            discord_id = getattr(request.state, "supabase_discord_id", None)
+
+    if not discord_id:
+        raise HTTPException(status_code=403, detail="Consent required: missing Discord identity")
+
+    if not has_user_consent(discord_id, access_token=token):
         raise HTTPException(status_code=403, detail="Consent required. Please accept data processing consent.")
 
     return None
