@@ -232,7 +232,6 @@ class AudioQueueManager:
 
                         with self._lock:
                             self._stats[session_id]["cancelled"] += 1
-                            self._stats[session_id]["total_cancellations"] += 1
                             self._stats[session_id]["last_interruption_ms"] = interruption_ms
                             self._states[session_id] = PlaybackState.CANCELLED
 
@@ -286,15 +285,16 @@ class AudioQueueManager:
         with self._lock:
             state = self._states.get(session_id, PlaybackState.IDLE)
             current = self._current_segments.get(session_id)
+            if state == PlaybackState.PLAYING and current:
+                self._cancellation_events[session_id].set()
+                stats = self._stats.get(session_id)
+                if stats is not None:
+                    stats["total_cancellations"] += 1
 
-        if state == PlaybackState.PLAYING and current:
-            # Signal cancellation
-            self._cancellation_events[session_id].set()
-
-            logger.info(
-                f"Session {session_id}: cancelled current segment {current.segment_id}"
-            )
-            return True
+                logger.info(
+                    f"Session {session_id}: cancelled current segment {current.segment_id}"
+                )
+                return True
 
         return False
 

@@ -207,6 +207,34 @@ def stream_generate_llm_reply(text: str):
     This uses the Mistral Python SDK streaming API and yields plain text chunks
     as they arrive so the caller can forward them to clients immediately.
     """
+    def _extract_text_pieces(delta_content):
+        """Normalize various SDK chunk formats into iterable text fragments."""
+        if not delta_content:
+            return []
+        if isinstance(delta_content, str):
+            return [delta_content]
+        texts = []
+        if isinstance(delta_content, list):
+            for item in delta_content:
+                if isinstance(item, str):
+                    if item:
+                        texts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text_val = item.get("text")
+                else:
+                    text_val = getattr(item, "text", None)
+                if text_val:
+                    texts.append(text_val)
+            return texts
+        text_val = getattr(delta_content, "text", None)
+        if text_val:
+            return [text_val]
+        text_repr = str(delta_content)
+        if text_repr and text_repr != "None":
+            return [text_repr]
+        return []
+
     # Handle empty input before attempting API
     if not text or not str(text).strip():
         yield "I didn't catch that. Could you rephrase your question about DeFi?"
@@ -230,20 +258,31 @@ def stream_generate_llm_reply(text: str):
         )
         
         tokens_yielded = 0
-        for chunk in stream:
+        for event in stream:
             try:
-                # Handle different chunk formats from Mistral SDK
-                if hasattr(chunk, 'choices') and chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if hasattr(delta, 'content') and delta.content:
-                        yield delta.content
+                chunk = getattr(event, "data", event)
+
+                choices = getattr(chunk, "choices", None)
+                if choices:
+                    for choice in choices:
+                        delta = getattr(choice, "delta", None)
+                        if not delta:
+                            continue
+                        for piece in _extract_text_pieces(getattr(delta, "content", None)):
+                            yield piece
+                            tokens_yielded += 1
+                    continue
+
+                delta = getattr(chunk, "delta", None)
+                if delta:
+                    for piece in _extract_text_pieces(getattr(delta, "content", None)):
+                        yield piece
                         tokens_yielded += 1
-                elif hasattr(chunk, 'delta') and chunk.delta:
-                    if hasattr(chunk.delta, 'content') and chunk.delta.content:
-                        yield chunk.delta.content
-                        tokens_yielded += 1
-                elif hasattr(chunk, 'content') and chunk.content:
-                    yield chunk.content
+                    continue
+
+                content = getattr(chunk, "content", None)
+                for piece in _extract_text_pieces(content if content is not None else chunk):
+                    yield piece
                     tokens_yielded += 1
             except Exception as e:
                 logger.warning(f"Error processing stream chunk: {e}")
