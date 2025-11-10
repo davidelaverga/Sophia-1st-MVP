@@ -35,6 +35,7 @@ class Settings:
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
     SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
+    SUPABASE_SIGNED_URL_TTL: int = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 
     # Optional: direct Postgres via Transaction Pooler
     SUPABASE_DB_DSN: Optional[str] = os.getenv("SUPABASE_DB_DSN")

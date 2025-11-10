@@ -21,7 +21,7 @@ def load_env():
                     key, value = line.split('=', 1)
                     os.environ[key.strip()] = value.strip()
 
-def test_voxtral_streaming(wav_file_path: str):
+def run_voxtral_streaming(wav_file_path: str):
     """Test Voxtral streaming with a WAV file"""
     
     # Load API key
@@ -152,7 +152,7 @@ def test_all_samples():
         print(f"Testing: {wav_file.name}")
         print(f"{'='*60}")
         
-        if test_voxtral_streaming(str(wav_file)):
+        if run_voxtral_streaming(str(wav_file)):
             success_count += 1
     
     print(f"\n🏁 Summary: {success_count}/{min(3, len(wav_files))} tests passed")
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     test_file = Path(__file__).parent / 'audio' / 'neutral_sample.wav'
     if test_file.exists():
         print(f"\n🎯 Testing with: {test_file.name}")
-        test_voxtral_streaming(str(test_file))
+        run_voxtral_streaming(str(test_file))
     
     # Test multiple samples
     print(f"\n🔄 Testing multiple samples...")

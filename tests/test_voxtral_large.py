@@ -17,7 +17,7 @@ class TestVoxtralLargeService:
             
             service = VoxtralLargeService()
             
-            assert service.model == "voxtral-large-latest"
+            assert service.model == "voxtral-mini-latest"
             assert service.client is not None
     
     def test_build_context_prompt_basic(self):

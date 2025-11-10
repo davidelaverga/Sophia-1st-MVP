@@ -1,5 +1,4 @@
-# ========================================
-# Python
+# Python caches & build artifacts
 # ========================================
 __pycache__/
 *.py[cod]
@@ -18,25 +17,91 @@ parts/
 sdist/
 var/
 wheels/
+wheelhouse/
 pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+pip-wheel-metadata/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.nox/
+.tox/
+.hypothesis/
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pyre/
+.dmypy.json
+dmypy.json
 
 # ========================================
-# Environment Variables & Secrets
+# Virtual environments
+# ========================================
+.venv/
+*.venv
+venv/
+env/
+ENV/
+.env/
+
+# ========================================
+# Environment variables & secrets
 # ========================================
 .env
+.env.*
 .env.local
 .env.*.local
+.envrc
+*.env.local
 *.pem
 *.key
 *.crt
+**/*.secret
+!*.example
+!*.sample
 
 # ========================================
-# Testing
+# Supabase session state
+# ========================================
+.supabase/
+
+# ========================================
+# Node / frontend / Next.js artifacts
+# ========================================
+node_modules/
+.next/
+.vercel/
+.turbo/
+.svelte-kit/
+.swc/
+out/
+.nuxt/
+coverage/
+coverage-final.json
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+frontend-nextjs/node_modules/
+frontend-nextjs/.next/
+frontend-nextjs/out/
+frontend-nextjs/.env
+frontend-nextjs/.env.local
+frontend-nextjs/.env.production.local
+frontend-nextjs/npm-debug.log*
+frontend-nextjs/yarn-debug.log*
+frontend-nextjs/yarn-error.log*
+
+# ========================================
+# Logs & temp files
 # ========================================
 .pytest_cache/
 .coverage
@@ -49,36 +114,36 @@ coverage.xml
 test_audio_queue_simple.py
 test_websocket_audio_queue.py
 *.log
-
-# ========================================
-# Docker
-# ========================================
-docker-compose.override.yml
-
-# ========================================
-# IDEs & Editors
-# ========================================
-.vscode/
-.idea/
+*.tmp
+*.temp
+*.cache
+*.orig
 *.swp
 *.swo
 *~
-.DS_Store
-*.sublime-project
-*.sublime-workspace
+test_audio_queue_simple.py
 
 # ========================================
-# Frontend (Next.js/React)
+# IDEs & editors
 # ========================================
-frontend-nextjs/node_modules/
-frontend-nextjs/.next/
-frontend-nextjs/out/
-frontend-nextjs/.env
-frontend-nextjs/.env.local
-frontend-nextjs/.env.production.local
-frontend-nextjs/npm-debug.log*
-frontend-nextjs/yarn-debug.log*
-frontend-nextjs/yarn-error.log*
+.idea/
+.vscode/
+.history/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+.Spotlight-V100
+.Trashes
+
+# ========================================
+# Docker / container artifacts
+# ========================================
+*.pid
+*.seed
+docker-compose.override.yml
 
 # ========================================
 # Playwright MCP
@@ -94,6 +159,7 @@ frontend-nextjs/yarn-error.log*
 *.avi
 *.flac
 *.m4a
+audio/tmp/
 
 # ========================================
 # Archives

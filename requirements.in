@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-multipart
+slowapi
+mistralai
+arize-phoenix-evals
+requests
+pydub
+supabase
+pytest
+pytest-cov
+httpx
+python-dotenv
+psycopg[binary]
+google-genai
+pytest-asyncio

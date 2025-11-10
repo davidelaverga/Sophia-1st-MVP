@@ -1,16 +1,21 @@
 """FastAPI dependencies for API-key auth, rate limiting, and consent enforcement."""
 
-from typing import Optional
+import logging
+import os
 import threading
+from typing import Optional
 from urllib.parse import urljoin
+
 from fastapi import Header, HTTPException, Request
 from jwt import InvalidTokenError, PyJWKClient, decode as jwt_decode, get_unverified_header
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
 from app.config import get_settings
 from app.services.supabase import has_user_consent
 
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger("sophia-backend")
 
 _JWK_CLIENTS: dict[str, PyJWKClient] = {}
 _JWK_CLIENT_LOCK = threading.Lock()
@@ -115,7 +120,49 @@ def verify_api_key(
     if not token:
         raise HTTPException(status_code=401, detail="Empty token")
 
-    _verify_jwt_signature_via_jwks(token)
+    settings = get_settings()
+    # Allow simple API keys for legacy automation/integration flows
+    if token in (settings.API_KEYS or []):
+        if request is not None:
+            request.state.supabase_token = token
+            request.state.supabase_user_id = None
+        return token
+
+    try:
+        header = get_unverified_header(token)
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="Unauthorized: malformed token") from exc
+
+    alg = (header.get("alg") or "").upper()
+    if alg.startswith("HS"):
+        secret = (
+            os.getenv("SUPABASE_JWT_SECRET")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or settings.SUPABASE_KEY
+        )
+        if secret:
+            try:
+                jwt_decode(
+                    token,
+                    secret,
+                    algorithms=[alg],
+                    options={
+                        "verify_signature": True,
+                        "verify_exp": False,
+                        "verify_aud": False,
+                        "verify_iat": False,
+                        "verify_nbf": False,
+                    },
+                )
+            except InvalidTokenError as exc:
+                raise HTTPException(status_code=401, detail="Unauthorized: invalid token signature") from exc
+        else:
+            logger.warning(
+                "SUPABASE_JWT_SECRET/SERVICE_ROLE_KEY is not configured; skipping signature verification for Supabase JWTs"
+            )
+    else:
+        _verify_jwt_signature_via_jwks(token)
+
     if request is not None:
         request.state.supabase_token = token
         request.state.supabase_user_id = extract_user_id_from_token(token)

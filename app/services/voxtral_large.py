@@ -3,11 +3,19 @@
 import base64
 import io
 import logging
-from typing import Optional, Generator, Dict, Any
+from typing import Optional, Generator, Dict, Any, Callable
 from mistralai import Mistral
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+CancelCallback = Callable[[], None]
+
+def _noop_cancel() -> None:
+    return None
+
+def _ensure_cancel(cb: Optional[CancelCallback]) -> CancelCallback:
+    return cb if cb is not None else _noop_cancel
 
 
 class VoxtralLargeService:
@@ -23,13 +31,17 @@ class VoxtralLargeService:
         if not self.settings.MISTRAL_API_KEY:
             raise RuntimeError("MISTRAL_API_KEY is not set")
         self.client = Mistral(api_key=self.settings.MISTRAL_API_KEY)
-        self.model = "voxtral-large-latest"  # The unified model
+        # Voxtral currently exposes its unified audio model as "voxtral-mini-latest".
+        # The previous "voxtral-large-latest" identifier is invalid and causes the API
+        # to reject requests, so we point to the supported model here.
+        self.model = "voxtral-mini-latest"
     
     def generate_response(
         self, 
         audio_bytes: bytes, 
         context: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> str:
         """
         Generate a complete response from audio input using Voxtral Large.
@@ -42,6 +54,8 @@ class VoxtralLargeService:
         Returns:
             Generated response text
         """
+        cancel = _ensure_cancel(cancel_check)
+        cancel()
         try:
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
             
@@ -70,7 +84,7 @@ class VoxtralLargeService:
                 model=self.model,
                 messages=messages,
             )
-            
+            cancel()
             # Extract response content
             content = self._extract_response_content(response)
             logger.info(f"Voxtral Large response: {content[:100]}...")
@@ -85,7 +99,8 @@ class VoxtralLargeService:
         self, 
         audio_bytes: bytes,
         context: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> Generator[str, None, None]:
         """
         Stream response tokens from audio input using Voxtral Large.
@@ -98,6 +113,8 @@ class VoxtralLargeService:
         Yields:
             Response text chunks as they're generated
         """
+        cancel = _ensure_cancel(cancel_check)
+        cancel()
         try:
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
             
@@ -129,6 +146,7 @@ class VoxtralLargeService:
             
             tokens_yielded = 0
             for chunk in stream:
+                cancel()
                 try:
                     # Handle CompletionEvent wrapper from newer Mistral SDK
                     chunk_data = chunk.data if hasattr(chunk, 'data') else chunk
@@ -137,13 +155,16 @@ class VoxtralLargeService:
                     if hasattr(chunk_data, 'choices') and chunk_data.choices:
                         delta = chunk_data.choices[0].delta
                         if hasattr(delta, 'content') and delta.content:
+                            cancel()
                             yield delta.content
                             tokens_yielded += 1
                     elif hasattr(chunk_data, 'delta') and chunk_data.delta:
                         if hasattr(chunk_data.delta, 'content') and chunk_data.delta.content:
+                            cancel()
                             yield chunk_data.delta.content
                             tokens_yielded += 1
                     elif hasattr(chunk_data, 'content') and chunk_data.content:
+                        cancel()
                         yield chunk_data.content
                         tokens_yielded += 1
                         
@@ -206,7 +227,7 @@ class VoxtralLargeService:
             bio = io.BytesIO(audio_bytes)
             
             resp = self.client.audio.transcriptions.complete(
-                model="voxtral-large-latest",
+                model=self.model,
                 file={
                     "content": bio,
                     "file_name": file_name,
@@ -348,7 +369,8 @@ class HybridVoxtralService:
         audio_bytes: bytes,
         context: Optional[Dict[str, Any]] = None,
         system_prompt: Optional[str] = None,
-        fallback_on_error: bool = True
+        fallback_on_error: bool = True,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> Dict[str, Any]:
         """
         Generate response with automatic fallback.
@@ -363,9 +385,15 @@ class HybridVoxtralService:
             Dict with 'response', 'service_used', and optional 'transcript'
         """
         # Try Voxtral Large first
+        cancel = _ensure_cancel(cancel_check)
         try:
             logger.info("Attempting Voxtral Large unified pipeline")
-            response = self.primary.generate_response(audio_bytes, context, system_prompt)
+            response = self.primary.generate_response(
+                audio_bytes,
+                context,
+                system_prompt,
+                cancel_check=cancel,
+            )
             
             return {
                 "response": response,
@@ -375,19 +403,21 @@ class HybridVoxtralService:
             
         except Exception as e:
             logger.warning(f"Voxtral Large failed: {e}")
+            cancel()
             
             if not fallback_on_error:
                 raise
             
             # Fallback to legacy pipeline
-            return self._fallback_pipeline(audio_bytes, context, system_prompt)
+            return self._fallback_pipeline(audio_bytes, context, system_prompt, cancel_check=cancel)
     
     def stream_response(
         self,
         audio_bytes: bytes,
         context: Optional[Dict[str, Any]] = None,
         system_prompt: Optional[str] = None,
-        fallback_on_error: bool = True
+        fallback_on_error: bool = True,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Stream response with automatic fallback.
@@ -396,10 +426,17 @@ class HybridVoxtralService:
             Dict with 'token' and 'service_used' keys
         """
         # Try Voxtral Large streaming first
+        cancel = _ensure_cancel(cancel_check)
         try:
             logger.info("Attempting Voxtral Large streaming")
             
-            for token in self.primary.stream_response(audio_bytes, context, system_prompt):
+            for token in self.primary.stream_response(
+                audio_bytes,
+                context,
+                system_prompt,
+                cancel_check=cancel,
+            ):
+                cancel()
                 yield {
                     "token": token,
                     "service_used": "voxtral_large"
@@ -409,6 +446,7 @@ class HybridVoxtralService:
             
         except Exception as e:
             logger.warning(f"Voxtral Large streaming failed: {e}")
+            cancel()
             
             if not fallback_on_error:
                 raise
@@ -424,7 +462,10 @@ class HybridVoxtralService:
                 )
                 
                 # Transcribe first
-                transcript = transcribe_audio_with_voxtral(audio_bytes)
+                transcript = transcribe_audio_with_voxtral(
+                    audio_bytes,
+                    cancel_check=cancel,
+                )
                 
                 if not transcript:
                     yield {
@@ -437,7 +478,8 @@ class HybridVoxtralService:
                 prompt = self._build_legacy_prompt(transcript, context)
                 
                 # Stream tokens from legacy pipeline
-                for token in stream_generate_llm_reply(prompt):
+                for token in stream_generate_llm_reply(prompt, cancel_check=cancel):
+                    cancel()
                     yield {
                         "token": token,
                         "service_used": "legacy_pipeline"
@@ -454,11 +496,13 @@ class HybridVoxtralService:
         self,
         audio_bytes: bytes,
         context: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        cancel_check: Optional[CancelCallback] = None,
     ) -> Dict[str, Any]:
         """
         Execute legacy STT + LLM pipeline as fallback.
         """
+        cancel = _ensure_cancel(cancel_check)
         try:
             logger.info("Executing fallback pipeline (STT + LLM)")
             
@@ -466,7 +510,10 @@ class HybridVoxtralService:
             from app.services.mistral import transcribe_audio_with_voxtral, generate_llm_reply
             
             # Transcribe
-            transcript = transcribe_audio_with_voxtral(audio_bytes)
+            transcript = transcribe_audio_with_voxtral(
+                audio_bytes,
+                cancel_check=cancel,
+            )
             
             if not transcript:
                 return {
@@ -479,7 +526,7 @@ class HybridVoxtralService:
             prompt = self._build_legacy_prompt(transcript, context)
             
             # Generate response
-            response = generate_llm_reply(prompt)
+            response = generate_llm_reply(prompt, cancel_check=cancel)
             
             return {
                 "response": response,
