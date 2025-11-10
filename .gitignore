@@ -47,6 +47,7 @@ coverage.xml
 *.cover
 .hypothesis/
 test_audio_queue_simple.py
+test_websocket_audio_queue.py
 *.log
 
 # ========================================
@@ -78,6 +79,11 @@ frontend-nextjs/.env.production.local
 frontend-nextjs/npm-debug.log*
 frontend-nextjs/yarn-debug.log*
 frontend-nextjs/yarn-error.log*
+
+# ========================================
+# Playwright MCP
+# ========================================
+.playwright-mcp/
 
 # ========================================
 # Audio & Media Files (large binaries)
