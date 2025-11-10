@@ -76,11 +76,6 @@ def client(monkeypatch):
 
     monkeypatch.setattr(app_module.APIKeyMiddleware, "dispatch", _bypass, raising=False)
 
-    from app.deps import verify_api_key as deps_verify_api_key
-
-    monkeypatch.setitem(
-        app_module.app.dependency_overrides, deps_verify_api_key, lambda: None
-    )
     global Emotion
     Emotion = app_module.Emotion
     return TestClient(app_module.app)
