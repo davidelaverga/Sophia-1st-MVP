@@ -9,6 +9,7 @@ from app.services.session_manager import SessionTurnManager, TurnInProgressError
 
 def test_start_turn_blocks_parallel_when_cancellation_disabled():
     """Attempting a second turn without cancellation should raise immediately."""
+
     async def _run():
         manager = SessionTurnManager()
         first = await manager.start_turn("sess-123", cancel_existing=False)
@@ -21,6 +22,7 @@ def test_start_turn_blocks_parallel_when_cancellation_disabled():
 
 def test_start_turn_requests_cancel_and_waits_for_completion():
     """Default behaviour cancels the active turn and waits for it to finish before proceeding."""
+
     async def _run():
         manager = SessionTurnManager()
         first = await manager.start_turn("alpha-session")
@@ -42,6 +44,7 @@ def test_start_turn_requests_cancel_and_waits_for_completion():
 
 def test_request_cancel_triggers_raise_if_cancelled():
     """Explicit cancellation should cause raise_if_cancelled to surface CancelledError."""
+
     async def _run():
         manager = SessionTurnManager()
         state = await manager.start_turn("beta-session")

@@ -29,4 +29,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("uq_users_discord_id", table_name="users")
     op.drop_column("users", "discord_id")
-

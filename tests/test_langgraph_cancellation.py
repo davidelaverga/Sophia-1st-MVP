@@ -37,11 +37,19 @@ def test_audio_ingestor_whisper_fallback_honours_cancellation(monkeypatch):
         whisper_called["flag"] = True
         return "fallback transcript"
 
-    monkeypatch.setattr("app.langgraph_nodes.transcribe_audio_with_voxtral", _transcribe_fail)
-    monkeypatch.setattr(AudioIngestor, "_whisper_fallback", _fake_whisper, raising=False)
-    monkeypatch.setattr("app.langgraph_nodes.analyze_emotion_audio", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "app.langgraph_nodes.transcribe_audio_with_voxtral", _transcribe_fail
+    )
+    monkeypatch.setattr(
+        AudioIngestor, "_whisper_fallback", _fake_whisper, raising=False
+    )
+    monkeypatch.setattr(
+        "app.langgraph_nodes.analyze_emotion_audio", lambda *_args, **_kwargs: None
+    )
 
     with pytest.raises(asyncio.CancelledError):
         ingestor._legacy_audio_ingestion(state)
 
-    assert not whisper_called["flag"], "Whisper fallback should not execute after cancellation"
+    assert not whisper_called["flag"], (
+        "Whisper fallback should not execute after cancellation"
+    )

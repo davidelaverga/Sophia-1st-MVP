@@ -49,15 +49,19 @@ def test_user_uuid_from_discord_deterministic():
 def test_insert_conversation_session_derives_user_id_from_discord():
     supabase._supabase = StubSupabase()
     session_id = "test-session"
-    supabase.insert_conversation_session({
-        "id": session_id,
-        "transcript": "Hi",
-        "reply": "Hello",
-        "discord_id": "discord-abc",
-    })
+    supabase.insert_conversation_session(
+        {
+            "id": session_id,
+            "transcript": "Hi",
+            "reply": "Hello",
+            "discord_id": "discord-abc",
+        }
+    )
     table = supabase._supabase.tables["conversation_sessions"]
     assert table.payloads[-1]["id"] == session_id
-    assert table.payloads[-1]["user_id"] == supabase.user_uuid_from_discord("discord-abc")
+    assert table.payloads[-1]["user_id"] == supabase.user_uuid_from_discord(
+        "discord-abc"
+    )
 
 
 def test_insert_emotion_score_applies_resolved_user_id():

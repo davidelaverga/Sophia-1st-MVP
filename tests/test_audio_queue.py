@@ -125,7 +125,9 @@ class TestBargeinMechanism:
         cancel_time_ms = (time.time() - start_time) * 1000
 
         assert cancelled is True
-        assert cancel_time_ms < 200, f"Cancellation took {cancel_time_ms:.2f}ms (exceeds 200ms)"
+        assert cancel_time_ms < 200, (
+            f"Cancellation took {cancel_time_ms:.2f}ms (exceeds 200ms)"
+        )
 
         # Wait a bit and verify playback didn't complete
         await asyncio.sleep(0.1)
@@ -211,7 +213,7 @@ class TestConcurrentSessions:
                         session_id=session_id,
                         audio_data=sample_audio,
                         mime_type="audio/wav",
-                        metadata={"index": i}
+                        metadata={"index": i},
                     )
 
                 # Start playback with callback
@@ -225,6 +227,7 @@ class TestConcurrentSessions:
 
                 # Randomly cancel some sessions
                 import random
+
                 if random.random() > 0.5:
                     audio_queue.cancel_all(session_id)
 
@@ -243,8 +246,7 @@ class TestConcurrentSessions:
         # Run 10 sessions concurrently
         session_ids = [f"concurrent-session-{i}" for i in range(num_sessions)]
         results = await asyncio.gather(
-            *[session_workflow(sid) for sid in session_ids],
-            return_exceptions=True
+            *[session_workflow(sid) for sid in session_ids], return_exceptions=True
         )
 
         # Verify all sessions completed successfully
@@ -263,7 +265,7 @@ class TestConcurrentSessions:
                 session_id=session_id,
                 audio_data=sample_audio,
                 mime_type="audio/wav",
-                metadata={"index": index}
+                metadata={"index": index},
             )
 
         # Enqueue 20 segments concurrently
@@ -298,8 +300,7 @@ class TestConcurrentSessions:
             return audio_queue.cancel_current(session_id)
 
         results = await asyncio.gather(
-            *[cancel_operation() for _ in range(5)],
-            return_exceptions=True
+            *[cancel_operation() for _ in range(5)], return_exceptions=True
         )
 
         # At least one should succeed, no exceptions
@@ -333,7 +334,7 @@ class TestPlaybackSequence:
                 session_id=session_id,
                 audio_data=sample_audio,
                 mime_type="audio/wav",
-                metadata={"index": i}
+                metadata={"index": i},
             )
 
         # Start playback
@@ -343,12 +344,14 @@ class TestPlaybackSequence:
         await asyncio.sleep(0.5)
 
         # Verify sequential order
-        assert playback_order == [0, 1, 2, 3, 4], f"Expected [0,1,2,3,4], got {playback_order}"
+        assert playback_order == [0, 1, 2, 3, 4], (
+            f"Expected [0,1,2,3,4], got {playback_order}"
+        )
 
         # Verify no overlaps (each segment started after previous)
         for i in range(1, len(playback_times)):
-            time_diff = playback_times[i] - playback_times[i-1]
-            assert time_diff >= 0.04, f"Overlap detected: {time_diff*1000:.2f}ms gap"
+            time_diff = playback_times[i] - playback_times[i - 1]
+            assert time_diff >= 0.04, f"Overlap detected: {time_diff * 1000:.2f}ms gap"
 
 
 class TestStatsTracking:
@@ -373,7 +376,11 @@ class TestStatsTracking:
         stats = audio_queue.get_stats(session_id)
         assert stats.session_id == session_id
         assert stats.segments_played >= 0
-        assert stats.state in [PlaybackState.IDLE, PlaybackState.PLAYING, PlaybackState.COMPLETED]
+        assert stats.state in [
+            PlaybackState.IDLE,
+            PlaybackState.PLAYING,
+            PlaybackState.COMPLETED,
+        ]
 
     @pytest.mark.asyncio
     async def test_cancellation_stats(self, audio_queue, sample_audio):

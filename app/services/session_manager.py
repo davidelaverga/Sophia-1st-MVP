@@ -43,7 +43,9 @@ class TurnState:
     cancel_requested: bool = False
     error: Optional[str] = None
     context: Dict[str, Any] = field(default_factory=dict)
-    _done_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _done_event: asyncio.Event = field(
+        default_factory=asyncio.Event, init=False, repr=False
+    )
 
     def set_status(self, status: TurnStatus) -> None:
         """Update the current lifecycle status."""
@@ -53,7 +55,11 @@ class TurnState:
     def request_cancel(self) -> None:
         """Mark that the caller would like this turn to stop as soon as possible."""
         if not self.cancel_requested:
-            logger.info("Turn %s (session %s) cancellation requested", self.turn_id, self.session_id)
+            logger.info(
+                "Turn %s (session %s) cancellation requested",
+                self.turn_id,
+                self.session_id,
+            )
         self.cancel_requested = True
         self.updated_at = time.time()
 
@@ -105,7 +111,9 @@ class SessionTurnManager:
                         state.context.update(metadata)
                     self._active_by_session[session_id] = state
                     self._turn_index[turn_id] = state
-                    logger.info("Started new turn %s for session %s", turn_id, session_id)
+                    logger.info(
+                        "Started new turn %s for session %s", turn_id, session_id
+                    )
                     return state
 
                 if not cancel_existing:
@@ -170,7 +178,9 @@ class SessionTurnManager:
         """Return the active turn for a session, if any."""
         return self._active_by_session.get(session_id)
 
-    def request_cancel(self, *, session_id: Optional[str] = None, turn_id: Optional[str] = None) -> None:
+    def request_cancel(
+        self, *, session_id: Optional[str] = None, turn_id: Optional[str] = None
+    ) -> None:
         """Request cancellation of the active turn by session or explicit turn identifier."""
         state: Optional[TurnState] = None
         if turn_id:
@@ -179,7 +189,11 @@ class SessionTurnManager:
             state = self._active_by_session.get(session_id)
 
         if state is None:
-            logger.debug("Cancellation requested for unknown session/turn (%s, %s)", session_id, turn_id)
+            logger.debug(
+                "Cancellation requested for unknown session/turn (%s, %s)",
+                session_id,
+                turn_id,
+            )
             return
 
         state.request_cancel()
@@ -192,7 +206,9 @@ class SessionTurnManager:
     def raise_if_cancelled(self, turn_id: str) -> None:
         """Raise asyncio.CancelledError if the turn has been marked for cancellation."""
         if self.check_cancelled(turn_id):
-            logger.info("Turn %s cancellation acknowledged; raising CancelledError", turn_id)
+            logger.info(
+                "Turn %s cancellation acknowledged; raising CancelledError", turn_id
+            )
             raise asyncio.CancelledError()
 
     async def fail_turn(self, turn_id: str, error: Exception) -> None:

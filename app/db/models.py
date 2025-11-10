@@ -6,7 +6,17 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,7 +47,10 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     sessions: Mapped[List["ConversationSession"]] = relationship(back_populates="user")
@@ -71,11 +84,16 @@ class ConversationSession(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     user: Mapped[Optional[User]] = relationship(back_populates="sessions")
-    emotion_scores: Mapped[List["EmotionScore"]] = relationship(back_populates="session")
+    emotion_scores: Mapped[List["EmotionScore"]] = relationship(
+        back_populates="session"
+    )
 
 
 class EmotionScore(Base):
@@ -99,10 +117,15 @@ class EmotionScore(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
-    session: Mapped["ConversationSession"] = relationship(back_populates="emotion_scores")
+    session: Mapped["ConversationSession"] = relationship(
+        back_populates="emotion_scores"
+    )
     user: Mapped[Optional[User]] = relationship(back_populates="emotion_scores")
 
 
@@ -127,5 +150,8 @@ class UserConsent(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

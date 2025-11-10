@@ -166,7 +166,12 @@ def upgrade() -> None:
         """
     )
 
-    for table_name in ("users", "conversation_sessions", "emotion_scores", "user_consents"):
+    for table_name in (
+        "users",
+        "conversation_sessions",
+        "emotion_scores",
+        "user_consents",
+    ):
         op.execute(
             f"""
             CREATE TRIGGER {table_name}_set_updated_at
@@ -178,8 +183,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table_name in ("user_consents", "emotion_scores", "conversation_sessions", "users"):
-        op.execute(f"DROP TRIGGER IF EXISTS {table_name}_set_updated_at ON {table_name}")
+    for table_name in (
+        "user_consents",
+        "emotion_scores",
+        "conversation_sessions",
+        "users",
+    ):
+        op.execute(
+            f"DROP TRIGGER IF EXISTS {table_name}_set_updated_at ON {table_name}"
+        )
 
     op.execute("DROP FUNCTION IF EXISTS update_updated_at_column")
 

@@ -3,13 +3,22 @@
 import os
 import io
 from types import SimpleNamespace
+import importlib
+import sys
+from pathlib import Path
 
 import types
 from unittest.mock import patch
 
+import pytest
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
+
+from app import config as app_config
+from app.services.session_manager import SessionTurnManager
+import app.deps as deps_module
 
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_KEY", "test-service-key")
@@ -22,24 +31,14 @@ if "API_KEYS" in os.environ:
 else:
     os.environ["API_KEYS"] = "test-key"
 
-os.environ.setdefault("SUPABASE_DEFAULT_USER_ID", "11111111-1111-1111-1111-111111111111")
-
-import importlib
-import sys
-from pathlib import Path
+os.environ.setdefault(
+    "SUPABASE_DEFAULT_USER_ID", "11111111-1111-1111-1111-111111111111"
+)
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app import config as app_config
-from app.services.session_manager import SessionTurnManager
-
 app_config.get_settings.cache_clear()
 sys.modules.pop("main", None)
-
-from fastapi.testclient import TestClient
-
-import main as app_module
-import app.deps as deps_module
 
 TEST_ISS = "https://example.supabase.co/auth/v1"
 _PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -60,9 +59,6 @@ def _stub_get_jwk_client(issuer: str):
 
 deps_module._get_jwk_client = _stub_get_jwk_client
 
-import pytest
-
-
 Emotion = None
 
 
@@ -81,7 +77,10 @@ def client(monkeypatch):
     monkeypatch.setattr(app_module.APIKeyMiddleware, "dispatch", _bypass, raising=False)
 
     from app.deps import verify_api_key as deps_verify_api_key
-    monkeypatch.setitem(app_module.app.dependency_overrides, deps_verify_api_key, lambda: None)
+
+    monkeypatch.setitem(
+        app_module.app.dependency_overrides, deps_verify_api_key, lambda: None
+    )
     global Emotion
     Emotion = app_module.Emotion
     return TestClient(app_module.app)
@@ -99,7 +98,9 @@ def _encode_token(payload: dict | None = None) -> str:
     body = {"sub": "user-123", "iss": TEST_ISS}
     if payload:
         body.update(payload)
-    return jwt.encode(body, _PRIVATE_KEY, algorithm="RS256", headers={"kid": "test-key"})
+    return jwt.encode(
+        body, _PRIVATE_KEY, algorithm="RS256", headers={"kid": "test-key"}
+    )
 
 
 def auth(include_discord: bool = False, discord_id: str = "user-123"):
@@ -115,7 +116,9 @@ def test_root(client):
     assert r.json().get("message")
 
 
-@patch("app.services.mistral.transcribe_audio_with_voxtral", return_value="What is APY?")
+@patch(
+    "app.services.mistral.transcribe_audio_with_voxtral", return_value="What is APY?"
+)
 @patch("app.services.emotion.analyze_emotion_text")
 @patch("app.services.supabase.insert_emotion_score")
 def test_transcribe_success(mock_ins, mock_emotion, mock_transcribe, client):
@@ -126,7 +129,12 @@ def test_transcribe_success(mock_ins, mock_emotion, mock_transcribe, client):
     assert r.status_code == 200
     data = r.json()
     assert "text" in data and data["text"] == "What is APY?"
-    assert "emotion" in data and data["emotion"]["label"] in {"neutral","positive","negative","unknown"}
+    assert "emotion" in data and data["emotion"]["label"] in {
+        "neutral",
+        "positive",
+        "negative",
+        "unknown",
+    }
 
 
 def test_transcribe_wrong_type(client):
@@ -135,7 +143,10 @@ def test_transcribe_wrong_type(client):
     assert r.status_code == 400
 
 
-@patch("app.services.mistral.generate_llm_reply", return_value="APY is annual percentage yield")
+@patch(
+    "app.services.mistral.generate_llm_reply",
+    return_value="APY is annual percentage yield",
+)
 def test_generate_response(mock_gen, client):
     r = client.post("/generate-response", headers=auth(), json={"text": "Explain APY"})
     assert r.status_code == 200
@@ -143,7 +154,10 @@ def test_generate_response(mock_gen, client):
 
 
 @patch("app.services.tts.synthesize_inworld", return_value=b"ID3mock-mp3")
-@patch("app.services.supabase.upload_audio_and_get_url", return_value="https://example.com/audio.mp3")
+@patch(
+    "app.services.supabase.upload_audio_and_get_url",
+    return_value="https://example.com/audio.mp3",
+)
 @patch("app.services.supabase.insert_emotion_score")
 @patch("app.services.emotion.analyze_emotion_text")
 def test_synthesize(mock_emotion, mock_ins, mock_up, mock_tts, client):
@@ -152,25 +166,48 @@ def test_synthesize(mock_emotion, mock_ins, mock_up, mock_tts, client):
     assert r.status_code == 200
     data = r.json()
     assert data["audio_url"].startswith("http")
-    assert data["emotion"]["label"] in {"neutral","positive","negative"}
+    assert data["emotion"]["label"] in {"neutral", "positive", "negative"}
 
 
 @patch("app.deps.has_user_consent", return_value=True)
-@patch("app.services.mistral.transcribe_audio_with_voxtral", return_value="What is APY?")
-@patch("app.services.mistral.generate_llm_reply", return_value="APY stands for annual percentage yield")
+@patch(
+    "app.services.mistral.transcribe_audio_with_voxtral", return_value="What is APY?"
+)
+@patch(
+    "app.services.mistral.generate_llm_reply",
+    return_value="APY stands for annual percentage yield",
+)
 @patch("app.services.tts.synthesize_inworld", return_value=b"ID3mock-mp3")
-@patch("app.services.supabase.upload_audio_and_get_url", return_value="https://example.com/resp.mp3")
+@patch(
+    "app.services.supabase.upload_audio_and_get_url",
+    return_value="https://example.com/resp.mp3",
+)
 @patch("app.services.supabase.insert_emotion_score")
 @patch("app.services.supabase.insert_conversation_session")
 @patch("app.services.emotion.analyze_emotion_text")
-def test_chat(mock_emotion, mock_session, mock_ins, mock_up, mock_tts, mock_gen, mock_tr, mock_consent, client):
-    mock_emotion.side_effect = [Emotion(label="neutral", confidence=0.83), Emotion(label="positive", confidence=0.78)]
+def test_chat(
+    mock_emotion,
+    mock_session,
+    mock_ins,
+    mock_up,
+    mock_tts,
+    mock_gen,
+    mock_tr,
+    mock_consent,
+    client,
+):
+    mock_emotion.side_effect = [
+        Emotion(label="neutral", confidence=0.83),
+        Emotion(label="positive", confidence=0.78),
+    ]
     wav_bytes = b"RIFF....WAVEfmt "
     files = {"file": ("u.wav", io.BytesIO(wav_bytes), "audio/wav")}
     r = client.post("/chat", headers=auth(include_discord=True), files=files)
     assert r.status_code == 200
     data = r.json()
-    assert set(["transcript","reply","user_emotion","sophia_emotion","audio_url"]).issubset(data.keys())
+    assert set(
+        ["transcript", "reply", "user_emotion", "sophia_emotion", "audio_url"]
+    ).issubset(data.keys())
 
 
 @patch("app.deps.has_user_consent", return_value=True)
@@ -189,7 +226,12 @@ def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkey
         return original_raise(turn_id)
 
     fake_manager.raise_if_cancelled = types.MethodType(_tracked_raise, fake_manager)
-    monkeypatch.setattr(app_module.shared_services, "get_session_turn_manager", lambda: fake_manager, raising=False)
+    monkeypatch.setattr(
+        app_module.shared_services,
+        "get_session_turn_manager",
+        lambda: fake_manager,
+        raising=False,
+    )
 
     cancelled_stages = []
 
@@ -219,13 +261,37 @@ def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkey
     def _fake_emotion(_payload):
         return emotion_values.pop(0)
 
-    monkeypatch.setattr(app_module.mistral_service, "transcribe_audio_with_voxtral", _fake_transcribe, raising=False)
-    monkeypatch.setattr(app_module.mistral_service, "generate_llm_reply", _fake_generate, raising=False)
+    monkeypatch.setattr(
+        app_module.mistral_service,
+        "transcribe_audio_with_voxtral",
+        _fake_transcribe,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_module.mistral_service, "generate_llm_reply", _fake_generate, raising=False
+    )
     monkeypatch.setattr(app_module, "synthesize_inworld", _fake_tts, raising=False)
-    monkeypatch.setattr(app_module, "analyze_emotion_audio", _fake_emotion, raising=False)
-    monkeypatch.setattr(app_module.supabase_service, "upload_audio_and_get_url", lambda *_args, **_kwargs: "https://example.com/audio.mp3", raising=False)
-    monkeypatch.setattr(app_module.supabase_service, "insert_conversation_session", lambda *_args, **_kwargs: None, raising=False)
-    monkeypatch.setattr(app_module.supabase_service, "insert_emotion_score", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(
+        app_module, "analyze_emotion_audio", _fake_emotion, raising=False
+    )
+    monkeypatch.setattr(
+        app_module.supabase_service,
+        "upload_audio_and_get_url",
+        lambda *_args, **_kwargs: "https://example.com/audio.mp3",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_module.supabase_service,
+        "insert_conversation_session",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_module.supabase_service,
+        "insert_emotion_score",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
 
     wav_bytes = b"RIFF....WAVEfmt "
     files = {"file": ("u.wav", io.BytesIO(wav_bytes), "audio/wav")}
@@ -272,7 +338,9 @@ def test_defi_chat_consent_denied(mock_consent, client):
 @patch("app.services.langgraph_service.langgraph_service.process_conversation")
 @patch("app.services.supabase.insert_conversation_session")
 @patch("app.services.supabase.insert_emotion_score")
-def test_defi_chat_consent_allows_flow(mock_ins_emotion, mock_ins_session, mock_process, mock_consent, client):
+def test_defi_chat_consent_allows_flow(
+    mock_ins_emotion, mock_ins_session, mock_process, mock_consent, client
+):
     mock_process.return_value = {
         "session_id": "sess-123",
         "transcript": "What is staking?",
@@ -304,7 +372,9 @@ def test_text_chat_requires_consent_header(client):
 @patch("app.services.langgraph_service.langgraph_service.process_text_conversation")
 @patch("app.services.supabase.insert_conversation_session")
 @patch("app.services.supabase.insert_emotion_score")
-def test_text_chat_consent_allows_flow(mock_ins_emotion, mock_ins_session, mock_process, mock_consent, client):
+def test_text_chat_consent_allows_flow(
+    mock_ins_emotion, mock_ins_session, mock_process, mock_consent, client
+):
     mock_process.return_value = {
         "session_id": "sess-text",
         "transcript": "Tell me about DeFi",
@@ -318,14 +388,16 @@ def test_text_chat_consent_allows_flow(mock_ins_emotion, mock_ins_session, mock_
         "evaluation_logs": [],
         "evaluation_report": None,
     }
-    r = client.post("/text-chat", headers=auth(include_discord=True), json={"message": "Hello"})
+    r = client.post(
+        "/text-chat", headers=auth(include_discord=True), json={"message": "Hello"}
+    )
     assert r.status_code == 200
     data = r.json()
     assert data["session_id"] == "sess-text"
 
 
 def test_missing_auth(protected_client):
-    r = protected_client.get("/")  # public endpoint OK
+    protected_client.get("/")  # public endpoint OK
     files = {"file": ("u.wav", io.BytesIO(b"RIFF"), "audio/wav")}
     r2 = protected_client.post("/transcribe", files=files)
     assert r2.status_code == 401

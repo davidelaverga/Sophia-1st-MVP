@@ -38,7 +38,11 @@ def insert_conversation_session_sql(data: Dict[str, Any]) -> None:
         "audio_url",
     ]
     sql = (
-        "insert into public.conversation_sessions (" + ",".join(cols) + ") values (" + ",".join([f"%({c})s" for c in cols]) + ")"
+        "insert into public.conversation_sessions ("
+        + ",".join(cols)
+        + ") values ("
+        + ",".join([f"%({c})s" for c in cols])
+        + ")"
     )
     with contextlib.closing(_get_conn()) as conn:
         with conn.cursor() as cur:

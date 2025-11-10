@@ -6,6 +6,7 @@ from typing import Callable, List, Optional
 from mistralai import Mistral
 from app.config import get_settings
 import logging
+
 logger = logging.getLogger("sophia-backend")
 
 CancelCallback = Callable[[], None]
@@ -41,6 +42,7 @@ def transcribe_audio_with_voxtral(
     try:
         client = _client()
         cancel()
+
         # Provide a filename; SDK inspects content
         # Detect common audio container by magic bytes to choose a helpful filename
         def _detect_ext(data: bytes) -> str:
@@ -60,6 +62,7 @@ def transcribe_audio_with_voxtral(
                 return ".wav"
             except Exception:
                 return ".wav"
+
         file_name = f"audio{_detect_ext(wav_bytes)}"
         bio = io.BytesIO(wav_bytes)
         resp = client.audio.transcriptions.complete(
@@ -84,7 +87,12 @@ def transcribe_audio_with_voxtral(
         if text is None:
             try:
                 # If resp is dict-like
-                text = (resp.get("text") or resp.get("output_text") or resp.get("transcript") or "").strip()
+                text = (
+                    resp.get("text")
+                    or resp.get("output_text")
+                    or resp.get("transcript")
+                    or ""
+                ).strip()
             except Exception:
                 text = str(resp)
         cancel()
@@ -94,6 +102,7 @@ def transcribe_audio_with_voxtral(
         if getattr(settings, "GOOGLE_API_KEY", None):
             try:
                 import google.generativeai as genai
+
                 cancel()
                 genai.configure(api_key=settings.GOOGLE_API_KEY)
                 model = genai.GenerativeModel("gemini-1.5-flash")
@@ -138,7 +147,9 @@ def generate_reply_from_audio(
         if hint_text and hint_text.strip():
             messages[0]["content"].append({"type": "text", "text": hint_text.strip()})
         else:
-            messages[0]["content"].append({"type": "text", "text": "Respond briefly as a safe DeFi mentor."})
+            messages[0]["content"].append(
+                {"type": "text", "text": "Respond briefly as a safe DeFi mentor."}
+            )
 
         cancel()
         resp = client.chat.complete(
@@ -165,7 +176,9 @@ def generate_reply_from_audio(
                 return generate_llm_reply(text, cancel_check=cancel_check)
         except Exception:
             pass
-        return "I couldn’t fully parse that audio. Could you repeat or speak a bit slower?"
+        return (
+            "I couldn’t fully parse that audio. Could you repeat or speak a bit slower?"
+        )
 
 
 def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None) -> str:
@@ -185,11 +198,21 @@ def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None)
                     input=[
                         {
                             "role": "system",
-                            "content": [{"type": "text", "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words."}],
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                                }
+                            ],
                         },
                         {
                             "role": "user",
-                            "content": [{"type": "text", "text": f"Respond as a DeFi mentor to: {text}"}],
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"Respond as a DeFi mentor to: {text}",
+                                }
+                            ],
                         },
                     ],
                 )
@@ -220,6 +243,7 @@ def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None)
         # Log minimal detail for debugging
         try:
             import logging
+
             logging.getLogger("mistral").warning(f"Responses.create failed: {e}")
         except Exception:
             pass
@@ -245,6 +269,7 @@ def stream_generate_llm_reply(
     """
     cancel = _ensure_cancel(cancel_check)
     cancel()
+
     def _extract_text_pieces(delta_content):
         """Normalize various SDK chunk formats into iterable text fragments."""
         if not delta_content:
@@ -279,11 +304,11 @@ def stream_generate_llm_reply(
         return
     cancel()
     client = _client()
-    
+
     # Use Chat streaming with proper error handling
     try:
         logger.info(f"Starting streaming LLM reply for text: {text[:50]}...")
-        
+
         stream = client.chat.stream(
             model="mistral-small-latest",
             messages=[
@@ -295,7 +320,7 @@ def stream_generate_llm_reply(
             ],
         )
         cancel()
-        
+
         tokens_yielded = 0
         for event in stream:
             cancel()
@@ -308,7 +333,9 @@ def stream_generate_llm_reply(
                         delta = getattr(choice, "delta", None)
                         if not delta:
                             continue
-                        for piece in _extract_text_pieces(getattr(delta, "content", None)):
+                        for piece in _extract_text_pieces(
+                            getattr(delta, "content", None)
+                        ):
                             cancel()
                             yield piece
                             tokens_yielded += 1
@@ -323,19 +350,23 @@ def stream_generate_llm_reply(
                     continue
 
                 content = getattr(chunk, "content", None)
-                for piece in _extract_text_pieces(content if content is not None else chunk):
+                for piece in _extract_text_pieces(
+                    content if content is not None else chunk
+                ):
                     cancel()
                     yield piece
                     tokens_yielded += 1
             except Exception as e:
                 logger.warning(f"Error processing stream chunk: {e}")
                 continue
-                
+
         cancel()
         logger.info(f"Streaming completed, yielded {tokens_yielded} tokens")
-        
+
         if tokens_yielded == 0:
-            logger.warning("No tokens were yielded from stream, falling back to rule-based response")
+            logger.warning(
+                "No tokens were yielded from stream, falling back to rule-based response"
+            )
             # Fallback to rule-based response if streaming failed
             lower = text.lower()
             if "yield" in lower:
@@ -350,7 +381,7 @@ def stream_generate_llm_reply(
             else:
                 cancel()
                 yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
-        
+
     except Exception as e:
         logger.error(f"Streaming LLM reply failed: {e}")
         # Final rule fallback
@@ -374,7 +405,7 @@ def stream_generate_reply_from_audio(
     cancel_check: Optional[CancelCallback] = None,
 ):
     """Stream tokens directly from Voxtral using audio input + chat completion.
-    
+
     This bypasses separate STT and uses Voxtral's native audio understanding
     with streaming for the fastest possible response times.
     """
@@ -384,9 +415,9 @@ def stream_generate_reply_from_audio(
         client = _client()
         audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
         cancel()
-        
+
         logger.info("Starting Voxtral audio streaming...")
-        
+
         stream = client.chat.stream(
             model="voxtral-mini-latest",
             messages=[
@@ -399,68 +430,73 @@ def stream_generate_reply_from_audio(
                         },
                         {
                             "type": "text",
-                            "text": "Respond briefly as Sophia, a safe DeFi mentor. Keep under 50 words."
-                        }
-                    ]
+                            "text": "Respond briefly as Sophia, a safe DeFi mentor. Keep under 50 words.",
+                        },
+                    ],
                 }
             ],
         )
-        
+
         tokens_yielded = 0
         for chunk in stream:
             cancel()
             try:
                 # Handle CompletionEvent wrapper from newer Mistral SDK
-                if hasattr(chunk, 'data'):
+                if hasattr(chunk, "data"):
                     chunk_data = chunk.data
                 else:
                     chunk_data = chunk
-                
+
                 # Handle different chunk formats from Mistral SDK
-                if hasattr(chunk_data, 'choices') and chunk_data.choices:
+                if hasattr(chunk_data, "choices") and chunk_data.choices:
                     delta = chunk_data.choices[0].delta
-                    if hasattr(delta, 'content') and delta.content:
+                    if hasattr(delta, "content") and delta.content:
                         cancel()
                         yield delta.content
                     tokens_yielded += 1
-                elif hasattr(chunk_data, 'delta') and chunk_data.delta:
-                    if hasattr(chunk_data.delta, 'content') and chunk_data.delta.content:
+                elif hasattr(chunk_data, "delta") and chunk_data.delta:
+                    if (
+                        hasattr(chunk_data.delta, "content")
+                        and chunk_data.delta.content
+                    ):
                         cancel()
                         yield chunk_data.delta.content
                     tokens_yielded += 1
-                elif hasattr(chunk_data, 'content') and chunk_data.content:
+                elif hasattr(chunk_data, "content") and chunk_data.content:
                     cancel()
                     yield chunk_data.content
                 tokens_yielded += 1
             except Exception as e:
                 logger.warning(f"Error processing Voxtral stream chunk: {e}")
                 continue
-                
+
         logger.info(f"Voxtral streaming completed, yielded {tokens_yielded} tokens")
-        
+
         if tokens_yielded == 0:
-            logger.warning("No tokens from Voxtral stream, falling back to STT + text streaming")
+            logger.warning(
+                "No tokens from Voxtral stream, falling back to STT + text streaming"
+            )
             # Fallback to traditional STT + text streaming
             try:
                 text = transcribe_audio_with_voxtral(wav_bytes)
                 if text:
-                   for token in stream_generate_llm_reply(text):
+                    for token in stream_generate_llm_reply(text):
                         cancel()
                         yield token
                 else:
                     yield "I couldn't understand the audio. Could you try speaking more clearly?"
             except Exception:
                 yield "I'm having trouble processing audio right now. Please try again."
-        
+
     except Exception as e:
         logger.error(f"Voxtral audio streaming failed: {e}")
         # Fallback to traditional STT + text streaming
         try:
             text = transcribe_audio_with_voxtral(wav_bytes)
             if text:
-                   for token in stream_generate_llm_reply(text):
-                        cancel()
-                        yield token
+                for token in stream_generate_llm_reply(text):
+                    cancel()
+                    yield token
             else:
                 yield "I couldn't understand the audio. Could you try speaking more clearly?"
         except Exception:
