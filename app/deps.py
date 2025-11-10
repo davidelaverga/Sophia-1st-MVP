@@ -7,7 +7,12 @@ from typing import Optional
 from urllib.parse import urljoin
 
 from fastapi import Header, HTTPException, Request
-from jwt import InvalidTokenError, PyJWKClient, decode as jwt_decode, get_unverified_header
+from jwt import (
+    InvalidTokenError,
+    PyJWKClient,
+    decode as jwt_decode,
+    get_unverified_header,
+)
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -40,23 +45,31 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
     try:
         unverified_claims = jwt_decode(token, options={"verify_signature": False})
     except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized: malformed token") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: malformed token"
+        ) from exc
 
     issuer = unverified_claims.get("iss")
     if not issuer or not isinstance(issuer, str):
-        raise HTTPException(status_code=401, detail="Unauthorized: issuer claim missing")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: issuer claim missing"
+        )
 
     jwk_client = _get_jwk_client(issuer)
     try:
         signing_key = jwk_client.get_signing_key_from_jwt(token)
     except Exception as exc:  # noqa: BLE001 - propagate as auth failure
-        raise HTTPException(status_code=401, detail="Unauthorized: unable to resolve signing key") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: unable to resolve signing key"
+        ) from exc
 
     header = get_unverified_header(token)
     header_alg = header.get("alg") if isinstance(header, dict) else None
     algorithm = signing_key.algorithm_name or header_alg
     if not algorithm:
-        raise HTTPException(status_code=401, detail="Unauthorized: unknown signing algorithm")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: unknown signing algorithm"
+        )
 
     try:
         jwt_decode(
@@ -74,7 +87,9 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
             },
         )
     except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized: invalid token signature") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: invalid token signature"
+        ) from exc
 
 
 def extract_user_id_from_token(token: Optional[str]) -> Optional[str]:
@@ -114,7 +129,9 @@ def verify_api_key(
 ) -> str:
     """Validate that the request carries a Supabase JWT with a valid signature."""
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
 
     token = authorization.split(" ", 1)[1].strip()
     if not token:
@@ -131,7 +148,9 @@ def verify_api_key(
     try:
         header = get_unverified_header(token)
     except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized: malformed token") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: malformed token"
+        ) from exc
 
     alg = (header.get("alg") or "").upper()
     if alg.startswith("HS"):
@@ -155,7 +174,9 @@ def verify_api_key(
                     },
                 )
             except InvalidTokenError as exc:
-                raise HTTPException(status_code=401, detail="Unauthorized: invalid token signature") from exc
+                raise HTTPException(
+                    status_code=401, detail="Unauthorized: invalid token signature"
+                ) from exc
         else:
             logger.warning(
                 "SUPABASE_JWT_SECRET/SERVICE_ROLE_KEY is not configured; skipping signature verification for Supabase JWTs"
@@ -185,13 +206,18 @@ def require_consent(
         return None
 
     if not x_discord_id:
-        raise HTTPException(status_code=403, detail="Consent required: missing X-Discord-Id header")
+        raise HTTPException(
+            status_code=403, detail="Consent required: missing X-Discord-Id header"
+        )
 
     token = supabase_token
     if token is None and request is not None:
         token = getattr(request.state, "supabase_token", None)
 
     if not has_user_consent(x_discord_id, access_token=token):
-        raise HTTPException(status_code=403, detail="Consent required. Please accept data processing consent.")
+        raise HTTPException(
+            status_code=403,
+            detail="Consent required. Please accept data processing consent.",
+        )
 
     return None

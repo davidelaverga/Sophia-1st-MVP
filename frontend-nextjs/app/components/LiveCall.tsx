@@ -60,9 +60,39 @@ export default function LiveCall() {
   const ttsQueueRef = useRef<string[]>([])
   const playingRef = useRef(false)
   const audioChunkBuffersRef = useRef<Uint8Array[]>([])
+  const activeTurnRef = useRef<string | null>(null)
+  const cancelledTurnsRef = useRef<Set<string>>(new Set())
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   
+  const isAbortLikeError = (err: unknown) => {
+    if (!err) return false
+    const name =
+      typeof DOMException !== "undefined" && err instanceof DOMException
+        ? err.name
+        : typeof (err as any)?.name === "string"
+          ? (err as any).name
+          : ""
+    const message =
+      typeof err === "string"
+        ? err
+        : err instanceof Error
+          ? err.message
+          : typeof (err as any)?.message === "string"
+            ? (err as any).message
+            : ""
+    const combined = `${name} ${message}`.toLowerCase()
+    return combined.includes("abort") || combined.includes("aborted")
+  }
+
+  const handlePlaybackError = (err: unknown) => {
+    if (isAbortLikeError(err)) {
+      console.debug("🎧 Audio playback interrupted (expected):", err)
+      return
+    }
+    console.error("❌ Audio playback error:", err)
+  }
+
   const playNextInQueue = () => {
     if (playingRef.current) {
       console.log('⏸️ playNextInQueue: already playing, skipping')
@@ -77,28 +107,27 @@ export default function LiveCall() {
     console.log('▶️ playNextInQueue: playing audio from URL:', url.substring(0, 50) + '...')
     playingRef.current = true
     const audio = new Audio(url)
+    audio.crossOrigin = "anonymous"
     currentAudioRef.current = audio
+
+    const resetAndContinue = () => {
+      playingRef.current = false
+      currentAudioRef.current = null
+      playNextInQueue()
+    }
 
     audio.onended = () => {
       console.log('✅ Audio playback ended, playing next...')
-      playingRef.current = false
-      currentAudioRef.current = null
-      // Continue to next chunk in queue
-      playNextInQueue()
+      resetAndContinue()
     }
-    audio.onerror = (err) => {
-      console.error("❌ Audio playback error:", err)
-      playingRef.current = false
-      currentAudioRef.current = null
-      // Continue to next chunk even on error
-      playNextInQueue()
+    audio.onerror = (event) => {
+      const audioError = (event as unknown as { error?: unknown })?.error
+      handlePlaybackError(audioError ?? new Error("Unknown audio error"))
+      resetAndContinue()
     }
     audio.play().catch((err) => {
-      console.error("❌ Audio play failed:", err)
-      playingRef.current = false
-      currentAudioRef.current = null
-      // Continue to next chunk even on play failure
-      playNextInQueue()
+      handlePlaybackError(err)
+      resetAndContinue()
     })
   }
 
@@ -134,12 +163,15 @@ export default function LiveCall() {
     ws.onclose = () => {
       setConnected(false)
       setListening(false)
+      activeTurnRef.current = null
+      cancelledTurnsRef.current.clear()
     }
     ws.onerror = () => {}
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data)
         console.log('📩 WS message received:', data.type, data)
+        const messageTurnId = typeof data.turn_id === "string" ? data.turn_id : null
 
         if (data.type === "tier0_result") {
           // Tier-0 Fast Classifier result (Task #42537)
@@ -164,15 +196,66 @@ export default function LiveCall() {
           // Clear audio queue
           ttsQueueRef.current = []
           playingRef.current = false
+          if (typeof data.interrupted_turn_id === "string") {
+            cancelledTurnsRef.current.add(data.interrupted_turn_id)
+            if (activeTurnRef.current === data.interrupted_turn_id) {
+              activeTurnRef.current = null
+              setTokens("")
+            }
+          }
 
           console.log('✅ Playback stopped, queue cleared')
         } else if (data.type === "token") {
-          setTokens((prev) => prev + (data.text || ""))
+          const incoming = messageTurnId
+          const chunk = data.text || ""
+          if (!chunk) {
+            return
+          }
+          if (incoming) {
+            if (cancelledTurnsRef.current.has(incoming)) {
+              console.log('♻️ Ignoring token for cancelled turn', incoming)
+              return
+            }
+            if (incoming !== activeTurnRef.current) {
+              activeTurnRef.current = incoming
+              setTokens(chunk)
+            } else {
+              setTokens((prev) => prev + chunk)
+            }
+          } else {
+            setTokens((prev) => prev + chunk)
+          }
         } else if (data.type === "reply_done") {
+          const incoming = messageTurnId
+          if (incoming && cancelledTurnsRef.current.has(incoming)) {
+            console.log('♻️ Ignoring reply_done for cancelled turn', incoming)
+            return
+          }
+          if (incoming && activeTurnRef.current && incoming !== activeTurnRef.current) {
+            console.log('♻️ Ignoring stale reply_done for turn', incoming)
+            return
+          }
+          if (incoming && !activeTurnRef.current) {
+            activeTurnRef.current = incoming
+          }
           setReply(data.text || "")
           // Reset tokens for next response
           setTokens("")
         } else if (data.type === "audio_url_chunk") {
+          const incoming = messageTurnId
+          if (incoming) {
+            if (cancelledTurnsRef.current.has(incoming)) {
+              console.log('♻️ Ignoring audio_url_chunk for cancelled turn', incoming)
+              return
+            }
+            if (activeTurnRef.current && incoming !== activeTurnRef.current) {
+              console.log('♻️ Ignoring stale audio_url_chunk for turn', incoming)
+              return
+            }
+            if (!activeTurnRef.current) {
+              activeTurnRef.current = incoming
+            }
+          }
           const u = data.audio_url as string
           console.log('🎵 Received audio_url_chunk:', u)
           if (u && /^https?:\/\//.test(u)) {
@@ -183,6 +266,20 @@ export default function LiveCall() {
         } else if (data.type === "audio_chunk") {
           // Streaming base64 audio chunks. Queue them for sequential playback.
           try {
+            const incoming = messageTurnId
+            if (incoming) {
+              if (cancelledTurnsRef.current.has(incoming)) {
+                console.log('♻️ Ignoring audio_chunk for cancelled turn', incoming)
+                return
+              }
+              if (activeTurnRef.current && incoming !== activeTurnRef.current) {
+                console.log('♻️ Ignoring stale audio_chunk for turn', incoming)
+                return
+              }
+              if (!activeTurnRef.current) {
+                activeTurnRef.current = incoming
+              }
+            }
             const eos = !!data.eos
             const b64 = data.b64 as string
             console.log('🎵 Received audio_chunk, b64 length:', b64?.length, 'eos:', eos, 'mime:', data.mime)
@@ -216,6 +313,20 @@ export default function LiveCall() {
             console.error('❌ Error processing audio_chunk:', err)
           }
         } else if (data.type === "audio_url") {
+          const incoming = messageTurnId
+          if (incoming) {
+            if (cancelledTurnsRef.current.has(incoming)) {
+              console.log('♻️ Ignoring audio_url for cancelled turn', incoming)
+              return
+            }
+            if (activeTurnRef.current && incoming !== activeTurnRef.current) {
+              console.log('♻️ Ignoring stale audio_url for turn', incoming)
+              return
+            }
+            if (!activeTurnRef.current) {
+              activeTurnRef.current = incoming
+            }
+          }
           console.log('🎵 Received audio_url:', data.audio_url)
           if (data.audio_url && /^https?:\/\//.test(data.audio_url)) {
             // If we didn't stream chunks, play the single URL
@@ -282,6 +393,8 @@ export default function LiveCall() {
     setListening(false)
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null
+    activeTurnRef.current = null
+    cancelledTurnsRef.current.clear()
     
     // Stop any playing audio and clear queue
     if (currentAudioRef.current) {

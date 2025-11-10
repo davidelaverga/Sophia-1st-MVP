@@ -1,35 +1,47 @@
 """FastAPI entry point that wires endpoints, middleware, telemetry, and voice pipelines."""
 
+import os
 import asyncio
-import base64
-import io
 import time
 import uuid
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional, Sequence, Any, Dict
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    HTTPException,
+    Depends,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 
 from app.config import get_settings
 from app.config_validation import validate_settings
-from app.deps import verify_api_key, limiter, require_consent, extract_user_id_from_token
+from app.deps import (
+    verify_api_key,
+    limiter,
+    require_consent,
+    extract_user_id_from_token,
+)
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
-from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
+from app.services.emotion import analyze_emotion_audio
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.shared_services import shared_services
 from dotenv import load_dotenv
-load_dotenv()
-
-_START_TIME = time.perf_counter()
 
 # OpenTelemetry disabled for build simplicity
 # from opentelemetry import trace
@@ -39,7 +51,13 @@ _START_TIME = time.perf_counter()
 # from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 # from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+load_dotenv()
+
+_START_TIME = time.perf_counter()
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("sophia-backend")
 
 
@@ -62,7 +80,11 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             if path == pattern:
                 return True
             # Allow prefix-style matches without needing explicit wildcard
-            if pattern and pattern != "/" and path.startswith(pattern.rstrip("/") + "/"):
+            if (
+                pattern
+                and pattern != "/"
+                and path.startswith(pattern.rstrip("/") + "/")
+            ):
                 return True
         return False
 
@@ -75,7 +97,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         try:
             verify_api_key(request=request, authorization=authorization)
         except HTTPException as exc:
-            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            return JSONResponse(
+                status_code=exc.status_code, content={"detail": exc.detail}
+            )
         return await call_next(request)
 
 
@@ -113,7 +137,10 @@ def _looks_like_audio(payload: bytes) -> bool:
 # Live Mode: WebSocket Voice
 # ==========================
 
-def _wav_header_pcm16(num_samples: int, sample_rate: int = 16000, num_channels: int = 1) -> bytes:
+
+def _wav_header_pcm16(
+    num_samples: int, sample_rate: int = 16000, num_channels: int = 1
+) -> bytes:
     import struct
 
     byte_rate = sample_rate * num_channels * 2
@@ -126,7 +153,9 @@ def _wav_header_pcm16(num_samples: int, sample_rate: int = 16000, num_channels: 
             struct.pack("<I", riff_chunk_size),
             b"WAVE",
             b"fmt ",
-            struct.pack("<IHHIIHH", 16, 1, num_channels, sample_rate, byte_rate, block_align, 16),
+            struct.pack(
+                "<IHHIIHH", 16, 1, num_channels, sample_rate, byte_rate, block_align, 16
+            ),
             b"data",
             struct.pack("<I", data_size),
         ]
@@ -156,8 +185,12 @@ def _avg_abs_pcm16(buf: bytes) -> float:
 async def ws_voice(websocket: WebSocket):
     """WebSocket pipeline with VAD-driven barge-in and queued audio playback."""
 
-    api_key = websocket.query_params.get("token") or websocket.headers.get("Authorization")
-    discord_id = websocket.query_params.get("discord_id") or websocket.headers.get("X-Discord-Id")
+    api_key = websocket.query_params.get("token") or websocket.headers.get(
+        "Authorization"
+    )
+    discord_id = websocket.query_params.get("discord_id") or websocket.headers.get(
+        "X-Discord-Id"
+    )
 
     logger.info(f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}")
 
@@ -173,12 +206,13 @@ async def ws_voice(websocket: WebSocket):
         await websocket.close(code=1008, reason=exc.detail)
         return
 
-    # Temporarily bypass consent check for development
-    # try:
-    #     require_consent(request=None, x_discord_id=discord_id, supabase_token=supabase_token)
-    # except HTTPException as exc:
-    #     await websocket.close(code=1008, reason=exc.detail)
-    #     return
+    try:
+        require_consent(
+            request=None, x_discord_id=discord_id, supabase_token=supabase_token
+        )
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=exc.detail)
+        return
 
     logger.info("🎉 WebSocket connection accepted!")
     await websocket.accept()
@@ -204,7 +238,9 @@ async def ws_voice(websocket: WebSocket):
     if discord_id:
         metadata["discord_id"] = discord_id
 
-    def _pcm16_to_wav(pcm_bytes: bytes, *, sample_rate: int = 48000, channels: int = 1) -> bytes:
+    def _pcm16_to_wav(
+        pcm_bytes: bytes, *, sample_rate: int = 48000, channels: int = 1
+    ) -> bytes:
         """Wrap raw PCM16 bytes with a minimal WAV header so browsers can play each chunk."""
         import struct
 
@@ -233,6 +269,7 @@ async def ws_voice(websocket: WebSocket):
         import base64 as _b64
 
         eos = bool(segment.metadata.get("eos"))
+        turn_id = segment.metadata.get("turn_id")
         payload_bytes = segment.audio_data or b""
         mime = segment.mime_type or "audio/mpeg"
 
@@ -245,7 +282,9 @@ async def ws_voice(websocket: WebSocket):
                 payload_bytes = _pcm16_to_wav(payload_bytes, sample_rate=sample_rate)
                 mime = "audio/wav"
 
-        b64_data = _b64.b64encode(payload_bytes).decode("ascii") if payload_bytes else ""
+        b64_data = (
+            _b64.b64encode(payload_bytes).decode("ascii") if payload_bytes else ""
+        )
         await _ws_send_json(
             websocket,
             {
@@ -253,6 +292,7 @@ async def ws_voice(websocket: WebSocket):
                 "mime": mime,
                 "b64": b64_data,
                 "eos": eos,
+                "turn_id": turn_id,
             },
         )
 
@@ -268,14 +308,26 @@ async def ws_voice(websocket: WebSocket):
                 pcm_buffer.extend(chunk)
 
                 now = time.time()
-                recent = pcm_buffer[-SILENCE_BYTES:] if len(pcm_buffer) > SILENCE_BYTES else pcm_buffer
+                recent = (
+                    pcm_buffer[-SILENCE_BYTES:]
+                    if len(pcm_buffer) > SILENCE_BYTES
+                    else pcm_buffer
+                )
                 amp = _avg_abs_pcm16(recent)
                 if amp > SILENCE_THRESHOLD:
                     if not in_speech:
                         in_speech = True
                         utter_start_pos = max(0, len(pcm_buffer) - len(recent))
                         barge_in_start = time.time()
-                        current_cancelled, queue_cleared = audio_queue.cancel_all(session_id)
+                        active_turn = manager.get_active_turn(session_id)
+                        interrupted_turn_id = (
+                            active_turn.turn_id if active_turn else None
+                        )
+                        if interrupted_turn_id:
+                            manager.request_cancel(turn_id=interrupted_turn_id)
+                        current_cancelled, queue_cleared = audio_queue.cancel_all(
+                            session_id
+                        )
                         barge_in_ms = (time.time() - barge_in_start) * 1000
                         await _ws_send_json(
                             websocket,
@@ -284,6 +336,7 @@ async def ws_voice(websocket: WebSocket):
                                 "interruption_ms": barge_in_ms,
                                 "cancelled": current_cancelled,
                                 "cleared": queue_cleared,
+                                "interrupted_turn_id": interrupted_turn_id,
                             },
                         )
                         if barge_in_ms > 200:
@@ -296,10 +349,17 @@ async def ws_voice(websocket: WebSocket):
                 if in_speech and (now - last_voice_activity) * 1000.0 >= SILENCE_MS:
                     utter_bytes = bytes(pcm_buffer[utter_start_pos:])
                     wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
-                    logger.info(f"WS: endpoint detected; utterance bytes={len(utter_bytes)}")
+                    logger.info(
+                        f"WS: endpoint detected; utterance bytes={len(utter_bytes)}"
+                    )
 
-                    async with manage_session_turn(session_id, metadata=metadata) as turn_state:
-                        cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+                    async with manage_session_turn(
+                        session_id, metadata=metadata
+                    ) as turn_state:
+
+                        def cancel_check():
+                            manager.raise_if_cancelled(turn_state.turn_id)
+
                         reply_tokens: list[str] = []
                         tokens_sent = 0
                         turn_state.set_status("streaming")
@@ -314,33 +374,61 @@ async def ws_voice(websocket: WebSocket):
                                     logger.info(f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}")
                                     continue
                                 reply_tokens.append(tok)
-                                await _ws_send_json(websocket, {"type": "token", "text": tok})
+                                await _ws_send_json(
+                                    websocket,
+                                    {
+                                        "type": "token",
+                                        "text": tok,
+                                        "turn_id": turn_state.turn_id,
+                                    },
+                                )
                                 tokens_sent += 1
                         except Exception as exc:
                             logger.warning(f"WS: LangGraph streaming failed: {exc}")
 
                         if tokens_sent == 0:
-                            fallback_response = (
-                                "I'm here to help with DeFi questions. Could you please repeat your question?"
-                            )
+                            fallback_response = "I'm here to help with DeFi questions. Could you please repeat your question?"
                             for i in range(0, len(fallback_response), 8):
                                 chunk_text = fallback_response[i : i + 8]
                                 reply_tokens.append(chunk_text)
-                                await _ws_send_json(websocket, {"type": "token", "text": chunk_text})
+                                await _ws_send_json(
+                                    websocket,
+                                    {
+                                        "type": "token",
+                                        "text": chunk_text,
+                                        "turn_id": turn_state.turn_id,
+                                    },
+                                )
                                 tokens_sent += 1
 
                         reply_full = "".join(reply_tokens).strip() or "Okay."
-                        await _ws_send_json(websocket, {"type": "reply_done", "text": reply_full})
+                        await _ws_send_json(
+                            websocket,
+                            {
+                                "type": "reply_done",
+                                "text": reply_full,
+                                "turn_id": turn_state.turn_id,
+                            },
+                        )
 
                         import re
 
                         turn_state.set_status("synthesizing")
-                        sentences = [s.strip() for s in re.split(r"(?<=[\.!?])\s+", reply_full) if s.strip()]
+                        sentences = [
+                            s.strip()
+                            for s in re.split(r"(?<=[\.!?])\s+", reply_full)
+                            if s.strip()
+                        ]
                         audio_url_last = None
                         for idx, sent in enumerate(sentences):
                             streamed_any = False
                             try:
-                                for pcm_chunk in synthesize_inworld_stream(sent, sample_rate_hz=48000) or []:
+                                for pcm_chunk in (
+                                    synthesize_inworld_stream(
+                                        sent, sample_rate_hz=48000
+                                    )
+                                    or []
+                                ):
                                     cancel_check()
                                     streamed_any = True
                                     await audio_queue.enqueue(
@@ -348,6 +436,7 @@ async def ws_voice(websocket: WebSocket):
                                         audio_data=pcm_chunk,
                                         mime_type="audio/pcm",
                                         metadata={
+                                            "turn_id": turn_state.turn_id,
                                             "sentence": sent,
                                             "chunk_index": idx,
                                             "eos": False,
@@ -355,7 +444,9 @@ async def ws_voice(websocket: WebSocket):
                                         },
                                     )
                             except Exception:
-                                logger.exception("WS: streaming TTS failed; falling back to full synthesis")
+                                logger.exception(
+                                    "WS: streaming TTS failed; falling back to full synthesis"
+                                )
 
                             if not streamed_any:
                                 try:
@@ -365,24 +456,48 @@ async def ws_voice(websocket: WebSocket):
                                         session_id=session_id,
                                         audio_data=audio_bytes,
                                         mime_type="audio/mpeg",
-                                        metadata={"sentence": sent, "chunk_index": idx, "eos": False},
+                                        metadata={
+                                            "turn_id": turn_state.turn_id,
+                                            "sentence": sent,
+                                            "chunk_index": idx,
+                                            "eos": False,
+                                        },
                                     )
                                     try:
-                                        file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                        audio_url_last = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+                                        file_name = (
+                                            f"sophia_{int(time.time() * 1000)}.mp3"
+                                        )
+                                        audio_url_last = (
+                                            supabase_service.upload_audio_and_get_url(
+                                                audio_bytes, file_name
+                                            )
+                                        )
                                         await _ws_send_json(
-                                            websocket, {"type": "audio_url_chunk", "audio_url": audio_url_last}
+                                            websocket,
+                                            {
+                                                "type": "audio_url_chunk",
+                                                "audio_url": audio_url_last,
+                                                "turn_id": turn_state.turn_id,
+                                            },
                                         )
                                     except Exception:
-                                        logger.warning("WS: failed uploading fallback sentence audio")
+                                        logger.warning(
+                                            "WS: failed uploading fallback sentence audio"
+                                        )
                                 except Exception:
-                                    logger.exception("WS: fallback TTS synthesis failed")
+                                    logger.exception(
+                                        "WS: fallback TTS synthesis failed"
+                                    )
 
                         await audio_queue.enqueue(
                             session_id=session_id,
                             audio_data=b"",
                             mime_type="audio/pcm",
-                            metadata={"eos": True, "sample_rate": 48000},
+                            metadata={
+                                "turn_id": turn_state.turn_id,
+                                "eos": True,
+                                "sample_rate": 48000,
+                            },
                         )
                         if audio_url_last is None:
                             try:
@@ -391,14 +506,27 @@ async def ws_voice(websocket: WebSocket):
                                     reply_full,
                                     cancel_check=cancel_check,
                                 )
-                                file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                audio_url_last = supabase_service.upload_audio_and_get_url(storage_audio, file_name)
+                                file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+                                audio_url_last = (
+                                    supabase_service.upload_audio_and_get_url(
+                                        storage_audio, file_name
+                                    )
+                                )
                             except asyncio.CancelledError:
                                 raise
                             except Exception:
-                                logger.warning("WS: failed to synthesize/upload archival audio for reply")
+                                logger.warning(
+                                    "WS: failed to synthesize/upload archival audio for reply"
+                                )
 
-                        await _ws_send_json(websocket, {"type": "audio_url", "audio_url": audio_url_last})
+                        await _ws_send_json(
+                            websocket,
+                            {
+                                "type": "audio_url",
+                                "audio_url": audio_url_last,
+                                "turn_id": turn_state.turn_id,
+                            },
+                        )
 
                         last_final_text = f"[Audio processed: {len(utter_bytes)} bytes]"
                         last_reply_text = reply_full
@@ -447,8 +575,11 @@ async def ws_voice(websocket: WebSocket):
     except Exception:
         pass
 
+
 @asynccontextmanager
-async def manage_session_turn(session_id: str, *, metadata: Optional[Dict[str, Any]] = None):
+async def manage_session_turn(
+    session_id: str, *, metadata: Optional[Dict[str, Any]] = None
+):
     """Acquire a per-session turn and ensure it is released safely."""
     manager = shared_services.get_session_turn_manager()
     state = await manager.start_turn(session_id, metadata=metadata)
@@ -465,13 +596,15 @@ async def manage_session_turn(session_id: str, *, metadata: Optional[Dict[str, A
             await manager.fail_turn(state.turn_id, exc)
         raise
 
+
 # OpenTelemetry setup
-# OpenTelemetry disabled
-# resource = Resource.create({
-#     "service.name": "sophia-backend",
-#     "service.version": "1.0.0",
-#     "deployment.environment": "staging",
-# })
+resource = Resource.create(
+    {
+        "service.name": "sophia-backend",
+        "service.version": "1.0.0",
+        "deployment.environment": "staging",
+    }
+)
 
 
 def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
@@ -532,41 +665,49 @@ app.add_middleware(
 )
 
 app.state.limiter = limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Mount static files for frontend (only if frontend directory exists)
 # In backend-only deployment (Render), frontend is served separately by Vercel
-import os
+
 if os.path.exists("frontend"):
     app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
     print("✅ Frontend static files mounted at /frontend")
 else:
-    print("ℹ️ Frontend directory not found - running in backend-only mode (frontend served by Vercel)")
+    print(
+        "ℹ️ Frontend directory not found - running in backend-only mode (frontend served by Vercel)"
+    )
 
-logger.info("Startup initialization completed in %.2f s", time.perf_counter() - _START_TIME)
+logger.info(
+    "Startup initialization completed in %.2f s", time.perf_counter() - _START_TIME
+)
+
 
 # Simple health endpoint for Fly.io checks and container orchestration
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
 class Emotion(BaseModel):
     label: str
     confidence: float
+
 
 class TranscriptionResponse(BaseModel):
     text: str
     emotion: Emotion
 
+
 class GenerateResponse(BaseModel):
     reply: str
     tone: Optional[str] = "neutral"
 
+
 class SynthesizeResponse(BaseModel):
     audio_url: str
     emotion: Emotion
+
 
 class ChatResponse(BaseModel):
     transcript: str
@@ -577,6 +718,7 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None
     context_memory: Optional[dict] = None
     evaluation_report: Optional[dict] = None
+
 
 class DefiChatResponse(BaseModel):
     session_id: str
@@ -590,6 +732,7 @@ class DefiChatResponse(BaseModel):
     fallbacks_used: dict
     evaluation_logs: list
     evaluation_report: Optional[dict] = None
+
 
 class TextChatRequest(BaseModel):
     message: str
@@ -606,9 +749,12 @@ def root(request: Request):
         "message": "Sophia AI Backend is running",
         "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
         "api_status": "ok",
-        "deployment_mode": "backend+api" if os.path.exists("frontend/index.html") else "backend-only",
-        "docs_url": "/docs"
+        "deployment_mode": "backend+api"
+        if os.path.exists("frontend/index.html")
+        else "backend-only",
+        "docs_url": "/docs",
     }
+
 
 @app.get("/api")
 def api_root():
@@ -624,20 +770,34 @@ async def transcribe(
     supabase_token: str = Depends(verify_api_key),
 ):
     # Accept common audio formats
-    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    allowed_extensions = [
+        ".wav",
+        ".webm",
+        ".mp3",
+        ".mp4",
+        ".ogg",
+        ".flac",
+        ".m4a",
+        ".aac",
+    ]
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}",
+        )
 
     session_id = uuid.uuid4()
 
     try:
         wav_bytes = await file.read()
         if not _looks_like_audio(wav_bytes):
-            raise HTTPException(status_code=400, detail="File must contain recognizable audio data")
+            raise HTTPException(
+                status_code=400, detail="File must contain recognizable audio data"
+            )
         text = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Transcription failed")
         raise HTTPException(status_code=500, detail="Transcription failed")
 
@@ -658,6 +818,7 @@ async def transcribe(
 
 class GenerateRequest(BaseModel):
     text: str
+
 
 @app.post("/generate-response", response_model=GenerateResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
@@ -693,11 +854,14 @@ async def generate_response_stream(
         return StreamingResponse(generator, media_type="text/plain")
     except Exception:
         logger.exception("Streaming response generation failed")
-        raise HTTPException(status_code=500, detail="Streaming response generation failed")
+        raise HTTPException(
+            status_code=500, detail="Streaming response generation failed"
+        )
 
 
 class SynthesizeRequest(BaseModel):
     text: str
+
 
 @app.post("/synthesize", response_model=SynthesizeResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
@@ -713,7 +877,7 @@ async def synthesize(
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
     try:
-        file_name = f"sophia_{int(time.time()*1000)}.mp3"
+        file_name = f"sophia_{int(time.time() * 1000)}.mp3"
         # Fix argument order: first bytes, then optional file_name
         audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
     except Exception:
@@ -746,12 +910,26 @@ async def chat(
 ):
     discord_id = request.headers.get("X-Discord-Id")
     supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    resolved_user_id = (
+        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    )
     user_id_for_db = supabase_user_id or resolved_user_id
     manager = shared_services.get_session_turn_manager()
-    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    allowed_extensions = [
+        ".wav",
+        ".webm",
+        ".mp3",
+        ".mp4",
+        ".ogg",
+        ".flac",
+        ".m4a",
+        ".aac",
+    ]
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}",
+        )
 
     session_uuid = uuid.uuid4()
     session_id_str = str(session_uuid)
@@ -760,7 +938,10 @@ async def chat(
         metadata["discord_id"] = discord_id
 
     async with manage_session_turn(session_id_str, metadata=metadata) as turn_state:
-        cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+
+        def cancel_check():
+            manager.raise_if_cancelled(turn_state.turn_id)
+
         with tracer.start_as_current_span("chat") as chat_span:
             chat_span.set_attribute("session.id", session_id_str)
             t0 = time.time()
@@ -780,13 +961,19 @@ async def chat(
 
             with tracer.start_as_current_span("emotion_analysis_user") as emotion_span:
                 user_emotion = analyze_emotion_audio(wav_bytes)
-                emotion_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
-                emotion_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
+                emotion_span.set_attribute(
+                    "phoenix_user_emotion.label", user_emotion.label
+                )
+                emotion_span.set_attribute(
+                    "phoenix_user_emotion.confidence", float(user_emotion.confidence)
+                )
                 emotion_span.set_attribute("emotion.type", "user")
                 emotion_span.set_attribute("emotion.source", "audio")
 
             chat_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
-            chat_span.set_attribute("phoenix_user_emotion.confidence", float(user_emotion.confidence))
+            chat_span.set_attribute(
+                "phoenix_user_emotion.confidence", float(user_emotion.confidence)
+            )
 
             try:
                 turn_state.set_status("streaming")
@@ -799,7 +986,9 @@ async def chat(
                     llm_span.set_attribute("reply.length", len(reply))
             except Exception:
                 logger.exception("LLM generation failed in chat")
-                raise HTTPException(status_code=500, detail="Response generation failed")
+                raise HTTPException(
+                    status_code=500, detail="Response generation failed"
+                )
 
             try:
                 turn_state.set_status("synthesizing")
@@ -809,21 +998,34 @@ async def chat(
                         reply,
                         cancel_check=cancel_check,
                     )
-                    file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+                    audio_url = supabase_service.upload_audio_and_get_url(
+                        audio_bytes, file_name
+                    )
             except Exception:
                 logger.exception("Synthesis or upload failed in chat")
                 raise HTTPException(status_code=500, detail="Synthesis failed")
 
-            with tracer.start_as_current_span("emotion_analysis_sophia") as sophia_emotion_span:
+            with tracer.start_as_current_span(
+                "emotion_analysis_sophia"
+            ) as sophia_emotion_span:
                 sophia_emotion = analyze_emotion_audio(audio_bytes)
-                sophia_emotion_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
-                sophia_emotion_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
+                sophia_emotion_span.set_attribute(
+                    "phoenix_sophia_emotion.label", sophia_emotion.label
+                )
+                sophia_emotion_span.set_attribute(
+                    "phoenix_sophia_emotion.confidence",
+                    float(sophia_emotion.confidence),
+                )
                 sophia_emotion_span.set_attribute("emotion.type", "sophia")
                 sophia_emotion_span.set_attribute("emotion.source", "audio")
 
-            chat_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
-            chat_span.set_attribute("phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence))
+            chat_span.set_attribute(
+                "phoenix_sophia_emotion.label", sophia_emotion.label
+            )
+            chat_span.set_attribute(
+                "phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence)
+            )
 
             total_ms = int((time.time() - t0) * 1000)
             chat_span.set_attribute("total_roundtrip_time.ms", total_ms)
@@ -890,11 +1092,25 @@ async def defi_chat(
 ):
     discord_id = request.headers.get("X-Discord-Id")
     supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    resolved_user_id = (
+        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    )
     user_id_for_db = supabase_user_id or resolved_user_id
-    allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
+    allowed_extensions = [
+        ".wav",
+        ".webm",
+        ".mp3",
+        ".mp4",
+        ".ogg",
+        ".flac",
+        ".m4a",
+        ".aac",
+    ]
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}",
+        )
 
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat"}
@@ -905,7 +1121,10 @@ async def defi_chat(
     manager = shared_services.get_session_turn_manager()
 
     async with manage_session_turn(session_identifier, metadata=metadata) as turn_state:
-        cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+
+        def cancel_check():
+            manager.raise_if_cancelled(turn_state.turn_id)
+
         try:
             wav_bytes = await file.read()
             cancel_check()
@@ -931,7 +1150,9 @@ async def defi_chat(
                         "user_emotion_label": result["user_emotion"]["label"],
                         "user_emotion_confidence": result["user_emotion"]["confidence"],
                         "sophia_emotion_label": result["sophia_emotion"]["label"],
-                        "sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
+                        "sophia_emotion_confidence": result["sophia_emotion"][
+                            "confidence"
+                        ],
                         "audio_url": result["audio_url"] or None,
                         "intent": result["intent"],
                         "context_memory": str(result["context_memory"]),
@@ -975,7 +1196,9 @@ async def defi_chat(
             raise
         except Exception as e:
             logger.exception("DeFi chat processing failed")
-            raise HTTPException(status_code=500, detail=f"DeFi chat processing failed: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"DeFi chat processing failed: {str(e)}"
+            )
 
 
 @app.post("/defi-chat/stream")
@@ -997,7 +1220,9 @@ async def defi_chat_stream(
     """
     discord_id = request.headers.get("X-Discord-Id")
     supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    resolved_user_id = (
+        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    )
     user_id_for_db = supabase_user_id or resolved_user_id
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat/stream"}
@@ -1014,10 +1239,15 @@ async def defi_chat_stream(
 
     async def event_generator():
         nonlocal session_id
-        async with manage_session_turn(session_identifier, metadata=metadata) as turn_state:
+        async with manage_session_turn(
+            session_identifier, metadata=metadata
+        ) as turn_state:
             session_id_local = session_identifier
             session_id = session_id_local
-            cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+
+            def cancel_check():
+                manager.raise_if_cancelled(turn_state.turn_id)
+
             try:
                 cancel_check()
                 transcript = mistral_service.transcribe_audio_with_voxtral(
@@ -1028,6 +1258,7 @@ async def defi_chat_stream(
                 user_emotion = analyze_emotion_audio(wav_bytes)
 
                 import json as _json
+
                 yield f"event: transcript\ndata: {_json.dumps({'transcript': transcript, 'user_emotion': user_emotion.model_dump(), 'session_id': session_id_local})}\n\n"
 
                 turn_state.set_status("streaming")
@@ -1054,8 +1285,10 @@ async def defi_chat_stream(
                         cancel_check=cancel_check,
                     )
                     cancel_check()
-                    file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+                    audio_url = supabase_service.upload_audio_and_get_url(
+                        audio_bytes, file_name
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -1067,7 +1300,10 @@ async def defi_chat_stream(
                 try:
                     if audio_url:
                         try:
-                            mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+                            mock_audio = (
+                                audio_bytes.startswith(b"ID3mock")
+                                or len(audio_bytes) < 2048
+                            )
                         except Exception:
                             mock_audio = False
                         cancel_check()
@@ -1086,8 +1322,12 @@ async def defi_chat_stream(
                             "reply": reply,
                             "user_emotion_label": user_emotion.label,
                             "user_emotion_confidence": user_emotion.confidence,
-                            "sophia_emotion_label": (sophia_emotion.label if sophia_emotion else None),
-                            "sophia_emotion_confidence": (sophia_emotion.confidence if sophia_emotion else None),
+                            "sophia_emotion_label": (
+                                sophia_emotion.label if sophia_emotion else None
+                            ),
+                            "sophia_emotion_confidence": (
+                                sophia_emotion.confidence if sophia_emotion else None
+                            ),
                             "audio_url": audio_url or None,
                             "user_id": user_id_for_db,
                             "discord_id": discord_id,
@@ -1120,13 +1360,17 @@ async def defi_chat_stream(
                     except Exception as e:
                         logger.warning(f"Failed to persist sophia emotion: {e}")
                 except Exception as e:
-                    logger.warning(f"Failed to persist conversation session (stream): {e}")
+                    logger.warning(
+                        f"Failed to persist conversation session (stream): {e}"
+                    )
 
                 turn_state.set_status("completed")
 
                 payload = {
                     "audio_url": audio_url,
-                    "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None),
+                    "sophia_emotion": (
+                        sophia_emotion.model_dump() if sophia_emotion else None
+                    ),
                     "mock_audio": mock_audio,
                 }
                 yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
@@ -1137,6 +1381,7 @@ async def defi_chat_stream(
             except Exception as e:
                 logger.exception("Streaming DeFi chat failed")
                 import json as _json
+
                 error_payload = _json.dumps({"detail": str(e)})
                 yield f"event: error\ndata: {error_payload}\n\n"
 
@@ -1149,6 +1394,8 @@ async def defi_chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
 @app.post("/text-chat", response_model=DefiChatResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
 async def text_chat(
@@ -1160,7 +1407,9 @@ async def text_chat(
     """Text-only chat endpoint for DeFi conversations"""
     discord_id = request.headers.get("X-Discord-Id")
     supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    resolved_user_id = (
+        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    )
     user_id_for_db = supabase_user_id or resolved_user_id
 
     session_identifier = body.session_id or str(uuid.uuid4())
@@ -1173,7 +1422,10 @@ async def text_chat(
     manager = shared_services.get_session_turn_manager()
 
     async with manage_session_turn(session_identifier, metadata=metadata) as turn_state:
-        cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+
+        def cancel_check():
+            manager.raise_if_cancelled(turn_state.turn_id)
+
         try:
             turn_state.set_status("streaming")
             cancel_check()
@@ -1236,7 +1488,9 @@ async def text_chat(
             raise
         except Exception as e:
             logger.exception("Text chat processing failed")
-            raise HTTPException(status_code=500, detail=f"Text chat processing failed: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Text chat processing failed: {str(e)}"
+            )
 
 
 @app.post("/text-chat/stream")
@@ -1262,13 +1516,21 @@ async def text_chat_stream(
     if discord_id:
         metadata["discord_id"] = discord_id
     manager = shared_services.get_session_turn_manager()
-    user_id_for_db = supabase_user_id or (supabase_service.user_uuid_from_discord(discord_id) if discord_id else None)
+    supabase_user_id or (
+        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+    )
 
     async def event_generator():
-        async with manage_session_turn(session_identifier, metadata=metadata) as turn_state:
-            cancel_check = lambda: manager.raise_if_cancelled(turn_state.turn_id)
+        async with manage_session_turn(
+            session_identifier, metadata=metadata
+        ) as turn_state:
+
+            def cancel_check():
+                manager.raise_if_cancelled(turn_state.turn_id)
+
             try:
                 import json as _json
+
                 turn_state.set_status("streaming")
                 reply_accum = []
                 for chunk in mistral_service.stream_generate_llm_reply(
@@ -1296,10 +1558,15 @@ async def text_chat_stream(
                         cancel_check=cancel_check,
                     )
                     cancel_check()
-                    file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+                    audio_url = supabase_service.upload_audio_and_get_url(
+                        audio_bytes, file_name
+                    )
                     try:
-                        mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+                        mock_audio = (
+                            audio_bytes.startswith(b"ID3mock")
+                            or len(audio_bytes) < 2048
+                        )
                     except Exception:
                         mock_audio = False
                     cancel_check()
@@ -1309,7 +1576,13 @@ async def text_chat_stream(
                 except Exception:
                     logger.exception("Synthesis or upload failed in text_chat_stream")
 
-                payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
+                payload = {
+                    "audio_url": audio_url,
+                    "sophia_emotion": (
+                        sophia_emotion.model_dump() if sophia_emotion else None
+                    ),
+                    "mock_audio": mock_audio,
+                }
                 turn_state.set_status("completed")
                 yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
 
@@ -1319,6 +1592,7 @@ async def text_chat_stream(
             except Exception as e:
                 logger.exception("Streaming text chat failed")
                 import json as _json
+
                 error_payload = _json.dumps({"detail": str(e)})
                 yield f"event: error\ndata: {error_payload}\n\n"
 
@@ -1331,6 +1605,8 @@ async def text_chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
@@ -1345,14 +1621,13 @@ async def get_memory(
     """Get conversation memory for a session"""
     try:
         from app.services.memory import memory_manager
-        context = memory_manager.get_context_for_llm(session_id, access_token=supabase_token)
-        
-        return {
-            "session_id": session_id,
-            "context": context,
-            "timestamp": time.time()
-        }
-        
+
+        context = memory_manager.get_context_for_llm(
+            session_id, access_token=supabase_token
+        )
+
+        return {"session_id": session_id, "context": context, "timestamp": time.time()}
+
     except Exception as e:
         logger.error(f"Failed to get memory for session {session_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve memory")
@@ -1366,26 +1641,33 @@ async def force_evaluate_conversation(
     """Force evaluation of a specific conversation"""
     try:
         from app.services.evaluations import evaluation_manager
-        
+
         report = evaluation_manager.force_evaluate_conversation(session_id)
-        
+
         if report is None:
-            raise HTTPException(status_code=404, detail=f"No active conversation found for session {session_id}")
-        
+            raise HTTPException(
+                status_code=404,
+                detail=f"No active conversation found for session {session_id}",
+            )
+
         return {
             "message": "Conversation evaluation completed",
             "session_id": session_id,
             "evaluation_report": {
                 "total_messages": report.total_messages,
-                "conversation_duration_minutes": round(report.conversation_duration / 60, 2),
-                "ragas_average": report.ragas_metrics.average_score if report.ragas_metrics else None,
+                "conversation_duration_minutes": round(
+                    report.conversation_duration / 60, 2
+                ),
+                "ragas_average": report.ragas_metrics.average_score
+                if report.ragas_metrics
+                else None,
                 "phoenix_evaluations": len(report.phoenix_metrics),
                 "drift_alert": report.drift_alert,
-                "confidence_change": f"{report.baseline_confidence:.2f} -> {report.current_confidence:.2f}"
+                "confidence_change": f"{report.baseline_confidence:.2f} -> {report.current_confidence:.2f}",
             },
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1400,23 +1682,24 @@ async def get_evaluation_status(
     """Get current evaluation system status"""
     try:
         from app.services.evaluations import evaluation_manager
-        
+
         active_count = evaluation_manager.get_active_conversation_count()
-        
+
         # Get status of all active conversations
         active_conversations = []
         for session_id in evaluation_manager.active_conversations.keys():
             status = evaluation_manager.get_conversation_status(session_id)
             if status:
                 active_conversations.append(status)
-        
+
         return {
             "active_conversations_count": active_count,
             "active_conversations": active_conversations,
-            "conversation_timeout_minutes": evaluation_manager.conversation_timeout / 60,
-            "timestamp": time.time()
+            "conversation_timeout_minutes": evaluation_manager.conversation_timeout
+            / 60,
+            "timestamp": time.time(),
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to get evaluation status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get evaluation status")
@@ -1429,37 +1712,41 @@ async def check_finished_conversations(
     """Manually check for and evaluate finished conversations"""
     try:
         from app.services.evaluations import evaluation_manager
-        
+
         reports = evaluation_manager.check_and_evaluate_finished_conversations()
-        
+
         evaluation_summaries = []
         for report in reports:
-            evaluation_summaries.append({
-                "session_id": report.session_id,
-                "total_messages": report.total_messages,
-                "conversation_duration_minutes": round(report.conversation_duration / 60, 2),
-                "ragas_average": report.ragas_metrics.average_score if report.ragas_metrics else None,
-                "phoenix_evaluations": len(report.phoenix_metrics),
-                "drift_alert": report.drift_alert
-            })
-        
+            evaluation_summaries.append(
+                {
+                    "session_id": report.session_id,
+                    "total_messages": report.total_messages,
+                    "conversation_duration_minutes": round(
+                        report.conversation_duration / 60, 2
+                    ),
+                    "ragas_average": report.ragas_metrics.average_score
+                    if report.ragas_metrics
+                    else None,
+                    "phoenix_evaluations": len(report.phoenix_metrics),
+                    "drift_alert": report.drift_alert,
+                }
+            )
+
         return {
             "message": f"Evaluated {len(reports)} finished conversations",
             "evaluations_completed": len(reports),
             "evaluation_summaries": evaluation_summaries,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to check finished conversations: {e}")
-        raise HTTPException(status_code=500, detail="Failed to check finished conversations")
+        raise HTTPException(
+            status_code=500, detail="Failed to check finished conversations"
+        )
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0", 
-        port=8000, 
-        reload=True
-    )
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

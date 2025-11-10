@@ -98,7 +98,9 @@ def test_stream_generate_llm_reply_raises_when_cancel_requested(monkeypatch):
         if call_counter["count"] >= 6:
             raise asyncio.CancelledError()
 
-    stream = mistral_service.stream_generate_llm_reply("Walk me through staking.", cancel_check=_cancel_check)
+    stream = mistral_service.stream_generate_llm_reply(
+        "Walk me through staking.", cancel_check=_cancel_check
+    )
 
     assert next(stream) == "Alpha"
     with pytest.raises(asyncio.CancelledError):

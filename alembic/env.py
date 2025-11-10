@@ -9,14 +9,14 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from app.config import get_settings
+from app.db import Base  # noqa: E402
+
 # Ensure the application package is importable when running via the Alembic CLI.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.config import get_settings
-from app.db import Base  # noqa: E402
-from app import db  # noqa: E402  # ensures models are imported for metadata
 
 config = context.config
 
