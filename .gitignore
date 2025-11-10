@@ -103,6 +103,16 @@ frontend-nextjs/yarn-error.log*
 # ========================================
 # Logs & temp files
 # ========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+test_audio_queue_simple.py
+test_websocket_audio_queue.py
 *.log
 *.tmp
 *.temp
@@ -136,7 +146,12 @@ Icon?
 docker-compose.override.yml
 
 # ========================================
-# Audio & media files (large binaries)
+# Playwright MCP
+# ========================================
+.playwright-mcp/
+
+# ========================================
+# Audio & Media Files (large binaries)
 # ========================================
 *.wav
 *.mp3
