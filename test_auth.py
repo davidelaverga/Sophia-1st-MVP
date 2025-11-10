@@ -13,7 +13,7 @@ try:
         "http://localhost:8000/generate-response",
         json={"text": "Hello, what is DeFi?"},
         headers=headers,
-        timeout=30
+        timeout=30,
     )
     print(f"Status: {response.status_code}")
     if response.status_code == 200:
@@ -32,7 +32,7 @@ try:
         "http://localhost:8000/text-chat",
         json={"message": "What is yield farming?"},
         headers=headers,
-        timeout=30
+        timeout=30,
     )
     print(f"Status: {response.status_code}")
     if response.status_code == 200:

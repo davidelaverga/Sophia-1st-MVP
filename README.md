@@ -50,12 +50,14 @@ cd Sophia-1st-MVP
 cp .env.template .env
 # Edit .env with your API keys and service URLs
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (creates .venv/)
+uv sync
 
 # Run backend
-uvicorn main:app --reload
+uv run uvicorn main:app --reload
 ```
+
+If `uv` is not already installed, follow the [installation guide](https://docs.astral.sh/uv/getting-started/installation/) (for example `curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS/Linux).
 
 2. **Setup Frontend**
 ```bash
@@ -106,8 +108,8 @@ If you omit the `+psycopg` suffix SQLAlchemy will fall back to `psycopg2`, which
 
 ### **Testing & CI**
 
-- Run `pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.
-- A GitHub Actions workflow (`.github/workflows/ci.yml`) installs dependencies and runs `pytest` automatically on pushes and pull requests. Ensure new tests are deterministic and do not require external network access.
+- Run `uv run pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`) uses `uv sync` followed by `uv run pytest` automatically on pushes and pull requests. Ensure new tests are deterministic and do not require external network access.
 - Automated dependency scanning is enabled via Dependabot (`.github/dependabot.yml`), generating weekly PRs for Python packages; treat security updates as high priority.
 
 ### **Production Deployment**

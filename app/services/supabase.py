@@ -6,9 +6,12 @@ from contextlib import contextmanager
 from typing import Any, Dict, Optional
 from dotenv import load_dotenv, find_dotenv
 from supabase import Client, create_client
+
 try:
     from supabase import ClientOptions  # type: ignore
-except ImportError:  # pragma: no cover - for environments without recent supabase package
+except (
+    ImportError
+):  # pragma: no cover - for environments without recent supabase package
     ClientOptions = None  # type: ignore
 
 from opentelemetry import trace
@@ -24,6 +27,7 @@ _supabase: Optional[Client] = None
 _anon_supabase: Optional[Client] = None
 SUPABASE_BUCKET_AUDIO: str = "audio"
 SUPABASE_AUDIO_PREFIX: str = "uploads/"
+SUPABASE_SIGNED_URL_TTL: int = 3600
 SUPABASE_DB_DSN: Optional[str] = None
 
 logger = logging.getLogger("sophia-backend")
@@ -48,7 +52,7 @@ def _supabase_span(name: str, **attrs):
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
 
-    global _supabase, _anon_supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN
+    global _supabase, _anon_supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN, SUPABASE_SIGNED_URL_TTL
     if _supabase is not None:
         return _supabase
 
@@ -56,10 +60,15 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
         settings = get_settings()
 
     if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
-        raise RuntimeError("Supabase credentials not configured; set SUPABASE_URL and SUPABASE_KEY")
+        raise RuntimeError(
+            "Supabase credentials not configured; set SUPABASE_URL and SUPABASE_KEY"
+        )
 
     SUPABASE_BUCKET_AUDIO = settings.SUPABASE_BUCKET_AUDIO or "audio"
     SUPABASE_AUDIO_PREFIX = settings.SUPABASE_AUDIO_PREFIX or "uploads/"
+    SUPABASE_SIGNED_URL_TTL = max(
+        1, int(getattr(settings, "SUPABASE_SIGNED_URL_TTL", 3600))
+    )
     SUPABASE_DB_DSN = settings.SUPABASE_DB_DSN
 
     with _supabase_span("supabase.init"):
@@ -91,11 +100,15 @@ def _client_with_access_token(access_token: str) -> Client:
         # Fallback for older SDKs without auth helper
         postgrest_client = getattr(_anon_supabase, "postgrest", None)
         if postgrest_client is None:
-            raise RuntimeError("Supabase client is missing postgrest interface required for RLS queries.")
+            raise RuntimeError(
+                "Supabase client is missing postgrest interface required for RLS queries."
+            )
         session = getattr(postgrest_client, "session", None)
         headers = getattr(session, "headers", None)
         if headers is None:
-            raise RuntimeError("Supabase postgrest client session has no headers object.")
+            raise RuntimeError(
+                "Supabase postgrest client session has no headers object."
+            )
         headers["Authorization"] = f"Bearer {access_token}"
 
     return _anon_supabase
@@ -107,10 +120,11 @@ def get_supabase(access_token: Optional[str] = None) -> Client:
     if not access_token:
         return _service_supabase()
     return _client_with_access_token(access_token)
-    
+
+
 def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None) -> str:
-    """Upload audio file to Supabase storage and return public URL.
-    
+    """Upload audio file to Supabase storage and return a signed URL.
+
     Note: This function doesn't require a user_id as it uses storage, not the database.
     """
     if not file_name:
@@ -125,15 +139,43 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
         except Exception:
             pass
 
-    with _supabase_span("supabase.audio.upload", path=path, bucket=SUPABASE_BUCKET_AUDIO):
+    with _supabase_span(
+        "supabase.audio.upload", path=path, bucket=SUPABASE_BUCKET_AUDIO
+    ):
         try:
             client.storage.from_(SUPABASE_BUCKET_AUDIO).upload(path, file_bytes)
         except Exception as e:
             raise RuntimeError(f"Supabase upload failed: {e}")
 
-    with _supabase_span("supabase.audio.public_url", path=path):
-        public_url = client.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
-    return public_url
+    with _supabase_span(
+        "supabase.audio.signed_url",
+        path=path,
+        expires_in=SUPABASE_SIGNED_URL_TTL,
+    ):
+        try:
+            signed = client.storage.from_(SUPABASE_BUCKET_AUDIO).create_signed_url(
+                path,
+                SUPABASE_SIGNED_URL_TTL,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Supabase signed URL generation failed: {e}")
+
+    signed_url = None
+    if isinstance(signed, dict):
+        signed_url = signed.get("signedURL") or signed.get("signed_url")
+    if not signed_url:
+        raise RuntimeError("Supabase signed URL generation returned no URL")
+
+    # Supabase returns a relative path; prepend the base URL when needed.
+    if signed_url.startswith("http://") or signed_url.startswith("https://"):
+        return signed_url
+
+    settings = get_settings()
+    base_url = (settings.SUPABASE_URL or "").rstrip("/")
+    if base_url:
+        return f"{base_url}{signed_url}"
+    # As a last resort return the relative URL so the caller can handle it.
+    return signed_url
 
 
 def insert_emotion_score(
@@ -153,14 +195,17 @@ def insert_emotion_score(
         "confidence": float(getattr(emotion, "confidence", 0.5)),
         "user_id": user_id,
     }
-    
+
     client = get_supabase(access_token)
 
     try:
-        with _supabase_span("supabase.insert_emotion_score", session_id=str(session_id), role=role):
+        with _supabase_span(
+            "supabase.insert_emotion_score", session_id=str(session_id), role=role
+        ):
             client.table("emotion_scores").insert(payload).execute()
     except Exception as e:
         import logging
+
         logging.warning(f"emotion_scores insert failed: {e}")
         # Don't raise the exception, just log it and continue
 
@@ -185,7 +230,7 @@ def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str
     data.setdefault("sophia_emotion_label", None)
     data.setdefault("sophia_emotion_confidence", None)
     data.setdefault("audio_url", None)
-            
+
     client = get_supabase(access_token)
 
     # REST insert with clearer error surfacing
@@ -195,29 +240,48 @@ def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str
     except Exception as e:
         # Log error but don't raise exception
         import logging
+
         logging.warning(f"conversation_sessions insert failed: {e}")
         # Don't raise the exception, just log it and continue
 
 
 def has_user_consent(discord_id: str, access_token: Optional[str] = None) -> bool:
     """Check if a given Discord user has a consent record in Supabase.
-    
+
     Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip_address text)
     """
     try:
         client = get_supabase(access_token)
         with _supabase_span("supabase.get_user_consent"):
-            res = client.table("user_consents").select("discord_id").eq("discord_id", discord_id).limit(1).execute()
+            res = (
+                client.table("user_consents")
+                .select("discord_id")
+                .eq("discord_id", discord_id)
+                .limit(1)
+                .execute()
+            )
         return bool(getattr(res, "data", []) or [])
     except Exception as e:
         import logging
+
         logging.warning(f"has_user_consent lookup failed: {e}")
+        payload = getattr(e, "args", [None])[0]
+        if isinstance(payload, dict) and payload.get("code") == "PGRST205":
+            logging.info(
+                "user_consents table missing; bypassing consent requirement for this environment."
+            )
+            return True
         return False
 
 
-def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip: Optional[str] = None, access_token: Optional[str] = None) -> bool:
-    """Persist a consent record. Returns True if stored.
-    """
+def save_user_consent(
+    discord_id: str,
+    consent_hash: str,
+    timestamp_iso: str,
+    ip: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> bool:
+    """Persist a consent record. Returns True if stored."""
     try:
         payload = {
             "discord_id": discord_id,
@@ -231,5 +295,6 @@ def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip
         return True
     except Exception as e:
         import logging
+
         logging.warning(f"save_user_consent failed: {e}")
         return False

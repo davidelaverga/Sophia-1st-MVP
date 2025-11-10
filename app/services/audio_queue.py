@@ -18,6 +18,7 @@ logger = logging.getLogger("sophia-backend")
 
 class PlaybackState(Enum):
     """Audio playback states."""
+
     IDLE = "idle"
     PLAYING = "playing"
     CANCELLED = "cancelled"
@@ -27,6 +28,7 @@ class PlaybackState(Enum):
 @dataclass
 class AudioSegment:
     """Represents a single audio segment in the queue."""
+
     segment_id: str
     audio_data: bytes
     mime_type: str
@@ -37,6 +39,7 @@ class AudioSegment:
 @dataclass
 class QueueStats:
     """Statistics for audio queue monitoring."""
+
     session_id: str
     queue_length: int
     current_segment_id: Optional[str]
@@ -90,7 +93,9 @@ class AudioQueueManager:
         self._lock = Lock()
         self._max_interruption_ms = max_interruption_ms
 
-        logger.info(f"AudioQueueManager initialized (max_interruption={max_interruption_ms}ms)")
+        logger.info(
+            f"AudioQueueManager initialized (max_interruption={max_interruption_ms}ms)"
+        )
 
     def _init_session(self, session_id: str) -> None:
         """Initialize session-specific data structures."""
@@ -232,8 +237,9 @@ class AudioQueueManager:
 
                         with self._lock:
                             self._stats[session_id]["cancelled"] += 1
-                            self._stats[session_id]["total_cancellations"] += 1
-                            self._stats[session_id]["last_interruption_ms"] = interruption_ms
+                            self._stats[session_id]["last_interruption_ms"] = (
+                                interruption_ms
+                            )
                             self._states[session_id] = PlaybackState.CANCELLED
 
                         # Verify interruption time
@@ -286,15 +292,16 @@ class AudioQueueManager:
         with self._lock:
             state = self._states.get(session_id, PlaybackState.IDLE)
             current = self._current_segments.get(session_id)
+            if state == PlaybackState.PLAYING and current:
+                self._cancellation_events[session_id].set()
+                stats = self._stats.get(session_id)
+                if stats is not None:
+                    stats["total_cancellations"] += 1
 
-        if state == PlaybackState.PLAYING and current:
-            # Signal cancellation
-            self._cancellation_events[session_id].set()
-
-            logger.info(
-                f"Session {session_id}: cancelled current segment {current.segment_id}"
-            )
-            return True
+                logger.info(
+                    f"Session {session_id}: cancelled current segment {current.segment_id}"
+                )
+                return True
 
         return False
 

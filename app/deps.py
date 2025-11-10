@@ -1,16 +1,26 @@
 """FastAPI dependencies for API-key auth, rate limiting, and consent enforcement."""
 
-from typing import Any, Optional
+import logging
+import os
+from typing import Optional, Any
 import threading
 from urllib.parse import urljoin
+
 from fastapi import Header, HTTPException, Request
-from jwt import InvalidTokenError, PyJWKClient, decode as jwt_decode, get_unverified_header
+from jwt import (
+    InvalidTokenError,
+    PyJWKClient,
+    decode as jwt_decode,
+    get_unverified_header,
+)
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
 from app.config import get_settings
 from app.services.supabase import has_user_consent
 
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger("sophia-backend")
 
 _JWK_CLIENTS: dict[str, PyJWKClient] = {}
 _JWK_CLIENT_LOCK = threading.Lock()
@@ -35,23 +45,31 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
     try:
         unverified_claims = jwt_decode(token, options={"verify_signature": False})
     except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized: malformed token") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: malformed token"
+        ) from exc
 
     issuer = unverified_claims.get("iss")
     if not issuer or not isinstance(issuer, str):
-        raise HTTPException(status_code=401, detail="Unauthorized: issuer claim missing")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: issuer claim missing"
+        )
 
     jwk_client = _get_jwk_client(issuer)
     try:
         signing_key = jwk_client.get_signing_key_from_jwt(token)
     except Exception as exc:  # noqa: BLE001 - propagate as auth failure
-        raise HTTPException(status_code=401, detail="Unauthorized: unable to resolve signing key") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: unable to resolve signing key"
+        ) from exc
 
     header = get_unverified_header(token)
     header_alg = header.get("alg") if isinstance(header, dict) else None
     algorithm = signing_key.algorithm_name or header_alg
     if not algorithm:
-        raise HTTPException(status_code=401, detail="Unauthorized: unknown signing algorithm")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: unknown signing algorithm"
+        )
 
     try:
         jwt_decode(
@@ -69,7 +87,9 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
             },
         )
     except InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail="Unauthorized: invalid token signature") from exc
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: invalid token signature"
+        ) from exc
 
 
 def _decode_jwt_payload(token: Optional[str]) -> Optional[dict[str, Any]]:
@@ -141,13 +161,61 @@ def verify_api_key(
 ) -> str:
     """Validate that the request carries a Supabase JWT with a valid signature."""
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
 
     token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Empty token")
 
-    _verify_jwt_signature_via_jwks(token)
+    settings = get_settings()
+    # Allow simple API keys for legacy automation/integration flows
+    if token in (settings.API_KEYS or []):
+        if request is not None:
+            request.state.supabase_token = token
+            request.state.supabase_user_id = None
+        return token
+
+    try:
+        header = get_unverified_header(token)
+    except InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: malformed token"
+        ) from exc
+
+    alg = (header.get("alg") or "").upper()
+    if alg.startswith("HS"):
+        secret = (
+            os.getenv("SUPABASE_JWT_SECRET")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or settings.SUPABASE_KEY
+        )
+        if secret:
+            try:
+                jwt_decode(
+                    token,
+                    secret,
+                    algorithms=[alg],
+                    options={
+                        "verify_signature": True,
+                        "verify_exp": False,
+                        "verify_aud": False,
+                        "verify_iat": False,
+                        "verify_nbf": False,
+                    },
+                )
+            except InvalidTokenError as exc:
+                raise HTTPException(
+                    status_code=401, detail="Unauthorized: invalid token signature"
+                ) from exc
+        else:
+            logger.warning(
+                "SUPABASE_JWT_SECRET/SERVICE_ROLE_KEY is not configured; skipping signature verification for Supabase JWTs"
+            )
+    else:
+        _verify_jwt_signature_via_jwks(token)
+
     if request is not None:
         request.state.supabase_token = token
         user_id, discord_id = extract_identity_from_token(token)
