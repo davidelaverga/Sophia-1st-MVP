@@ -61,13 +61,15 @@ def transcribe_audio_with_voxtral(
             except Exception:
                 return ".wav"
         file_name = f"audio{_detect_ext(wav_bytes)}"
-        bio = io.BytesIO(wav_bytes)
+        # Create a proper file-like object for Mistral SDK
+        from mistralai.models import File
+        file_obj = File(
+            file_name=file_name,
+            content=wav_bytes,
+        )
         resp = client.audio.transcriptions.complete(
             model="voxtral-mini-latest",
-            file={
-                "content": bio,
-                "file_name": file_name,
-            },
+            file=file_obj,
         )
         cancel()
         # Try robust extraction from SDK response
@@ -88,9 +90,11 @@ def transcribe_audio_with_voxtral(
             except Exception:
                 text = str(resp)
         cancel()
+        logger.info(f"Voxtral transcription successful, text length: {len(text)}")
         return text
-    except Exception:
+    except Exception as e:
         # Fallback: Gemini if available; otherwise empty string
+        logger.error(f"Voxtral transcription failed: {type(e).__name__}: {e}")
         if getattr(settings, "GOOGLE_API_KEY", None):
             try:
                 import google.generativeai as genai
@@ -106,9 +110,13 @@ def transcribe_audio_with_voxtral(
                 prompt = "Transcribe this audio. Return only the transcription text, no extra words."
                 gresp = model.generate_content([{"text": prompt}, audio_inline])
                 cancel()
-                return (gresp.text or "").strip()
-            except Exception:
+                gemini_text = (gresp.text or "").strip()
+                logger.info(f"Gemini transcription successful, text length: {len(gemini_text)}")
+                return gemini_text
+            except Exception as e2:
+                logger.error(f"Gemini transcription fallback also failed: {type(e2).__name__}: {e2}")
                 pass
+        logger.warning("All transcription methods failed, returning empty string")
         return ""
 
 

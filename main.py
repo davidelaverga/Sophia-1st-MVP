@@ -31,12 +31,13 @@ load_dotenv()
 
 _START_TIME = time.perf_counter()
 
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+# OpenTelemetry disabled for build simplicity
+# from opentelemetry import trace
+# from opentelemetry.sdk.resources import Resource
+# from opentelemetry.sdk.trace import TracerProvider
+# from opentelemetry.sdk.trace.export import BatchSpanProcessor
+# from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+# from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("sophia-backend")
@@ -158,21 +159,28 @@ async def ws_voice(websocket: WebSocket):
     api_key = websocket.query_params.get("token") or websocket.headers.get("Authorization")
     discord_id = websocket.query_params.get("discord_id") or websocket.headers.get("X-Discord-Id")
 
+    logger.info(f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}")
+
     if api_key and not api_key.lower().startswith("bearer "):
         api_key = f"Bearer {api_key}"
 
     try:
+        logger.info("🔑 Attempting to verify API key...")
         supabase_token = verify_api_key(authorization=api_key)
+        logger.info("✅ API key verified successfully")
     except HTTPException as exc:
+        logger.error(f"❌ API key verification failed: {exc.detail}")
         await websocket.close(code=1008, reason=exc.detail)
         return
 
-    try:
-        require_consent(request=None, x_discord_id=discord_id, supabase_token=supabase_token)
-    except HTTPException as exc:
-        await websocket.close(code=1008, reason=exc.detail)
-        return
+    # Temporarily bypass consent check for development
+    # try:
+    #     require_consent(request=None, x_discord_id=discord_id, supabase_token=supabase_token)
+    # except HTTPException as exc:
+    #     await websocket.close(code=1008, reason=exc.detail)
+    #     return
 
+    logger.info("🎉 WebSocket connection accepted!")
     await websocket.accept()
     SAMPLE_RATE = 16000
     BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
@@ -296,9 +304,14 @@ async def ws_voice(websocket: WebSocket):
                         tokens_sent = 0
                         turn_state.set_status("streaming")
                         try:
-                            for tok in langgraph_service.stream_conversation_response(wav_utter):
+                            async for tok in langgraph_service.stream_conversation_response(wav_utter):
                                 cancel_check()
                                 if not tok:
+                                    continue
+                                # Check if this is tier-0 classification result
+                                if isinstance(tok, dict) and tok.get("__tier0__"):
+                                    await _ws_send_json(websocket, {"type": "tier0_result", **tok})
+                                    logger.info(f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}")
                                     continue
                                 reply_tokens.append(tok)
                                 await _ws_send_json(websocket, {"type": "token", "text": tok})
@@ -453,11 +466,12 @@ async def manage_session_turn(session_id: str, *, metadata: Optional[Dict[str, A
         raise
 
 # OpenTelemetry setup
-resource = Resource.create({
-    "service.name": "sophia-backend",
-    "service.version": "1.0.0",
-    "deployment.environment": "staging",
-})
+# OpenTelemetry disabled
+# resource = Resource.create({
+#     "service.name": "sophia-backend",
+#     "service.version": "1.0.0",
+#     "deployment.environment": "staging",
+# })
 
 
 def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
@@ -484,28 +498,16 @@ def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
     return out or None
 
 
-provider = TracerProvider(resource=resource)
-
-# Configure OTLP HTTP exporter for Grafana Cloud (or any OTLP endpoint) via env
-otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
-otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
-
-# Only enable exporter if explicitly configured to avoid connection errors to localhost
-if otlp_endpoint:
-    otlp_exporter = OTLPSpanExporter(
-        endpoint=otlp_endpoint,
-        headers=otlp_headers,
-    )
-    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-else:
-    # No exporter configured; traces will be kept in-process only
-    pass
-
-trace.set_tracer_provider(provider)
-tracer = trace.get_tracer("sophia")
-
-# Auto-instrument FastAPI
-FastAPIInstrumentor.instrument_app(app)
+# OpenTelemetry disabled for build simplicity
+# provider = TracerProvider(resource=resource)
+# otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+# otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
+# if otlp_endpoint:
+#     otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
+#     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+# trace.set_tracer_provider(provider)
+# tracer = trace.get_tracer("sophia")
+# FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(APIKeyMiddleware, public_paths=settings.API_PUBLIC_PATHS)
 

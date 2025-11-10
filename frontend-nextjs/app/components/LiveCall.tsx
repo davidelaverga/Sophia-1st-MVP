@@ -141,7 +141,16 @@ export default function LiveCall() {
         const data = JSON.parse(ev.data)
         console.log('📩 WS message received:', data.type, data)
 
-        if (data.type === "barge_in") {
+        if (data.type === "tier0_result") {
+          // Tier-0 Fast Classifier result (Task #42537)
+          console.log('🎯 TIER-0 CLASSIFICATION:')
+          console.log(`  📝 Transcript: ${data.transcript}`)
+          console.log(`  🎯 Intent: ${data.intent}`)
+          console.log(`  😊 Emotion: ${data.emotion}`)
+          console.log(`  📊 Confidence: ${data.confidence?.toFixed(2)}`)
+          console.log(`  ⚡ Latency: ${data.latency_ms}ms`)
+          console.log(`  🔧 Source: ${data.source}`)
+        } else if (data.type === "barge_in") {
           // Barge-in signal from backend: stop current playback immediately
           console.log('🛑 BARGE-IN received! Stopping playback...', data)
 
