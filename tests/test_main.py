@@ -50,7 +50,7 @@ _PUBLIC_KEY_PEM = _PRIVATE_KEY.public_key().public_bytes(
 
 class _StubJWKClient:
     def get_signing_key_from_jwt(self, token: str):
-        return SimpleNamespace(key=_PUBLIC_KEY_PEM, algorithm="RS256")
+        return SimpleNamespace(key=_PUBLIC_KEY_PEM, algorithm_name="RS256")
 
 
 def _stub_get_jwk_client(issuer: str):
