@@ -72,6 +72,13 @@ class Settings:
         path.strip() for path in _public_raw.split(",") if path.strip()
     ]
 
+    # Emotional RAG (S2 Part 8)
+    EMO_RAG_PROVIDER: str = os.getenv("EMO_RAG_PROVIDER", "static").lower()
+    EMOTIONAL_RAG_SERVICE_URL: Optional[str] = os.getenv("EMOTIONAL_RAG_SERVICE_URL")
+    EMOTIONAL_RAG_TIMEOUT_SECONDS: float = float(
+        os.getenv("EMOTIONAL_RAG_TIMEOUT_SECONDS", "0.3")
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

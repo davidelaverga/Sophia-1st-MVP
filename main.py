@@ -44,12 +44,12 @@ from app.services.shared_services import shared_services
 from dotenv import load_dotenv
 
 # OpenTelemetry disabled for build simplicity
-# from opentelemetry import trace
-# from opentelemetry.sdk.resources import Resource
-# from opentelemetry.sdk.trace import TracerProvider
-# from opentelemetry.sdk.trace.export import BatchSpanProcessor
-# from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-# from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 load_dotenv()
 
@@ -632,15 +632,15 @@ def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
 
 
 # OpenTelemetry disabled for build simplicity
-# provider = TracerProvider(resource=resource)
-# otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
-# otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
-# if otlp_endpoint:
-#     otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
-#     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-# trace.set_tracer_provider(provider)
-# tracer = trace.get_tracer("sophia")
-# FastAPIInstrumentor.instrument_app(app)
+provider = TracerProvider(resource=resource)
+otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
+if otlp_endpoint:
+    otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+trace.set_tracer_provider(provider)
+tracer = trace.get_tracer("sophia")
+FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(APIKeyMiddleware, public_paths=settings.API_PUBLIC_PATHS)
 
