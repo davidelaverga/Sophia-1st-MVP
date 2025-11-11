@@ -11,7 +11,10 @@ import time
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
-from mistralai import Mistral
+try:
+    from mistralai import Mistral
+except ImportError:  # pragma: no cover - optional dependency for fast path
+    Mistral = None
 from app.config import get_settings
 
 logger = logging.getLogger("sophia-backend")
@@ -59,6 +62,8 @@ class ClassificationResult:
 
 def _get_mistral_client() -> Mistral:
     """Get Mistral API client"""
+    if Mistral is None:
+        raise RuntimeError("mistralai SDK is not installed")
     settings = get_settings()
     if not settings.MISTRAL_API_KEY:
         raise RuntimeError("MISTRAL_API_KEY is not set")
@@ -112,11 +117,22 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
             detected_emotion = EMOTION_PANIC
 
     # 3. Intent detection (using detected emotion)
-    # 3a. Greeting detection
-    greet_patterns = [
-        r"\b(hi|hello|hey|привет|здравствуй|добр.*день|добр.*утро|добр.*вечер)\b",
+    # 3a. Greeting detection (English + Russian variants)
+    greeting_patterns = [
+        r"\b(hi|hello|hey|yo|sup|greetings)\b",
+        r"\b(good\s+(?:morning|afternoon|evening|day))\b",
+        r"\b(привет|здраст[вуйте]*|здравств[уйте]*)\b",
+        r"\b(доброе?\s+утро|добры[йе]\s+день|добры[йе]\s+вечер|доброй\s+ночи)\b",
     ]
-    is_greeting = any(re.search(p, text_lower) for p in greet_patterns)
+    greeting_terms = [
+        "доброе утро",
+        "добрый день",
+        "добрый вечер",
+        "доброй ночи",
+    ]
+    is_greeting = any(re.search(pattern, text_lower) for pattern in greeting_patterns) or any(
+        term in text_lower for term in greeting_terms
+    )
 
     # 3b. Check if there are emotional keywords
     has_emotion = max_emotion_score > 0
@@ -133,9 +149,31 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
 
     # 4. Knowledge/DeFi question detection
     knowledge_keywords = [
-        "what", "how", "why", "explain", "tell",
-        "defi", "yield", "staking", "token", "blockchain", "ethereum",
-        "что", "как", "почему", "объясни", "расскажи",
+        "what",
+        "how",
+        "why",
+        "explain",
+        "tell",
+        "defi",
+        "yield",
+        "staking",
+        "стейкинг",
+        "token",
+        "tokenomics",
+        "blockchain",
+        "блокчейн",
+        "ethereum",
+        "liquidity",
+        "liquidity pool",
+        "smart contract",
+        "смарт контракт",
+        "crypto",
+        "крипт",
+        "что",
+        "как",
+        "почему",
+        "объясни",
+        "расскажи",
     ]
     if any(kw in text_lower for kw in knowledge_keywords):
         return INTENT_KNOWLEDGE, EMOTION_NEUTRAL, 0.70
@@ -169,8 +207,7 @@ Respond ONLY in this JSON format:
 
     client = _get_mistral_client()
 
-    # Use asyncio.wait_for to enforce timeout
-    async def _call_mistral():
+    def _invoke() -> Tuple[str, str, float]:
         response = client.chat.complete(
             model="mistral-small-latest",  # Fast model
             messages=[{"role": "user", "content": prompt}],
@@ -189,7 +226,7 @@ Respond ONLY in this JSON format:
         result = json.loads(content.strip())
         return result["intent"], result["emotion"], result["confidence"]
 
-    return await asyncio.wait_for(_call_mistral(), timeout=timeout_ms / 1000.0)
+    return await asyncio.to_thread(_invoke)
 
 
 async def classify_tier0_fast(
@@ -226,7 +263,10 @@ async def classify_tier0_fast(
     # Try LLM classification first
     try:
         logger.info(f"Tier-0: Attempting LLM classification (timeout={timeout_ms}ms)")
-        intent, emotion, confidence = await _llm_classify(transcript, timeout_ms)
+        intent, emotion, confidence = await asyncio.wait_for(
+            _llm_classify(transcript, timeout_ms),
+            timeout=timeout_ms / 1000.0,
+        )
 
         # Adjust emotion based on prosody
         if prosody and prosody.get("intensity", 0) > 0.8:
@@ -284,12 +324,19 @@ def classify_tier0_fast_sync(
     Returns dict with keys: type, emotion, confidence, asr_confidence,
                             voice_signal_present, latency_ms, fallback_used
     """
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(
-        classify_tier0_fast(transcript, prosody, timeout_ms)
-    )
+    coro = classify_tier0_fast(transcript, prosody, timeout_ms)
+    try:
+        result = asyncio.run(coro)
+    except RuntimeError as err:
+        if "asyncio.run()" not in str(err):
+            raise
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
     return {
         "type": result.type,

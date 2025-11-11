@@ -198,3 +198,36 @@ def format_guidance_block(guidance: Sequence[str]) -> str:
     if not cleaned:
         return ""
     return "Emotion guidance cues:\n- " + "\n- ".join(cleaned)
+
+
+def build_emotion_guided_prompt(
+    message: str,
+    emotion_label: str,
+    emotion_confidence: float,
+    guidance: Sequence[str],
+    *,
+    max_words: int = 60,
+) -> str:
+    """Compose an instruction string that carries emotion cues into downstream prompts."""
+    safe_label = (emotion_label or "neutral").strip() or "neutral"
+    safe_conf = emotion_confidence if emotion_confidence is not None else 0.0
+    safe_message = (message or "").strip()
+
+    prompt_parts = [
+        f"The user seems {safe_label} (confidence: {safe_conf:.2f}).",
+    ]
+
+    guidance_block = format_guidance_block(guidance)
+    if guidance_block:
+        prompt_parts.append(guidance_block)
+
+    if safe_message:
+        prompt_parts.append(f"User question: {safe_message}")
+    else:
+        prompt_parts.append("User question: (no text provided)")
+
+    prompt_parts.append(
+        f"Respond as Sophia with empathy while staying concise (<= {max_words} words)."
+    )
+
+    return " | ".join(part for part in prompt_parts if part)

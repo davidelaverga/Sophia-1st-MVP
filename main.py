@@ -36,11 +36,15 @@ from app.deps import (
 )
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
-from app.services.emotion import analyze_emotion_audio
+from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.shared_services import shared_services
+from app.services.emotional_guidance import (
+    get_guidance as get_emotional_guidance,
+    build_emotion_guided_prompt,
+)
 from dotenv import load_dotenv
 
 # OpenTelemetry disabled for build simplicity
@@ -131,6 +135,8 @@ def _looks_like_audio(payload: bytes) -> bool:
         return True
     # As a last resort, treat files with enough non-zero bytes as plausible audio
     return any(b for b in payload[:512])
+
+
 
 
 # ==========================
@@ -1531,10 +1537,52 @@ async def text_chat_stream(
             try:
                 import json as _json
 
+                emotion_label = "neutral"
+                emotion_conf = 0.7
+                user_emotion_payload: Dict[str, Any] = {
+                    "label": emotion_label,
+                    "confidence": emotion_conf,
+                }
+
+                try:
+                    user_emotion = infer_text_emotion(body.message)
+                    user_emotion_payload = user_emotion.model_dump()
+                    emotion_label = user_emotion.label
+                    emotion_conf = float(user_emotion.confidence)
+                except Exception as emotion_error:
+                    logger.warning(
+                        "Text chat stream emotion detection failed: %s", emotion_error
+                    )
+
+                emotion_guidance: Sequence[str] = []
+
+                try:
+                    emotion_guidance = get_emotional_guidance(emotion_label)
+                    if emotion_guidance:
+                        preview = "; ".join(emotion_guidance[:2])
+                        logger.info(
+                            "Text chat stream guidance for %s: %s%s",
+                            emotion_label,
+                            preview,
+                            "..." if len(emotion_guidance) > 2 else "",
+                        )
+                except Exception as guidance_error:
+                    logger.warning(
+                        "Text chat stream guidance lookup failed: %s", guidance_error
+                    )
+                    emotion_guidance = []
+
+                guided_prompt = build_emotion_guided_prompt(
+                    body.message,
+                    emotion_label,
+                    emotion_conf,
+                    emotion_guidance,
+                )
+
                 turn_state.set_status("streaming")
                 reply_accum = []
                 for chunk in mistral_service.stream_generate_llm_reply(
-                    body.message,
+                    guided_prompt,
                     cancel_check=cancel_check,
                 ):
                     cancel_check()
@@ -1545,7 +1593,8 @@ async def text_chat_stream(
                     yield f"event: token\ndata: {safe_chunk}\n\n"
 
                 reply = "".join(reply_accum).strip()
-                yield f"event: reply_done\ndata: {_json.dumps({'reply': reply})}\n\n"
+                reply_payload = {"reply": reply, "user_emotion": user_emotion_payload}
+                yield f"event: reply_done\ndata: {_json.dumps(reply_payload)}\n\n"
 
                 turn_state.set_status("synthesizing")
                 cancel_check()
@@ -1582,6 +1631,7 @@ async def text_chat_stream(
                         sophia_emotion.model_dump() if sophia_emotion else None
                     ),
                     "mock_audio": mock_audio,
+                    "user_emotion": user_emotion_payload,
                 }
                 turn_state.set_status("completed")
                 yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"

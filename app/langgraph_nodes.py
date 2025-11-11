@@ -13,7 +13,7 @@ from app.services.mistral import (
     transcribe_audio_with_voxtral,
     generate_llm_reply,
 )
-from app.services.emotion import analyze_emotion_audio
+from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
@@ -877,9 +877,7 @@ class SophiaLangGraph:
             "session_id": session_id,
             "audio_bytes": b"",  # Empty for text input
             "transcript": message,  # Use the text message directly
-            "user_emotion": EmotionData(
-                label="neutral", confidence=0.7
-            ),  # Default for text
+            "user_emotion": EmotionData(label="neutral", confidence=0.7),
             "intent": "",
             "context_memory": {},
             "llm_response": "",
@@ -893,6 +891,11 @@ class SophiaLangGraph:
             "supabase_token": supabase_token,
             "cancel_check": cancel_check,
         }
+
+        inferred = infer_text_emotion(message)
+        initial_state["user_emotion"] = EmotionData(
+            label=inferred.label, confidence=inferred.confidence
+        )
 
         logger.info(
             f"Starting LangGraph text processing for session {session_id} with message: '{message[:50]}...'"
