@@ -1,3 +1,5 @@
+"""FastAPI dependencies for API-key auth, rate limiting, and consent enforcement."""
+
 from typing import Optional
 from fastapi import Header, HTTPException
 from slowapi import Limiter

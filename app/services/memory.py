@@ -1,3 +1,5 @@
+"""Session memory manager combining Redis cache, Supabase persistence, and topic extraction."""
+
 import json
 import time
 import logging

@@ -1,3 +1,5 @@
+"""Simple manual harness for exercising core REST endpoints against a running backend."""
+
 import requests
 
 API_URL = "http://127.0.0.1:8000"

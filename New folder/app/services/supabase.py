@@ -1,3 +1,5 @@
+"""Legacy Supabase helpers for direct REST interactions."""
+
 import time
 from typing import Any, Dict
 from supabase import create_client, Client

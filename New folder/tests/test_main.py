@@ -1,3 +1,5 @@
+"""Legacy test suite for archived FastAPI variant."""
+
 import io
 import time
 from unittest.mock import patch

@@ -1,28 +1,31 @@
-import os
-import time
+"""Supabase client utilities for storage uploads, consent checks, and conversation inserts."""
+
+import logging
 import uuid
+from contextlib import contextmanager
 from typing import Any, Dict, Optional
 from dotenv import load_dotenv, find_dotenv
-from supabase import create_client, Client
+from supabase import Client, create_client
 
-# Global client instance
-_supabase: Optional[Client] = None
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+from app.config import Settings, get_settings
 
 # Load environment variables from .env (portable)
 load_dotenv(find_dotenv(), override=False)
 
-# Supabase credentials
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio")
-SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
-SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
+# Global Supabase client state
+_supabase: Optional[Client] = None
+SUPABASE_BUCKET_AUDIO: str = "audio"
+SUPABASE_AUDIO_PREFIX: str = "uploads/"
+SUPABASE_DB_DSN: Optional[str] = None
+_DEFAULT_USER_ID: Optional[str] = None
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Supabase credentials not configured in environment")
+ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+logger = logging.getLogger("sophia-backend")
+_supabase_tracer = trace.get_tracer("sophia.supabase")
 
 # Optional: direct SQL helpers if available
 try:
@@ -31,15 +34,106 @@ except Exception:
     insert_emotion_score_sql = None  # type: ignore
     insert_conversation_session_sql = None  # type: ignore
 
-def get_supabase() -> Client:
-    global _supabase
-    if _supabase is None:
-        # Use environment variables directly for testing
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            # Return the already-initialized client for testing
-            return supabase
-        _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def _validate_uuid(value: str) -> Optional[str]:
+    try:
+        uuid.UUID(value)
+        return value
+    except Exception:
+        logger.warning("Invalid UUID supplied for Supabase operations: %s", value)
+        return None
+
+
+def user_uuid_from_discord(discord_id: Optional[str]) -> Optional[str]:
+    if not discord_id:
+        return None
+    namespace = uuid.uuid5(uuid.NAMESPACE_URL, "https://sophia.ai/discord")
+    return str(uuid.uuid5(namespace, discord_id.strip()))
+
+
+def _default_user_id(settings: Optional[Settings] = None) -> str:
+    """Return a reusable default user_id that is never the all-zero UUID."""
+
+    global _DEFAULT_USER_ID
+    if _DEFAULT_USER_ID:
+        return _DEFAULT_USER_ID
+
+    if settings is None:
+        settings = get_settings()
+
+    candidate = (settings.SUPABASE_DEFAULT_USER_ID or "").strip()
+    if candidate == ZERO_UUID:
+        logger.warning("Configured SUPABASE_DEFAULT_USER_ID is the zero UUID and will be ignored.")
+        candidate = ""
+
+    candidate = _validate_uuid(candidate) if candidate else None
+
+    if not candidate:
+        candidate = str(uuid.uuid4())
+        logger.info("Generated fallback Supabase user_id %s for development flows.", candidate)
+
+    _DEFAULT_USER_ID = candidate
+    return _DEFAULT_USER_ID
+
+
+def _resolve_user_id(user_id: Optional[str], discord_id: Optional[str] = None) -> str:
+    candidate = (user_id or "").strip()
+    if candidate == ZERO_UUID:
+        logger.warning("Received zero UUID for user_id; substituting default user identifier.")
+        candidate = ""
+    candidate = _validate_uuid(candidate) if candidate else None
+    if candidate:
+        return candidate
+    derived = user_uuid_from_discord(discord_id)
+    if derived:
+        return derived
+    return _default_user_id()
+
+
+@contextmanager
+def _supabase_span(name: str, **attrs):
+    with _supabase_tracer.start_as_current_span(name) as span:
+        for key, value in attrs.items():
+            if value is None:
+                continue
+            span.set_attribute(f"supabase.{key}", value)
+        try:
+            yield span
+        except Exception as exc:  # pragma: no cover - instrumentation path
+            span.record_exception(exc)
+            span.set_status(Status(status_code=StatusCode.ERROR, description=str(exc)))
+            raise
+
+
+def init_supabase(settings: Optional[Settings] = None) -> Client:
+    """Initialise the Supabase client once using application settings."""
+
+    global _supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN
+    if _supabase is not None:
+        return _supabase
+
+    if settings is None:
+        settings = get_settings()
+
+    if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
+        raise RuntimeError("Supabase credentials not configured; set SUPABASE_URL and SUPABASE_KEY")
+
+    SUPABASE_BUCKET_AUDIO = settings.SUPABASE_BUCKET_AUDIO or "audio"
+    SUPABASE_AUDIO_PREFIX = settings.SUPABASE_AUDIO_PREFIX or "uploads/"
+    SUPABASE_DB_DSN = settings.SUPABASE_DB_DSN
+    _default_user_id(settings)
+
+    with _supabase_span("supabase.init"):
+        _supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
     return _supabase
+
+
+def get_supabase() -> Client:
+    """Return the shared Supabase client, initialising it if necessary."""
+
+    if _supabase is not None:
+        return _supabase
+    return init_supabase()
     
 def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None) -> str:
     """Upload audio file to Supabase storage and return public URL.
@@ -50,58 +144,59 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
         file_name = f"sophia_{uuid.uuid4().hex}.mp3"
     path = f"{SUPABASE_AUDIO_PREFIX}{file_name}"
 
-    # Remove file if it exists
-    try:
-        supabase.storage.from_(SUPABASE_BUCKET_AUDIO).remove([path])
-    except Exception:
-        pass
+    client = get_supabase()
 
-    # Upload file (storage3 returns an UploadResponse object; exceptions indicate failures)
-    try:
-        res = supabase.storage.from_(SUPABASE_BUCKET_AUDIO).upload(path, file_bytes)
-    except Exception as e:
-        raise RuntimeError(f"Supabase upload failed: {e}")
+    with _supabase_span("supabase.audio.remove", path=path):
+        try:
+            client.storage.from_(SUPABASE_BUCKET_AUDIO).remove([path])
+        except Exception:
+            pass
 
-    # Return public URL
-    public_url = supabase.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
+    with _supabase_span("supabase.audio.upload", path=path, bucket=SUPABASE_BUCKET_AUDIO):
+        try:
+            client.storage.from_(SUPABASE_BUCKET_AUDIO).upload(path, file_bytes)
+        except Exception as e:
+            raise RuntimeError(f"Supabase upload failed: {e}")
+
+    with _supabase_span("supabase.audio.public_url", path=path):
+        public_url = client.storage.from_(SUPABASE_BUCKET_AUDIO).get_public_url(path)
     return public_url
 
 
-def insert_emotion_score(session_id, role: str, emotion: Any, user_id: str = None) -> None:
+def insert_emotion_score(
+    session_id,
+    role: str,
+    emotion: Any,
+    user_id: str = None,
+    discord_id: Optional[str] = None,
+) -> None:
     """Insert a row into the emotion_scores table using the test user ID if none provided.
     
     Note: This function will always use the test user ID if no user_id is provided.
     """
-    # Always use the test user ID if none provided
-    if not user_id:
-        # Use hardcoded test user ID
-        user_id = "00000000-0000-0000-0000-000000000000"  # Test user ID
-        import logging
-        logging.info(f"Using test user ID for emotion score: {user_id}")
-        
-    # If we still don't have a user_id (which shouldn't happen), log and return
-    if not user_id:
-        import logging
-        logging.warning("Skipping emotion score insertion: No valid user_id available")
-        return
-    
+    resolved_user_id = _resolve_user_id(user_id, discord_id)
+
     payload = {
         "session_id": str(session_id),
         "role": role,
         "label": getattr(emotion, "label", "neutral"),
         "confidence": float(getattr(emotion, "confidence", 0.5)),
-        "user_id": user_id,
+        "user_id": resolved_user_id,
     }
     
+    client = get_supabase()
+
     try:
-        supabase.table("emotion_scores").insert(payload).execute()
+        with _supabase_span("supabase.insert_emotion_score", session_id=str(session_id), role=role):
+            client.table("emotion_scores").insert(payload).execute()
     except Exception as e:
         import logging
         logging.warning(f"emotion_scores insert failed: {e}")
         # Don't raise the exception, just log it and continue
     if SUPABASE_DB_DSN and insert_emotion_score_sql:
         try:
-            insert_emotion_score_sql(payload)
+            with _supabase_span("supabase.sql.insert_emotion_score", session_id=str(session_id), role=role):
+                insert_emotion_score_sql(payload)
             return
         except Exception:
             pass
@@ -112,19 +207,9 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
     
     Note: This function will always use the test user ID if no user_id is provided.
     """
-    # Always use the test user ID if none provided
-    if "user_id" not in data or not data["user_id"]:
-        # Use hardcoded test user ID
-        data["user_id"] = "00000000-0000-0000-0000-000000000000"  # Test user ID
-        import logging
-        logging.info(f"Using test user ID for conversation session: {data['user_id']}")
-        
-    # If we still don't have a user_id (which shouldn't happen), log a warning
-    if "user_id" not in data or not data["user_id"]:
-        import logging
-        logging.warning("No valid user_id available for conversation_session")
-        # We'll continue anyway and let the database handle any constraints
-    
+    discord_id = data.pop("discord_id", None)
+    data["user_id"] = _resolve_user_id(data.get("user_id"), discord_id)
+
     # Ensure all SQL parameters expected by insert_conversation_session_sql are present
     # If missing, provide sensible defaults.
     # Required by SQL helper: id, user_id, transcript, reply,
@@ -142,9 +227,12 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
     data.setdefault("sophia_emotion_confidence", None)
     data.setdefault("audio_url", None)
             
+    client = get_supabase()
+
     if SUPABASE_DB_DSN and insert_conversation_session_sql:
         try:
-            insert_conversation_session_sql(data)
+            with _supabase_span("supabase.sql.insert_conversation", session_id=data.get("id")):
+                insert_conversation_session_sql(data)
             return
         except Exception as e:
             import logging
@@ -152,7 +240,8 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
 
     # REST insert with clearer error surfacing
     try:
-        supabase.table("conversation_sessions").insert(data).execute()
+        with _supabase_span("supabase.insert_conversation", session_id=data.get("id")):
+            client.table("conversation_sessions").insert(data).execute()
     except Exception as e:
         # Log error but don't raise exception
         import logging
@@ -166,7 +255,9 @@ def has_user_consent(discord_id: str) -> bool:
     Table schema expected: user_consents(discord_id text, consent_hash text, timestamp timestamptz, ip text)
     """
     try:
-        res = supabase.table("user_consents").select("discord_id").eq("discord_id", discord_id).limit(1).execute()
+        client = get_supabase()
+        with _supabase_span("supabase.get_user_consent"):
+            res = client.table("user_consents").select("discord_id").eq("discord_id", discord_id).limit(1).execute()
         return bool(getattr(res, "data", []) or [])
     except Exception as e:
         import logging
@@ -184,7 +275,9 @@ def save_user_consent(discord_id: str, consent_hash: str, timestamp_iso: str, ip
             "timestamp": timestamp_iso,
             "ip": ip or "",
         }
-        supabase.table("user_consents").insert(payload).execute()
+        client = get_supabase()
+        with _supabase_span("supabase.insert_user_consent"):
+            client.table("user_consents").insert(payload).execute()
         return True
     except Exception as e:
         import logging

@@ -1,3 +1,5 @@
+"""Mistral SDK integrations for transcription, text generation, and streaming replies."""
+
 import base64
 import io
 from typing import List, Optional

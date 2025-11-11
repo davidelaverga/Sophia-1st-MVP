@@ -1,9 +1,4 @@
-"""
-Shared service instances for LangGraph nodes to prevent conflicts
-
-This module provides a centralized way to manage service instances across
-LangGraph nodes, preventing duplicate initialization and API call conflicts.
-"""
+"""Singleton helpers that share expensive LangGraph service instances across nodes."""
 import logging
 from typing import Optional
 from app.services.voxtral_large import HybridVoxtralService

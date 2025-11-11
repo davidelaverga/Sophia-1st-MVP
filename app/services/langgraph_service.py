@@ -1,3 +1,5 @@
+"""Wrapper service that executes SophiaLangGraph and coordinates evaluation flows."""
+
 import logging
 from typing import Dict, Any
 from app.langgraph_nodes import SophiaLangGraph

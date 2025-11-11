@@ -1,3 +1,5 @@
+"""Archived psycopg helpers for direct Supabase inserts."""
+
 import contextlib
 from typing import Any, Dict
 import psycopg

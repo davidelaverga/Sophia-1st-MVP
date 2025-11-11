@@ -1,3 +1,5 @@
+"""Conversation evaluation toolkit for RAGAS scoring, Phoenix drift monitoring, and reports."""
+
 import json
 import time
 import logging

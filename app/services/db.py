@@ -1,3 +1,5 @@
+"""Lightweight psycopg helpers for inserting Supabase conversation data via SQL."""
+
 import contextlib
 from typing import Any, Dict
 import psycopg

@@ -1,3 +1,5 @@
+"""Early emotion classification utilities preserved for reference."""
+
 import logging
 from pydantic import BaseModel
 from app.config import get_settings

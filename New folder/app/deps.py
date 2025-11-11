@@ -1,3 +1,5 @@
+"""Archived dependency helpers for API-key enforcement and rate limiting."""
+
 from fastapi import Header, HTTPException
 from slowapi import Limiter
 from slowapi.util import get_remote_address

@@ -1,5 +1,4 @@
-# Voice Conversation Steps 4-6: Response Generation, TTS, and Full Testing
-# Copy these code blocks into your notebook as separate cells
+"""Notebook helper that walks through response generation, TTS, and end-to-end voice testing."""
 
 import os
 import time

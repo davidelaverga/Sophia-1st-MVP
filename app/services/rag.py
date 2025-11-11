@@ -1,11 +1,11 @@
+"""DeFi FAQ retrieval system using sentence embeddings and cosine similarity."""
+
 import json
 import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
-from sentence_transformers import SentenceTransformer
 from app.config import get_settings
-from app.services.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -29,19 +29,35 @@ class RAGSystem:
     
     def __init__(self):
         self.settings = get_settings()
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight model
-        self.supabase = get_supabase()
-        self.faqs = self._load_faqs()
+        self._model = None
+        self._faqs: List[FAQEntry] = []
         self.similarity_threshold = 0.7  # Cosine similarity threshold
+
+    @property
+    def faqs(self) -> List[FAQEntry]:
+        self._ensure_faqs()
+        return self._faqs
+
+    def _load_model(self):
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight model
+
+    def _ensure_faqs(self):
+        if self._faqs:
+            return
+        self._load_model()
+        self._faqs = self._load_faqs()
         
     def _load_faqs(self) -> List[FAQEntry]:
         """Load and embed DeFi FAQs"""
         faqs_data = self._get_default_faqs()
         faqs = []
-        
+
         for faq_data in faqs_data:
             # Generate embedding for the question
-            embedding = self.model.encode(faq_data["question"]).tolist()
+            embedding = self._model.encode(faq_data["question"]).tolist()
             
             faq = FAQEntry(
                 id=faq_data["id"],

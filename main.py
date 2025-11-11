@@ -1,30 +1,31 @@
+"""FastAPI entry point that wires endpoints, middleware, telemetry, and voice pipelines."""
+
 import base64
 import io
 import time
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.deps import verify_api_key, limiter
-from app.services.mistral import stream_generate_reply_from_audio, generate_llm_reply
+from app.config_validation import validate_settings
+from app.deps import verify_api_key, limiter, require_consent
+from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
 from app.services.emotion import analyze_emotion_text, analyze_emotion_audio
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
-from app.services.supabase import (
-    get_supabase,
-    upload_audio_and_get_url,
-    insert_emotion_score,
-    insert_conversation_session,
-)
+from app.services import supabase as supabase_service
 from dotenv import load_dotenv
 load_dotenv()
+
+_START_TIME = time.perf_counter()
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -33,10 +34,49 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-settings = get_settings()
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("sophia-backend")
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    """Middleware that enforces API-key authentication on every non-public HTTP route."""
+
+    def __init__(self, app: FastAPI, public_paths: Sequence[str]):
+        super().__init__(app)
+        self.public_paths = public_paths or []
+
+    def _is_public(self, path: str) -> bool:
+        """Return True when request path matches a configured public route."""
+        for pattern in self.public_paths:
+            if pattern == "*":
+                return True
+            if pattern.endswith("/*"):
+                prefix = pattern[:-2]
+                if path.startswith(prefix):
+                    return True
+            if path == pattern:
+                return True
+            # Allow prefix-style matches without needing explicit wildcard
+            if pattern and pattern != "/" and path.startswith(pattern.rstrip("/") + "/"):
+                return True
+        return False
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        if self._is_public(request.url.path):
+            return await call_next(request)
+        authorization = request.headers.get("Authorization")
+        try:
+            verify_api_key(authorization=authorization)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return await call_next(request)
+
+
+settings = get_settings()
+validate_settings(settings)
+supabase_service.init_supabase(settings)
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -48,7 +88,7 @@ resource = Resource.create({
 })
 
 
-def _normalize_otlp_endpoint(ep: str | None) -> str | None:
+def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
     if not ep:
         return None
     ep = ep.rstrip("/")
@@ -60,7 +100,7 @@ def _normalize_otlp_endpoint(ep: str | None) -> str | None:
     return ep
 
 
-def _parse_otlp_headers(hdrs: str | None) -> dict[str, str] | None:
+def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
     if not hdrs:
         return None
     # Support comma-separated key=value pairs, e.g. "Authorization=Bearer abc, X-Org=123"
@@ -95,12 +135,26 @@ tracer = trace.get_tracer("sophia")
 # Auto-instrument FastAPI
 FastAPIInstrumentor.instrument_app(app)
 
+app.add_middleware(APIKeyMiddleware, public_paths=settings.API_PUBLIC_PATHS)
+
+allowed_cors_origins = settings.CORS_ALLOWED_ORIGINS or ["http://localhost:3000"]
+logger.info("Configuring CORS for allowed origins: %s", allowed_cors_origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Discord-Id",
+        "X-Api-Key",
+    ],
+    expose_headers=["Authorization"],
+    max_age=86400,
 )
 
 app.state.limiter = limiter
@@ -116,6 +170,8 @@ if os.path.exists("frontend"):
     print("✅ Frontend static files mounted at /frontend")
 else:
     print("ℹ️ Frontend directory not found - running in backend-only mode (frontend served by Vercel)")
+
+logger.info("Startup initialization completed in %.2f s", time.perf_counter() - _START_TIME)
 
 # Simple health endpoint for Fly.io checks and container orchestration
 @app.get("/health")
@@ -167,20 +223,18 @@ class TextChatRequest(BaseModel):
 
 
 @app.get("/")
-def root():
-    """Backend status - frontend served separately on Vercel"""
-    if os.path.exists("frontend/index.html"):
-        # Full-stack deployment: serve frontend
+def root(request: Request):
+    """Backend status with optional static frontend response."""
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and os.path.exists("frontend/index.html"):
         return FileResponse("frontend/index.html")
-    else:
-        # Backend-only deployment: return API info
-        return {
-            "message": "Sophia AI Backend is running",
-            "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
-            "api_status": "ok",
-            "deployment_mode": "backend-only",
-            "docs_url": "/docs"
-        }
+    return {
+        "message": "Sophia AI Backend is running",
+        "frontend_url": "https://sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app",
+        "api_status": "ok",
+        "deployment_mode": "backend+api" if os.path.exists("frontend/index.html") else "backend-only",
+        "docs_url": "/docs"
+    }
 
 @app.get("/api")
 def api_root():
@@ -204,7 +258,11 @@ async def transcribe(
 
     try:
         wav_bytes = await file.read()
-        text = transcribe_audio_with_voxtral(wav_bytes)
+        if not _looks_like_audio(wav_bytes):
+            raise HTTPException(status_code=400, detail="File must contain recognizable audio data")
+        text = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Transcription failed")
         raise HTTPException(status_code=500, detail="Transcription failed")
@@ -212,7 +270,7 @@ async def transcribe(
     user_emotion = analyze_emotion_audio(wav_bytes)
 
     try:
-        insert_emotion_score(session_id, role="user", emotion=user_emotion)
+        supabase_service.insert_emotion_score(session_id, role="user", emotion=user_emotion)
     except Exception:
         logger.warning("Failed to persist user emotion score; continuing")
 
@@ -230,7 +288,7 @@ async def generate_response(
     api_key_ok: None = Depends(verify_api_key),
 ):
     try:
-        reply = generate_llm_reply(body.text)
+        reply = mistral_service.generate_llm_reply(body.text)
     except Exception:
         logger.exception("LLM response generation failed")
         raise HTTPException(status_code=500, detail="Response generation failed")
@@ -252,7 +310,7 @@ async def generate_response_stream(
     first token and incremental updates.
     """
     try:
-        generator = stream_generate_llm_reply(body.text)
+        generator = mistral_service.stream_generate_llm_reply(body.text)
         return StreamingResponse(generator, media_type="text/plain")
     except Exception:
         logger.exception("Streaming response generation failed")
@@ -278,7 +336,7 @@ async def synthesize(
     try:
         file_name = f"sophia_{int(time.time()*1000)}.mp3"
         # Fix argument order: first bytes, then optional file_name
-        audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+        audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
     except Exception:
         logger.exception("Audio upload failed")
         raise HTTPException(status_code=500, detail="Audio upload failed")
@@ -287,7 +345,7 @@ async def synthesize(
 
     try:
         session_id = uuid.uuid4()
-        insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+        supabase_service.insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
     except Exception:
         logger.warning("Failed to persist sophia emotion score; continuing")
 
@@ -300,7 +358,10 @@ async def chat(
     request: Request,
     file: UploadFile = File(...),
     api_key_ok: None = Depends(verify_api_key),
+    consent_ok: None = Depends(require_consent),
 ):
+    discord_id = request.headers.get("X-Discord-Id")
+    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
     # Accept common audio formats
     allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
@@ -314,7 +375,7 @@ async def chat(
         try:
             wav_bytes = await file.read()
             with tracer.start_as_current_span("stt_transcription") as stt_span:
-                transcript = transcribe_audio_with_voxtral(wav_bytes)
+                transcript = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
                 stt_span.set_attribute("transcript.length", len(transcript))
         except Exception:
             logger.exception("Transcription failed in chat")
@@ -333,7 +394,7 @@ async def chat(
 
         try:
             with tracer.start_as_current_span("llm_generation") as llm_span:
-                reply = generate_llm_reply(transcript)
+                reply = mistral_service.generate_llm_reply(transcript)
                 llm_span.set_attribute("reply.length", len(reply))
         except Exception:
             logger.exception("LLM generation failed in chat")
@@ -344,7 +405,7 @@ async def chat(
                 audio_bytes = synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
                 # Fix argument order: first bytes, then optional file_name
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
         except Exception:
             logger.exception("Synthesis or upload failed in chat")
             raise HTTPException(status_code=500, detail="Synthesis failed")
@@ -365,7 +426,7 @@ async def chat(
 
     # Insert conversation first (let DB set timestamps), then emotion scores to satisfy FK
     try:
-        insert_conversation_session({
+        supabase_service.insert_conversation_session({
             "id": str(session_id),
             "transcript": transcript,
             "reply": reply,
@@ -374,13 +435,15 @@ async def chat(
             "sophia_emotion_label": sophia_emotion.label,
             "sophia_emotion_confidence": sophia_emotion.confidence,
             "audio_url": audio_url or None,
+            "user_id": resolved_user_id,
+            "discord_id": discord_id,
         })
         try:
-            insert_emotion_score(session_id, role="user", emotion=user_emotion)
+            supabase_service.insert_emotion_score(session_id, role="user", emotion=user_emotion, user_id=resolved_user_id, discord_id=discord_id)
         except Exception:
             logger.warning("Persist user emotion failed; continuing")
         try:
-            insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion)
+            supabase_service.insert_emotion_score(session_id, role="sophia", emotion=sophia_emotion, user_id=resolved_user_id, discord_id=discord_id)
         except Exception:
             logger.warning("Persist sophia emotion failed; continuing")
     except Exception:
@@ -402,7 +465,10 @@ async def defi_chat(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     api_key_ok: None = Depends(verify_api_key),
+    consent_ok: None = Depends(require_consent),
 ):
+    discord_id = request.headers.get("X-Discord-Id")
+    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
     """Enhanced chat endpoint using LangGraph for DeFi conversations"""
     
     # Accept common audio formats
@@ -422,7 +488,7 @@ async def defi_chat(
         
         # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
-            insert_conversation_session({
+            supabase_service.insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
                 "reply": result["reply"],
@@ -433,13 +499,27 @@ async def defi_chat(
                 "audio_url": result["audio_url"] or None,
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
+                "user_id": resolved_user_id,
+                "discord_id": discord_id,
             })
             try:
-                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+                supabase_service.insert_emotion_score(
+                    result["session_id"],
+                    role="user",
+                    emotion=type("E", (), result["user_emotion"])(),
+                    user_id=resolved_user_id,
+                    discord_id=discord_id,
+                )
             except Exception as e:
                 logger.warning(f"Failed to persist user emotion: {e}")
             try:
-                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+                supabase_service.insert_emotion_score(
+                    result["session_id"],
+                    role="sophia",
+                    emotion=type("E", (), result["sophia_emotion"])(),
+                    user_id=resolved_user_id,
+                    discord_id=discord_id,
+                )
             except Exception as e:
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
@@ -459,6 +539,7 @@ async def defi_chat_stream(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     api_key_ok: None = Depends(verify_api_key),
+    consent_ok: None = Depends(require_consent),
 ):
     """Streaming variant of DeFi chat.
 
@@ -468,6 +549,8 @@ async def defi_chat_stream(
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
     """
+    discord_id = request.headers.get("X-Discord-Id")
+    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
     # IMPORTANT: Read the uploaded file BEFORE starting the generator.
     # Starlette may close the underlying SpooledTemporaryFile once the coroutine
     # returns control, which would make subsequent reads fail within the
@@ -478,7 +561,7 @@ async def defi_chat_stream(
         nonlocal session_id
         try:
             # STT
-            transcript = transcribe_audio_with_voxtral(wav_bytes)
+            transcript = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
             user_emotion = analyze_emotion_audio(wav_bytes)
             if session_id is None:
                 session_id_local = str(uuid.uuid4())
@@ -493,7 +576,7 @@ async def defi_chat_stream(
 
             # Stream LLM
             reply_accum = []
-            for chunk in stream_generate_llm_reply(transcript):
+            for chunk in mistral_service.stream_generate_llm_reply(transcript):
                 if not chunk:
                     continue
                 reply_accum.append(chunk)
@@ -508,7 +591,7 @@ async def defi_chat_stream(
             try:
                 audio_bytes = synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
             except Exception:
                 logger.exception("Synthesis or upload failed in defi_chat_stream")
                 audio_url = None
@@ -529,7 +612,7 @@ async def defi_chat_stream(
 
             # Persist conversation first (no explicit created_at), then emotions to satisfy FK
             try:
-                insert_conversation_session({
+                supabase_service.insert_conversation_session({
                     "id": session_id_local,
                     "transcript": transcript,
                     "reply": reply,
@@ -538,14 +621,28 @@ async def defi_chat_stream(
                     "sophia_emotion_label": (sophia_emotion.label if sophia_emotion else None),
                     "sophia_emotion_confidence": (sophia_emotion.confidence if sophia_emotion else None),
                     "audio_url": audio_url or None,
+                    "user_id": resolved_user_id,
+                    "discord_id": discord_id,
                 })
                 try:
-                    insert_emotion_score(session_id_local, role="user", emotion=user_emotion)
+                    supabase_service.insert_emotion_score(
+                        session_id_local,
+                        role="user",
+                        emotion=user_emotion,
+                        user_id=resolved_user_id,
+                        discord_id=discord_id,
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to persist user emotion: {e}")
                 try:
                     if sophia_emotion:
-                        insert_emotion_score(session_id_local, role="sophia", emotion=sophia_emotion)
+                        supabase_service.insert_emotion_score(
+                            session_id_local,
+                            role="sophia",
+                            emotion=sophia_emotion,
+                            user_id=resolved_user_id,
+                            discord_id=discord_id,
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to persist sophia emotion: {e}")
             except Exception as e:
@@ -605,9 +702,32 @@ def _avg_abs_pcm16(buf: bytes) -> float:
     s = sum(abs(x) for x in a)
     return s / len(a)
 
+
+def _looks_like_audio(data: bytes) -> bool:
+    if not data or len(data) < 4:
+        return False
+    if data.startswith(b"RIFF") or data.startswith(b"OggS"):
+        return True
+    if data[:3] == b"ID3" or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
+        return True
+    if data.startswith(b"fLaC"):
+        return True
+    return False
+
 @app.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket):
-    # In production, protect with auth (API key/session) via headers or query.
+    try:
+        verify_api_key(authorization=websocket.headers.get("Authorization"))
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=exc.detail)
+        return
+    discord_id = websocket.headers.get("X-Discord-Id")
+    try:
+        require_consent(x_discord_id=discord_id)
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=exc.detail)
+        return
+
     await websocket.accept()
     SAMPLE_RATE = 16000
     BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
@@ -626,6 +746,7 @@ async def ws_voice(websocket: WebSocket):
     last_final_text = ""
     last_reply_text = ""
     last_audio_url: Optional[str] = None
+    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
 
     try:
         while True:
@@ -735,7 +856,7 @@ async def ws_voice(websocket: WebSocket):
                                     # Also upload the full sentence MP3 to storage (optional/back-compat)
                                     try:
                                         file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                        audio_url_chunk = upload_audio_and_get_url(audio_bytes, file_name)
+                                        audio_url_chunk = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
                                         audio_url_last = audio_url_chunk
                                         logger.info(f"WS: uploaded audio chunk -> {audio_url_chunk}")
                                         await _ws_send_json(websocket, {"type": "audio_url_chunk", "audio_url": audio_url_chunk})
@@ -777,10 +898,12 @@ async def ws_voice(websocket: WebSocket):
     # Persist a single conversation summary at hangup (best-effort, no emotions to keep it fast)
     try:
         if last_final_text or last_reply_text:
-            insert_conversation_session({
+            supabase_service.insert_conversation_session({
                 "transcript": last_final_text,
                 "reply": last_reply_text,
                 "audio_url": last_audio_url or None,
+                "user_id": resolved_user_id,
+                "discord_id": discord_id,
             })
     except Exception:
         pass
@@ -790,9 +913,12 @@ async def text_chat(
     request: Request,
     body: TextChatRequest,
     api_key_ok: None = Depends(verify_api_key),
+    consent_ok: None = Depends(require_consent),
 ):
     """Text-only chat endpoint for DeFi conversations"""
-    
+    discord_id = request.headers.get("X-Discord-Id")
+    resolved_user_id = supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
+
     try:
         # Process text message directly through LangGraph with text input
         result = langgraph_service.process_text_conversation(
@@ -803,20 +929,34 @@ async def text_chat(
         
         # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
         try:
-            insert_conversation_session({
+            supabase_service.insert_conversation_session({
                 "id": result["session_id"],
                 "transcript": result["transcript"],
                 "reply": result["reply"],
                 "audio_url": result["audio_url"] or None,
                 "intent": result["intent"],
                 "context_memory": str(result["context_memory"]),
+                "user_id": resolved_user_id,
+                "discord_id": discord_id,
             })
             try:
-                insert_emotion_score(result["session_id"], role="user", emotion=type("E", (), result["user_emotion"])())
+                insert_emotion_score(
+                    result["session_id"],
+                    role="user",
+                    emotion=type("E", (), result["user_emotion"])(),
+                    user_id=resolved_user_id,
+                    discord_id=discord_id,
+                )
             except Exception as e:
                 logger.warning(f"Failed to persist user emotion: {e}")
             try:
-                insert_emotion_score(result["session_id"], role="sophia", emotion=type("E", (), result["sophia_emotion"])())
+                insert_emotion_score(
+                    result["session_id"],
+                    role="sophia",
+                    emotion=type("E", (), result["sophia_emotion"])(),
+                    user_id=resolved_user_id,
+                    discord_id=discord_id,
+                )
             except Exception as e:
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
@@ -848,7 +988,7 @@ async def text_chat_stream(
             import json as _json
             # Stream LLM tokens
             reply_accum = []
-            for chunk in stream_generate_llm_reply(body.message):
+            for chunk in mistral_service.stream_generate_llm_reply(body.message):
                 if not chunk:
                     continue
                 reply_accum.append(chunk)
@@ -865,7 +1005,7 @@ async def text_chat_stream(
             try:
                 audio_bytes = synthesize_inworld(reply)
                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                audio_url = upload_audio_and_get_url(audio_bytes, file_name)
+                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
                 try:
                     mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
                 except Exception:

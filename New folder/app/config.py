@@ -1,3 +1,5 @@
+"""Configuration loader preserved from earlier milestone backend."""
+
 import os
 from functools import lru_cache
 

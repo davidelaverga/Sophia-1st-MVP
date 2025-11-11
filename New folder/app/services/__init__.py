@@ -1,1 +1,1 @@
-# Package initializer for app.services
+"""Legacy services package namespace."""

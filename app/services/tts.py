@@ -1,3 +1,5 @@
+"""Inworld TTS client with streaming support and graceful fallbacks."""
+
 import base64
 import requests
 from app.config import get_settings

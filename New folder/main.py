@@ -1,3 +1,5 @@
+"""Archived FastAPI backend variant kept for reference."""
+
 import base64
 import io
 import time

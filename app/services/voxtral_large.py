@@ -1,17 +1,4 @@
-"""
-Voxtral Large Unified Service
-
-This service replaces the multi-stage STT + LLM pipeline with a single Voxtral Large model 
-that processes audio directly and generates contextually-aware responses with superior 
-emotional understanding and reduced latency.
-
-Key Benefits:
-- Single model handles both transcription and generation (1.2-1.8s vs 1.4-2.1s)
-- Direct audio-to-response eliminates context handoff errors
-- Advanced emotional understanding from audio features
-- Cleaner codebase (200-300 lines vs 1000+ lines)
-- Built-in multi-turn context awareness
-"""
+"""Voxtral Large service offering unified audio-to-response handling with intelligent fallbacks."""
 
 import base64
 import io

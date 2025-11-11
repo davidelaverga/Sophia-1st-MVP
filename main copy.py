@@ -1,3 +1,5 @@
+"""Legacy script for interacting with Supabase during early development."""
+
 from supabase import create_client
 import os
 from dotenv import load_dotenv

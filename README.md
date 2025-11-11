@@ -47,14 +47,14 @@ git clone <repository>
 cd Sophia-1st-MVP
 
 # Create environment file
-cp .env.staging .env
-# Edit .env with your API keys
+cp .env.template .env
+# Edit .env with your API keys and service URLs
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Run backend
-python main.py
+uvicorn main:app --reload
 ```
 
 2. **Setup Frontend**
@@ -77,9 +77,29 @@ npm run dev
 - Frontend: http://localhost:3000
 - API Documentation: http://localhost:8000/docs
 
+### **Environment Configuration**
+
+All configuration lives in environment variables. Use the provided [.env.template](./.env.template) as a reference, copying it to `.env` for local development. Key sections include:
+
+- **Core settings:** `APP_ENV`, rate limiting, logging level.
+- **Supabase:** `SUPABASE_URL`, `SUPABASE_KEY`, optional `SUPABASE_DB_DSN`, and a non-zero `SUPABASE_DEFAULT_USER_ID`.
+- **API security:** `API_KEYS`, `CORS_ALLOWED_ORIGINS`, and paths that should remain public (`API_PUBLIC_PATHS`).
+- **AI providers:** Mistral, Inworld, Google (Gemini), OpenAI, and Anthropic keys as needed.
+- **Observability:** OTLP endpoint and headers for OpenTelemetry exporters.
+
+🚨 **Production note:** Every deployment must set `API_KEYS`, Supabase credentials, and the external AI keys the environment relies on. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
+
+### **Testing & CI**
+
+- Run `pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`) installs dependencies and runs `pytest` automatically on pushes and pull requests. Ensure new tests are deterministic and do not require external network access.
+- Automated dependency scanning is enabled via Dependabot (`.github/dependabot.yml`), generating weekly PRs for Python packages; treat security updates as high priority.
+
 ### **Production Deployment**
 
-See [deployment-guide.md](deployment-guide.md) for complete production setup instructions.
+See [deployment-guide.md](deployment-guide.md) for complete production setup instructions, including container builds, Fly.io configuration, and frontend deployment on Vercel.
+
+Before granting end-user access, execute [`enable_rls_policies.sql`](./enable_rls_policies.sql) in the Supabase SQL editor using the service role to enforce row-level security on `conversation_sessions` and `emotion_scores`.
 
 ## 📊 **API Endpoints**
 
@@ -166,15 +186,20 @@ Sophia includes a comprehensive RAG system with 20+ categories:
 
 ### **Authentication**
 - Discord OAuth via NextAuth.js
-- API key-based backend authentication
-- Rate limiting (60 requests/minute)
-- CORS configuration for cross-origin requests
+- API key-based backend authentication (enforced by middleware on every protected route)
+- Rate limiting via SlowAPI (configurable through `API_RATE_LIMIT`)
+- CORS configuration with explicit allow-list driven by `CORS_ALLOWED_ORIGINS`
 
 ### **GDPR Compliance**
 - Comprehensive consent modal with data processing disclosure
 - SHA256 hashed consent records with IP tracking
-- User data blocking until consent granted
+- User data blocking until consent granted (API endpoints require `X-Discord-Id` header with confirmed consent)
 - Consent withdrawal capability
+- Row-Level Security (RLS) policies on Supabase tables ensure users only access their own conversations; apply the SQL in [`enable_rls_policies.sql`](./enable_rls_policies.sql) when provisioning the database.
+
+### **Security & Observability Docs**
+- Review [SECURITY.md](./SECURITY.md) for responsible disclosure guidelines, dependency update cadence, and supported versions.
+- Consult [observability.md](./observability.md) to enable OpenTelemetry collection, inspect metrics, and interpret Grafana dashboards.
 
 ### **Data Protection**
 - Non-root Docker containers

@@ -1,1 +1,1 @@
-# Package initializer for app
+"""Sophia backend package exposing configuration, services, and LangGraph nodes."""

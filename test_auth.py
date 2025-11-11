@@ -1,3 +1,5 @@
+"""Smoke test for API-key authentication responses."""
+
 import requests
 
 # Test authentication

@@ -1,3 +1,5 @@
+"""Legacy Inworld TTS integration kept for compatibility testing."""
+
 import base64
 import requests
 from app.config import get_settings

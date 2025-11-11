@@ -1,3 +1,5 @@
+"""Legacy Mistral helper functions for transcription and response generation."""
+
 import base64
 from typing import List
 from mistralai import Mistral

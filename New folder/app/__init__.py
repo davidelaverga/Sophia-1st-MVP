@@ -1,1 +1,1 @@
-# Package initializer for app
+"""Legacy app package retained for backwards compatibility."""

@@ -1,3 +1,5 @@
+"""LangGraph state machine defining audio ingestion, intent analysis, response, and TTS nodes."""
+
 import base64
 import logging
 import time
