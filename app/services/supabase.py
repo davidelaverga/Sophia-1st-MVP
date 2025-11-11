@@ -24,87 +24,14 @@ load_dotenv(find_dotenv(), override=False)
 
 # Global Supabase client state
 _supabase: Optional[Client] = None
+_anon_supabase: Optional[Client] = None
 SUPABASE_BUCKET_AUDIO: str = "audio"
 SUPABASE_AUDIO_PREFIX: str = "uploads/"
 SUPABASE_SIGNED_URL_TTL: int = 3600
 SUPABASE_DB_DSN: Optional[str] = None
-_DEFAULT_USER_ID: Optional[str] = None
-
-ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 logger = logging.getLogger("sophia-backend")
 _supabase_tracer = trace.get_tracer("sophia.supabase")
-
-# Optional: direct SQL helpers if available
-try:
-    from app.services.db import (
-        insert_emotion_score_sql,
-        insert_conversation_session_sql,
-    )  # type: ignore
-except Exception:
-    insert_emotion_score_sql = None  # type: ignore
-    insert_conversation_session_sql = None  # type: ignore
-
-
-def _validate_uuid(value: str) -> Optional[str]:
-    try:
-        uuid.UUID(value)
-        return value
-    except Exception:
-        logger.warning("Invalid UUID supplied for Supabase operations: %s", value)
-        return None
-
-
-def user_uuid_from_discord(discord_id: Optional[str]) -> Optional[str]:
-    if not discord_id:
-        return None
-    namespace = uuid.uuid5(uuid.NAMESPACE_URL, "https://sophia.ai/discord")
-    return str(uuid.uuid5(namespace, discord_id.strip()))
-
-
-def _default_user_id(settings: Optional[Settings] = None) -> str:
-    """Return a reusable default user_id that is never the all-zero UUID."""
-
-    global _DEFAULT_USER_ID
-    if _DEFAULT_USER_ID:
-        return _DEFAULT_USER_ID
-
-    if settings is None:
-        settings = get_settings()
-
-    candidate = (settings.SUPABASE_DEFAULT_USER_ID or "").strip()
-    if candidate == ZERO_UUID:
-        logger.warning(
-            "Configured SUPABASE_DEFAULT_USER_ID is the zero UUID and will be ignored."
-        )
-        candidate = ""
-
-    candidate = _validate_uuid(candidate) if candidate else None
-
-    if not candidate:
-        candidate = str(uuid.uuid4())
-        logger.info(
-            "Generated fallback Supabase user_id %s for development flows.", candidate
-        )
-
-    _DEFAULT_USER_ID = candidate
-    return _DEFAULT_USER_ID
-
-
-def _resolve_user_id(user_id: Optional[str], discord_id: Optional[str] = None) -> str:
-    candidate = (user_id or "").strip()
-    if candidate == ZERO_UUID:
-        logger.warning(
-            "Received zero UUID for user_id; substituting default user identifier."
-        )
-        candidate = ""
-    candidate = _validate_uuid(candidate) if candidate else None
-    if candidate:
-        return candidate
-    derived = user_uuid_from_discord(discord_id)
-    if derived:
-        return derived
-    return _default_user_id()
 
 
 @contextmanager
@@ -125,12 +52,7 @@ def _supabase_span(name: str, **attrs):
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
 
-    global \
-        _supabase, \
-        SUPABASE_BUCKET_AUDIO, \
-        SUPABASE_AUDIO_PREFIX, \
-        SUPABASE_DB_DSN, \
-        SUPABASE_SIGNED_URL_TTL
+    global _supabase, _anon_supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN, SUPABASE_SIGNED_URL_TTL
     if _supabase is not None:
         return _supabase
 
@@ -148,10 +70,13 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
         1, int(getattr(settings, "SUPABASE_SIGNED_URL_TTL", 3600))
     )
     SUPABASE_DB_DSN = settings.SUPABASE_DB_DSN
-    _default_user_id(settings)
 
     with _supabase_span("supabase.init"):
         _supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        options = None
+        if ClientOptions is not None:
+            options = ClientOptions(persist_session=False)  # type: ignore[arg-type]
+        _anon_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options)
     return _supabase
 
 
@@ -163,14 +88,17 @@ def _service_supabase() -> Client:
 
 def _client_with_access_token(access_token: str) -> Client:
     settings = get_settings()
-    if ClientOptions is not None:
-        options = ClientOptions(headers={"Authorization": f"Bearer {access_token}"})  # type: ignore[arg-type]
-        client = create_client(
-            settings.SUPABASE_URL, settings.SUPABASE_KEY, options=options
-        )
-    else:  # pragma: no cover - fallback for older SDKs
-        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        postgrest_client = getattr(client, "postgrest", None)
+    global _anon_supabase
+    if _anon_supabase is None:
+        init_supabase(settings)
+    if _anon_supabase is None:
+        raise RuntimeError("Supabase anon client failed to initialize")
+
+    try:
+        _anon_supabase.auth.set_session(access_token, "")
+    except AttributeError:
+        # Fallback for older SDKs without auth helper
+        postgrest_client = getattr(_anon_supabase, "postgrest", None)
         if postgrest_client is None:
             raise RuntimeError(
                 "Supabase client is missing postgrest interface required for RLS queries."
@@ -182,7 +110,8 @@ def _client_with_access_token(access_token: str) -> Client:
                 "Supabase postgrest client session has no headers object."
             )
         headers["Authorization"] = f"Bearer {access_token}"
-    return client
+
+    return _anon_supabase
 
 
 def get_supabase(access_token: Optional[str] = None) -> Client:
@@ -253,22 +182,18 @@ def insert_emotion_score(
     session_id,
     role: str,
     emotion: Any,
-    user_id: str = None,
-    discord_id: Optional[str] = None,
+    user_id: str,
     access_token: Optional[str] = None,
 ) -> None:
-    """Insert a row into the emotion_scores table using the test user ID if none provided.
-
-    Note: This function will always use the test user ID if no user_id is provided.
+    """Insert a row into the emotion_scores table
     """
-    resolved_user_id = _resolve_user_id(user_id, discord_id)
 
     payload = {
         "session_id": str(session_id),
         "role": role,
         "label": getattr(emotion, "label", "neutral"),
         "confidence": float(getattr(emotion, "confidence", 0.5)),
-        "user_id": resolved_user_id,
+        "user_id": user_id,
     }
 
     client = get_supabase(access_token)
@@ -283,28 +208,11 @@ def insert_emotion_score(
 
         logging.warning(f"emotion_scores insert failed: {e}")
         # Don't raise the exception, just log it and continue
-    if not access_token and SUPABASE_DB_DSN and insert_emotion_score_sql:
-        try:
-            with _supabase_span(
-                "supabase.sql.insert_emotion_score",
-                session_id=str(session_id),
-                role=role,
-            ):
-                insert_emotion_score_sql(payload)
-            return
-        except Exception:
-            pass
 
 
-def insert_conversation_session(
-    data: Dict[str, Any], access_token: Optional[str] = None
-) -> None:
-    """Insert a conversation session row using SQL if DSN is set; otherwise REST.
-
-    Note: This function will always use the test user ID if no user_id is provided.
+def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str] = None) -> None:
+    """Insert a conversation session row using REST.
     """
-    discord_id = data.pop("discord_id", None)
-    data["user_id"] = _resolve_user_id(data.get("user_id"), discord_id)
 
     # Ensure all SQL parameters expected by insert_conversation_session_sql are present
     # If missing, provide sensible defaults.
@@ -324,18 +232,6 @@ def insert_conversation_session(
     data.setdefault("audio_url", None)
 
     client = get_supabase(access_token)
-
-    if not access_token and SUPABASE_DB_DSN and insert_conversation_session_sql:
-        try:
-            with _supabase_span(
-                "supabase.sql.insert_conversation", session_id=data.get("id")
-            ):
-                insert_conversation_session_sql(data)
-            return
-        except Exception as e:
-            import logging
-
-            logging.warning(f"SQL insert_conversation_session failed: {e}")
 
     # REST insert with clearer error surfacing
     try:

@@ -32,7 +32,7 @@ from app.deps import (
     verify_api_key,
     limiter,
     require_consent,
-    extract_user_id_from_token,
+    extract_identity_from_token,
 )
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
@@ -188,9 +188,6 @@ async def ws_voice(websocket: WebSocket):
     api_key = websocket.query_params.get("token") or websocket.headers.get(
         "Authorization"
     )
-    discord_id = websocket.query_params.get("discord_id") or websocket.headers.get(
-        "X-Discord-Id"
-    )
 
     logger.info(f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}")
 
@@ -206,9 +203,11 @@ async def ws_voice(websocket: WebSocket):
         await websocket.close(code=1008, reason=exc.detail)
         return
 
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
+
     try:
         require_consent(
-            request=None, x_discord_id=discord_id, supabase_token=supabase_token
+            request=None, discord_id=discord_id, supabase_token=supabase_token
         )
     except HTTPException as exc:
         await websocket.close(code=1008, reason=exc.detail)
@@ -229,7 +228,6 @@ async def ws_voice(websocket: WebSocket):
     last_final_text = ""
     last_reply_text = ""
     last_audio_url: Optional[str] = None
-    supabase_user_id = extract_user_id_from_token(supabase_token)
 
     session_id = str(uuid.uuid4())
     audio_queue = get_audio_queue_manager()
@@ -568,7 +566,6 @@ async def ws_voice(websocket: WebSocket):
                     "reply": last_reply_text,
                     "audio_url": last_audio_url or None,
                     "user_id": supabase_user_id,
-                    "discord_id": discord_id,
                 },
                 access_token=supabase_token,
             )
@@ -657,7 +654,6 @@ app.add_middleware(
         "Accept",
         "Origin",
         "X-Requested-With",
-        "X-Discord-Id",
         "X-Api-Key",
     ],
     expose_headers=["Authorization"],
@@ -802,12 +798,14 @@ async def transcribe(
         raise HTTPException(status_code=500, detail="Transcription failed")
 
     user_emotion = analyze_emotion_audio(wav_bytes)
+    supabase_user_id, _ = extract_identity_from_token(supabase_token)
 
     try:
         supabase_service.insert_emotion_score(
             session_id,
             role="user",
             emotion=user_emotion,
+            user_id=supabase_user_id,
             access_token=supabase_token,
         )
     except Exception:
@@ -870,6 +868,7 @@ async def synthesize(
     body: SynthesizeRequest,
     supabase_token: str = Depends(verify_api_key),
 ):
+    supabase_user_id, _ = extract_identity_from_token(supabase_token)
     try:
         audio_bytes = synthesize_inworld(body.text)
     except Exception:
@@ -892,6 +891,7 @@ async def synthesize(
             session_id,
             role="sophia",
             emotion=sophia_emotion,
+            user_id=supabase_user_id,
             access_token=supabase_token,
         )
     except Exception:
@@ -908,12 +908,7 @@ async def chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = (
-        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
-    )
-    user_id_for_db = supabase_user_id or resolved_user_id
+    supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     manager = shared_services.get_session_turn_manager()
     allowed_extensions = [
         ".wav",
@@ -1041,8 +1036,7 @@ async def chat(
                     "sophia_emotion_label": sophia_emotion.label,
                     "sophia_emotion_confidence": sophia_emotion.confidence,
                     "audio_url": audio_url or None,
-                    "user_id": user_id_for_db,
-                    "discord_id": discord_id,
+                    "user_id": supabase_user_id,
                 },
                 access_token=supabase_token,
             )
@@ -1051,7 +1045,7 @@ async def chat(
                     session_uuid,
                     role="user",
                     emotion=user_emotion,
-                    user_id=user_id_for_db,
+                    user_id=supabase_user_id,
                     discord_id=discord_id,
                     access_token=supabase_token,
                 )
@@ -1062,7 +1056,7 @@ async def chat(
                     session_uuid,
                     role="sophia",
                     emotion=sophia_emotion,
-                    user_id=user_id_for_db,
+                    user_id=supabase_user_id,
                     discord_id=discord_id,
                     access_token=supabase_token,
                 )
@@ -1090,12 +1084,7 @@ async def defi_chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = (
-        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
-    )
-    user_id_for_db = supabase_user_id or resolved_user_id
+    user_id, discord_id = extract_identity_from_token(supabase_token)
     allowed_extensions = [
         ".wav",
         ".webm",
@@ -1156,8 +1145,7 @@ async def defi_chat(
                         "audio_url": result["audio_url"] or None,
                         "intent": result["intent"],
                         "context_memory": str(result["context_memory"]),
-                        "user_id": user_id_for_db,
-                        "discord_id": discord_id,
+                        "user_id": user_id,
                     },
                     access_token=supabase_token,
                 )
@@ -1167,7 +1155,7 @@ async def defi_chat(
                         result["session_id"],
                         role="user",
                         emotion=type("E", (), result["user_emotion"])(),
-                        user_id=user_id_for_db,
+                        user_id=user_id,
                         discord_id=discord_id,
                         access_token=supabase_token,
                     )
@@ -1179,7 +1167,7 @@ async def defi_chat(
                         result["session_id"],
                         role="sophia",
                         emotion=type("E", (), result["sophia_emotion"])(),
-                        user_id=user_id_for_db,
+                        user_id=user_id,
                         discord_id=discord_id,
                         access_token=supabase_token,
                     )
@@ -1218,12 +1206,7 @@ async def defi_chat_stream(
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
     """
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = (
-        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
-    )
-    user_id_for_db = supabase_user_id or resolved_user_id
+    user_id, discord_id = extract_identity_from_token(supabase_token)
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat/stream"}
     if session_id:
@@ -1329,8 +1312,7 @@ async def defi_chat_stream(
                                 sophia_emotion.confidence if sophia_emotion else None
                             ),
                             "audio_url": audio_url or None,
-                            "user_id": user_id_for_db,
-                            "discord_id": discord_id,
+                            "user_id": user_id,
                         },
                         access_token=supabase_token,
                     )
@@ -1340,7 +1322,7 @@ async def defi_chat_stream(
                             session_id_local,
                             role="user",
                             emotion=user_emotion,
-                            user_id=user_id_for_db,
+                            user_id=user_id,
                             discord_id=discord_id,
                             access_token=supabase_token,
                         )
@@ -1353,7 +1335,7 @@ async def defi_chat_stream(
                                 session_id_local,
                                 role="sophia",
                                 emotion=sophia_emotion,
-                                user_id=user_id_for_db,
+                                user_id=user_id,
                                 discord_id=discord_id,
                                 access_token=supabase_token,
                             )
@@ -1405,12 +1387,7 @@ async def text_chat(
     consent_ok: None = Depends(require_consent),
 ):
     """Text-only chat endpoint for DeFi conversations"""
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
-    resolved_user_id = (
-        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
-    )
-    user_id_for_db = supabase_user_id or resolved_user_id
+    user_id, discord_id = extract_identity_from_token(supabase_token)
 
     session_identifier = body.session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/text-chat"}
@@ -1448,8 +1425,7 @@ async def text_chat(
                         "audio_url": result.get("audio_url") or None,
                         "intent": result.get("intent"),
                         "context_memory": str(result.get("context_memory")),
-                        "user_id": user_id_for_db,
-                        "discord_id": discord_id,
+                        "user_id": user_id,
                     },
                     access_token=supabase_token,
                 )
@@ -1459,7 +1435,7 @@ async def text_chat(
                         result["session_id"],
                         role="user",
                         emotion=type("E", (), result["user_emotion"])(),
-                        user_id=user_id_for_db,
+                        user_id=user_id,
                         discord_id=discord_id,
                         access_token=supabase_token,
                     )
@@ -1471,7 +1447,7 @@ async def text_chat(
                         result["session_id"],
                         role="sophia",
                         emotion=type("E", (), result["sophia_emotion"])(),
-                        user_id=user_id_for_db,
+                        user_id=user_id,
                         discord_id=discord_id,
                         access_token=supabase_token,
                     )
@@ -1507,8 +1483,7 @@ async def text_chat_stream(
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
     """
-    discord_id = request.headers.get("X-Discord-Id")
-    supabase_user_id = extract_user_id_from_token(supabase_token)
+    user_id, discord_id = extract_identity_from_token(supabase_token)
     session_identifier = body.session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/text-chat/stream"}
     if body.session_id:
@@ -1516,9 +1491,6 @@ async def text_chat_stream(
     if discord_id:
         metadata["discord_id"] = discord_id
     manager = shared_services.get_session_turn_manager()
-    supabase_user_id or (
-        supabase_service.user_uuid_from_discord(discord_id) if discord_id else None
-    )
 
     async def event_generator():
         async with manage_session_turn(
