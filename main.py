@@ -595,13 +595,13 @@ async def manage_session_turn(
 
 
 # OpenTelemetry setup
-resource = Resource.create(
-    {
-        "service.name": "sophia-backend",
-        "service.version": "1.0.0",
-        "deployment.environment": "staging",
-    }
-)
+# resource = Resource.create(
+#     {
+#         "service.name": "sophia-backend",
+#         "service.version": "1.0.0",
+#         "deployment.environment": "staging",
+#     }
+# )
 
 
 def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
