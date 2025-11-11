@@ -28,7 +28,6 @@ fly secrets set SUPABASE_URL="your_supabase_url"
 fly secrets set SUPABASE_KEY="your_supabase_key"
 fly secrets set SUPABASE_SERVICE_KEY="your_service_key"
 fly secrets set SUPABASE_DB_DSN="your_db_dsn"
-fly secrets set API_KEYS="staging-key-1,staging-key-2"
 fly secrets set OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
 fly secrets set OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic your_grafana_token"
 
@@ -70,7 +69,6 @@ vercel env add NEXT_PUBLIC_SUPABASE_URL
 vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
 vercel env add SUPABASE_SERVICE_ROLE_KEY
 vercel env add NEXT_PUBLIC_API_URL
-vercel env add NEXT_PUBLIC_API_KEY
 
 # Deploy
 vercel --prod
@@ -192,7 +190,6 @@ SUPABASE_URL=
 SUPABASE_KEY=
 SUPABASE_SERVICE_KEY=
 SUPABASE_DB_DSN=
-API_KEYS=
 OTEL_EXPORTER_OTLP_ENDPOINT=
 OTEL_EXPORTER_OTLP_HEADERS=
 ```
@@ -207,7 +204,6 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_API_URL=
-NEXT_PUBLIC_API_KEY=
 ```
 
 ## 🎯 Success Criteria

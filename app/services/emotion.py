@@ -17,21 +17,24 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
     try:
         # Lazy import to avoid hard dep if not installed in some envs
         from phoenix.evals import llm_classify
+
         try:
             from phoenix.evals import GoogleGenAIModel
         except Exception as e:
-            logger.info(f"Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: {e}")
+            logger.info(
+                f"Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: {e}"
+            )
             return None
         model = GoogleGenAIModel(model="gemini-2.5-flash")
-        settings = get_settings()
+        get_settings()
 
         result = llm_classify(
             llm=model,
             data=[{"input": text}],
             template=(
                 "Classify the overall sentiment of the INPUT as one of: positive, neutral, negative. "
-                "Return only the label.")
-            ,
+                "Return only the label."
+            ),
             label_schema={"positive", "neutral", "negative"},
         )
         # Phoenix may return a dict-like with labeled outputs; adapt safely
@@ -56,6 +59,7 @@ def _classify_with_llm(text: str) -> Emotion:
     try:
         from mistralai import Mistral
         import json
+
         settings = get_settings()
         if not settings.MISTRAL_API_KEY:
             return Emotion(label="neutral", confidence=0.5)
@@ -66,11 +70,14 @@ def _classify_with_llm(text: str) -> Emotion:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": (
-                            "Classify sentiment of the following text as one of: positive, neutral, negative. "
-                            "Respond with JSON: {\"label\": \"...\", \"confidence\": 0.0-1.0}. Text: "
-                            f"{text}"
-                        )}
+                        {
+                            "type": "text",
+                            "text": (
+                                "Classify sentiment of the following text as one of: positive, neutral, negative. "
+                                'Respond with JSON: {"label": "...", "confidence": 0.0-1.0}. Text: '
+                                f"{text}"
+                            ),
+                        }
                     ],
                 }
             ],
@@ -96,14 +103,14 @@ def _classify_with_llm(text: str) -> Emotion:
 def analyze_emotion_text(text: str) -> Emotion:
     # Define allowed emotion labels for database compatibility
     ALLOWED_LABELS = ["positive", "neutral", "negative"]
-    
+
     phoenix = _classify_with_phoenix(text)
     if phoenix:
         # Ensure label is in allowed list
         if phoenix.label not in ALLOWED_LABELS:
             phoenix.label = "neutral"
         return phoenix
-        
+
     result = _classify_with_llm(text)
     # Ensure label is in allowed list
     if result.label not in ALLOWED_LABELS:
@@ -114,7 +121,7 @@ def analyze_emotion_text(text: str) -> Emotion:
 def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
     """Classify emotion from audio using Phoenix Evals + Google Gemini.
     Requires GOOGLE_API_KEY in environment. Returns an Emotion model.
-    
+
     Note: The database has a check constraint requiring emotion labels to be
     one of: positive, neutral, negative
     """
@@ -124,24 +131,39 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
             return Emotion(label="neutral", confidence=0.5)
     except Exception:
         return Emotion(label="neutral", confidence=0.5)
-    
+
     try:
         import base64
         import pandas as pd
         from phoenix.evals import llm_classify
+
         try:
             from phoenix.evals import GoogleGenAIModel
-            from phoenix.evals.templates import ClassificationTemplate, PromptPartContentType, PromptPartTemplate
+            from phoenix.evals.templates import (
+                ClassificationTemplate,
+                PromptPartContentType,
+                PromptPartTemplate,
+            )
         except Exception as e:
-            logger.info(f"Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: {e}")
+            logger.info(
+                f"Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: {e}"
+            )
             return Emotion(label="neutral", confidence=0.5)
-        
+
         # Define emotion rails (categories)
         EMOTION_RAILS = [
-            "anger", "happiness", "excitement", "sadness", "neutral",
-            "frustration", "fear", "surprise", "disgust", "other"
+            "anger",
+            "happiness",
+            "excitement",
+            "sadness",
+            "neutral",
+            "frustration",
+            "fear",
+            "surprise",
+            "disgust",
+            "other",
         ]
-        
+
         # Create improved emotion template
         emotion_template = ClassificationTemplate(
             rails=EMOTION_RAILS,
@@ -188,7 +210,7 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         valid = [r.lower() for r in EMOTION_RAILS]
         if label not in valid:
             label = "neutral"
-            
+
         # Map emotion labels to database-allowed values (positive, neutral, negative)
         # This is required by the database check constraint
         emotion_mapping = {
@@ -201,14 +223,16 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
             "frustration": "negative",
             "fear": "negative",
             "disgust": "negative",
-            "other": "neutral"
+            "other": "neutral",
         }
-        
+
         # Map to allowed database values
         db_label = emotion_mapping.get(label, "neutral")
-        
+
         # Confidence not provided by default template; set midpoint
-        return Emotion(label=db_label, confidence=0.8)  # Higher confidence with improved template
+        return Emotion(
+            label=db_label, confidence=0.8
+        )  # Higher confidence with improved template
     except Exception as e:
         logger.warning(f"Audio emotion classification failed: {e}")
         return Emotion(label="neutral", confidence=0.5)

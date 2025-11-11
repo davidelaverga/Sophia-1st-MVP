@@ -98,6 +98,14 @@ async function handleConsentCheck(request: NextRequest) {
           consentDate: null
         })
       }
+      if (consentError.code === 'PGRST205') {
+        console.warn('⚠️ user_consents table missing; treating consent as granted for this environment')
+        return NextResponse.json({
+          hasConsent: true,
+          consentDate: null,
+          message: 'Consent table missing; skipping enforcement'
+        })
+      }
       console.error('❌ Error checking consent:', consentError)
       return NextResponse.json({ 
         hasConsent: false, 

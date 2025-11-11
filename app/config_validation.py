@@ -8,7 +8,11 @@ from app.config import Settings
 logger = logging.getLogger("sophia-backend")
 
 MANDATORY_VARS: Iterable[str] = ("SUPABASE_URL", "SUPABASE_KEY")
-PRODUCTION_ONLY_VARS: Iterable[str] = ("MISTRAL_API_KEY", "INWORLD_API_KEY", "GOOGLE_API_KEY")
+PRODUCTION_ONLY_VARS: Iterable[str] = (
+    "MISTRAL_API_KEY",
+    "INWORLD_API_KEY",
+    "GOOGLE_API_KEY",
+)
 ALLOWED_ENVIRONMENTS = {"development", "staging", "production"}
 
 
@@ -28,12 +32,16 @@ def validate_settings(settings: Settings) -> None:
     """
     env = getattr(settings, "ENVIRONMENT", "development").lower()
     if env not in ALLOWED_ENVIRONMENTS:
-        raise SystemExit(f"Invalid APP_ENV/ENVIRONMENT value '{env}'. Expected one of {sorted(ALLOWED_ENVIRONMENTS)}.")
+        raise SystemExit(
+            f"Invalid APP_ENV/ENVIRONMENT value '{env}'. Expected one of {sorted(ALLOWED_ENVIRONMENTS)}."
+        )
 
     missing_core = _collect_missing(settings, MANDATORY_VARS)
     if missing_core:
         missing = ", ".join(missing_core)
-        raise SystemExit(f"Missing required environment variables: {missing}. Please update .env before starting the service.")
+        raise SystemExit(
+            f"Missing required environment variables: {missing}. Please update .env before starting the service."
+        )
 
     if env == "production":
         missing_prod = _collect_missing(settings, PRODUCTION_ONLY_VARS)
@@ -42,13 +50,11 @@ def validate_settings(settings: Settings) -> None:
             raise SystemExit(
                 f"Production environment requires the following API keys to be configured: {missing}."
             )
-        if not settings.API_KEYS:
-            raise SystemExit("Production environment requires API_KEYS to be configured with at least one value.")
     else:
         # Warn about optional integrations so developers understand fallback behaviour.
         for name in PRODUCTION_ONLY_VARS:
             if not getattr(settings, name, None):
-                logger.warning("Optional config '%s' is not set; related functionality will use mock or degraded behaviour.", name)
-        if not settings.API_KEYS:
-            logger.warning("API_KEYS is empty in %s mode; ensure this is intentional before exposing the API.", env)
-
+                logger.warning(
+                    "Optional config '%s' is not set; related functionality will use mock or degraded behaviour.",
+                    name,
+                )

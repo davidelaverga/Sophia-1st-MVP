@@ -50,12 +50,14 @@ cd Sophia-1st-MVP
 cp .env.template .env
 # Edit .env with your API keys and service URLs
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (creates .venv/)
+uv sync
 
 # Run backend
-uvicorn main:app --reload
+uv run uvicorn main:app --reload
 ```
+
+If `uv` is not already installed, follow the [installation guide](https://docs.astral.sh/uv/getting-started/installation/) (for example `curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS/Linux).
 
 2. **Setup Frontend**
 ```bash
@@ -83,16 +85,31 @@ All configuration lives in environment variables. Use the provided [.env.templat
 
 - **Core settings:** `APP_ENV`, rate limiting, logging level.
 - **Supabase:** `SUPABASE_URL`, `SUPABASE_KEY`, optional `SUPABASE_DB_DSN`, and a non-zero `SUPABASE_DEFAULT_USER_ID`.
-- **API security:** `API_KEYS`, `CORS_ALLOWED_ORIGINS`, and paths that should remain public (`API_PUBLIC_PATHS`).
+- **API security:** Supabase access tokens are verified against the issuer JWKS at `<iss>/.well-known/jwks.json`; ensure the frontend forwards the `Authorization` header and configure `CORS_ALLOWED_ORIGINS` plus any public paths in `API_PUBLIC_PATHS`.
 - **AI providers:** Mistral, Inworld, Google (Gemini), OpenAI, and Anthropic keys as needed.
 - **Observability:** OTLP endpoint and headers for OpenTelemetry exporters.
 
-🚨 **Production note:** Every deployment must set `API_KEYS`, Supabase credentials, and the external AI keys the environment relies on. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
+🚨 **Production note:** Every deployment must provide Supabase credentials and external AI keys. Missing mandatory settings will prevent the backend from starting, as enforced by the startup validator.
+
+**Postgres driver tip:** When populating `SUPABASE_DB_DSN`, prefer the psycopg v3 dialect prefix so SQLAlchemy and Alembic stay on the modern driver. Example:
+
+```
+SUPABASE_DB_DSN="postgresql+psycopg://postgres:postgres@<host>:<port>/<database>"
+```
+
+If you omit the `+psycopg` suffix SQLAlchemy will fall back to `psycopg2`, which this project no longer installs.
+
+### **Supabase Database & Migrations**
+
+- Export a direct Postgres connection string from Supabase (`Settings → Database → Connection string`) and set it as `SUPABASE_DB_DSN` in your environment.
+- Apply the ORM-managed schema by running `alembic upgrade head`. The Alembic configuration automatically picks up `SUPABASE_DB_DSN` when invoked from the repo root.
+- Use the SQLAlchemy helpers in `app/db/session.py` (`session_scope`, `get_engine`, `get_session_factory`) whenever the backend needs ORM access to Supabase.
+- The declarative models in `app/db/models.py` mirror the SQL scripts in this repo (`users`, `conversation_sessions`, `emotion_scores`, `user_consents`). Regenerate migrations with `alembic revision --autogenerate -m "<message>"` after structural changes.
 
 ### **Testing & CI**
 
-- Run `pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.
-- A GitHub Actions workflow (`.github/workflows/ci.yml`) installs dependencies and runs `pytest` automatically on pushes and pull requests. Ensure new tests are deterministic and do not require external network access.
+- Run `uv run pytest` from the repository root to execute the backend test suite. Consent-dependent tests rely on the `SUPABASE_DEFAULT_USER_ID` value provided in `.env.template`.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`) uses `uv sync` followed by `uv run pytest` automatically on pushes and pull requests. Ensure new tests are deterministic and do not require external network access.
 - Automated dependency scanning is enabled via Dependabot (`.github/dependabot.yml`), generating weekly PRs for Python packages; treat security updates as high priority.
 
 ### **Production Deployment**

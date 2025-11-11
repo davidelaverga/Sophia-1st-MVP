@@ -14,7 +14,7 @@
 
 ## Dependency Management
 - Weekly Dependabot checks (configured via GitHub) keep Python packages current. Pull requests with security updates are triaged as High priority.
-- CI (`.github/workflows/ci.yml`) pins dependencies in `requirements.txt` and runs `pip install -r requirements.txt` plus `pytest` to detect regressions.
+- CI (`.github/workflows/ci.yml`) locks dependencies via `uv.lock`, installs them with `uv sync`, and executes `uv run pytest` to detect regressions.
 - Production images are rebuilt at least monthly to pick up OS-level patches.
 
 ## Vulnerability Handling

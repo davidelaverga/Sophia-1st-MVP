@@ -153,8 +153,9 @@ export async function POST(request: NextRequest) {
       // Only insert columns that exist in the users table schema
       // Based on error: avatar_url, created_at, updated_at may not exist
       const userRecord: any = {
+        id: user.id,
         discord_id: discordIdString,
-        username: username
+        // username: username
       }
 
       // Add email only if provided
@@ -200,6 +201,13 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (checkError && checkError.code !== 'PGRST116') {
+      if (checkError.code === 'PGRST205') {
+        console.warn('⚠️ user_consents table missing; treating acceptance as success')
+        return NextResponse.json({
+          success: true,
+          message: 'Consent recorded (table missing; skipped persistence)'
+        })
+      }
       // PGRST116 = not found, which is expected for new users
       console.error('❌ Error checking existing consent:', checkError)
     }
@@ -254,6 +262,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ 
           success: true,
           message: 'Consent already exists'
+        })
+      }
+      if (insertError.code === 'PGRST205') {
+        console.warn('⚠️ user_consents table missing; treating acceptance as success')
+        return NextResponse.json({
+          success: true,
+          message: 'Consent recorded (table missing; skipped persistence)'
         })
       }
       

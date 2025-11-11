@@ -40,7 +40,7 @@ Integrate Prometheus or Grafana Agent in Phase 1 to emit explicit counters and h
 ## Troubleshooting Playbook
 | Symptom | Likely Cause | Actions |
 | --- | --- | --- |
-| HTTP 401 on protected endpoints | Missing API key | Verify `Authorization` header and `API_KEYS` list in `.env`. |
+| HTTP 401 on protected endpoints | Missing/invalid Supabase JWT | Verify `Authorization` header and ensure JWKS (`<iss>/.well-known/jwks.json`) is reachable. |
 | HTTP 403 on chat endpoints | Consent missing | Confirm `X-Discord-Id` header, ensure Supabase consent row exists. |
 | High STT latency | Voxtral outage | Check `mistral` logs, fallbacks to Gemini; consider rate limiting adjustments. |
 | No traces in collector | OTLP misconfigured | Ensure endpoint/headers set; confirm collector reachable; check startup logs for validation errors. |
