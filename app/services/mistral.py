@@ -1,7 +1,6 @@
 """Mistral SDK integrations for transcription, text generation, and streaming replies."""
 
 import base64
-import io
 from typing import Callable, List, Optional
 from mistralai import Mistral
 from app.config import get_settings
@@ -66,6 +65,7 @@ def transcribe_audio_with_voxtral(
         file_name = f"audio{_detect_ext(wav_bytes)}"
         # Create a proper file-like object for Mistral SDK
         from mistralai.models import File
+
         file_obj = File(
             file_name=file_name,
             content=wav_bytes,
@@ -120,10 +120,14 @@ def transcribe_audio_with_voxtral(
                 gresp = model.generate_content([{"text": prompt}, audio_inline])
                 cancel()
                 gemini_text = (gresp.text or "").strip()
-                logger.info(f"Gemini transcription successful, text length: {len(gemini_text)}")
+                logger.info(
+                    f"Gemini transcription successful, text length: {len(gemini_text)}"
+                )
                 return gemini_text
             except Exception as e2:
-                logger.error(f"Gemini transcription fallback also failed: {type(e2).__name__}: {e2}")
+                logger.error(
+                    f"Gemini transcription fallback also failed: {type(e2).__name__}: {e2}"
+                )
                 pass
         logger.warning("All transcription methods failed, returning empty string")
         return ""

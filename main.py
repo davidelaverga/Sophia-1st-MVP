@@ -36,20 +36,24 @@ from app.deps import (
 )
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
-from app.services.emotion import analyze_emotion_audio
+from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.shared_services import shared_services
+from app.services.emotional_guidance import (
+    get_guidance as get_emotional_guidance,
+    build_emotion_guided_prompt,
+)
 from dotenv import load_dotenv
 
 # OpenTelemetry disabled for build simplicity
-# from opentelemetry import trace
-# from opentelemetry.sdk.resources import Resource
-# from opentelemetry.sdk.trace import TracerProvider
-# from opentelemetry.sdk.trace.export import BatchSpanProcessor
-# from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-# from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 load_dotenv()
 
@@ -189,7 +193,9 @@ async def ws_voice(websocket: WebSocket):
         "Authorization"
     )
 
-    logger.info(f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}")
+    logger.info(
+        f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}"
+    )
 
     if api_key and not api_key.lower().startswith("bearer "):
         api_key = f"Bearer {api_key}"
@@ -362,14 +368,22 @@ async def ws_voice(websocket: WebSocket):
                         tokens_sent = 0
                         turn_state.set_status("streaming")
                         try:
-                            async for tok in langgraph_service.stream_conversation_response(wav_utter):
+                            async for (
+                                tok
+                            ) in langgraph_service.stream_conversation_response(
+                                wav_utter
+                            ):
                                 cancel_check()
                                 if not tok:
                                     continue
                                 # Check if this is tier-0 classification result
                                 if isinstance(tok, dict) and tok.get("__tier0__"):
-                                    await _ws_send_json(websocket, {"type": "tier0_result", **tok})
-                                    logger.info(f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}")
+                                    await _ws_send_json(
+                                        websocket, {"type": "tier0_result", **tok}
+                                    )
+                                    logger.info(
+                                        f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}"
+                                    )
                                     continue
                                 reply_tokens.append(tok)
                                 await _ws_send_json(
@@ -629,15 +643,15 @@ def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
 
 
 # OpenTelemetry disabled for build simplicity
-# provider = TracerProvider(resource=resource)
-# otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
-# otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
-# if otlp_endpoint:
-#     otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
-#     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-# trace.set_tracer_provider(provider)
-# tracer = trace.get_tracer("sophia")
-# FastAPIInstrumentor.instrument_app(app)
+provider = TracerProvider(resource=resource)
+otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
+if otlp_endpoint:
+    otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+trace.set_tracer_provider(provider)
+tracer = trace.get_tracer("sophia")
+FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(APIKeyMiddleware, public_paths=settings.API_PUBLIC_PATHS)
 
@@ -1503,10 +1517,52 @@ async def text_chat_stream(
             try:
                 import json as _json
 
+                emotion_label = "neutral"
+                emotion_conf = 0.7
+                user_emotion_payload: Dict[str, Any] = {
+                    "label": emotion_label,
+                    "confidence": emotion_conf,
+                }
+
+                try:
+                    user_emotion = infer_text_emotion(body.message)
+                    user_emotion_payload = user_emotion.model_dump()
+                    emotion_label = user_emotion.label
+                    emotion_conf = float(user_emotion.confidence)
+                except Exception as emotion_error:
+                    logger.warning(
+                        "Text chat stream emotion detection failed: %s", emotion_error
+                    )
+
+                emotion_guidance: Sequence[str] = []
+
+                try:
+                    emotion_guidance = get_emotional_guidance(emotion_label)
+                    if emotion_guidance:
+                        preview = "; ".join(emotion_guidance[:2])
+                        logger.info(
+                            "Text chat stream guidance for %s: %s%s",
+                            emotion_label,
+                            preview,
+                            "..." if len(emotion_guidance) > 2 else "",
+                        )
+                except Exception as guidance_error:
+                    logger.warning(
+                        "Text chat stream guidance lookup failed: %s", guidance_error
+                    )
+                    emotion_guidance = []
+
+                guided_prompt = build_emotion_guided_prompt(
+                    body.message,
+                    emotion_label,
+                    emotion_conf,
+                    emotion_guidance,
+                )
+
                 turn_state.set_status("streaming")
                 reply_accum = []
                 for chunk in mistral_service.stream_generate_llm_reply(
-                    body.message,
+                    guided_prompt,
                     cancel_check=cancel_check,
                 ):
                     cancel_check()
@@ -1517,7 +1573,8 @@ async def text_chat_stream(
                     yield f"event: token\ndata: {safe_chunk}\n\n"
 
                 reply = "".join(reply_accum).strip()
-                yield f"event: reply_done\ndata: {_json.dumps({'reply': reply})}\n\n"
+                reply_payload = {"reply": reply, "user_emotion": user_emotion_payload}
+                yield f"event: reply_done\ndata: {_json.dumps(reply_payload)}\n\n"
 
                 turn_state.set_status("synthesizing")
                 cancel_check()
@@ -1554,6 +1611,7 @@ async def text_chat_stream(
                         sophia_emotion.model_dump() if sophia_emotion else None
                     ),
                     "mock_audio": mock_audio,
+                    "user_emotion": user_emotion_payload,
                 }
                 turn_state.set_status("completed")
                 yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"

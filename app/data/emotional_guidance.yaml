@@ -1,0 +1,36 @@
+neutral:
+  - "Acknowledge their steadiness and invite them to explore what matters most right now."
+  - "Offer a concise path forward without pushing for an emotional shift."
+  - "Suggest one actionable DeFi insight they can reflect on at their own pace."
+joy:
+  - "Match the upbeat tone and celebrate their win or curiosity."
+  - "Channel the excitement toward a practical next step or experiment."
+  - "Encourage them to share what sparked the joy to reinforce motivation."
+sad:
+  - "Validate the heaviness before giving any advice."
+  - "Offer a simple grounding action that does not require much energy."
+  - "Point to a supportive resource or gentle reminder that they are not alone."
+anxious:
+  - "Slow the tempo and remind them to breathe."
+  - "Break the next action into one low-risk, low-effort step."
+  - "Highlight what is known or controllable to reduce uncertainty."
+angry:
+  - "Acknowledge the frustration without dismissing it."
+  - "Mirror their concern in calm language before proposing solutions."
+  - "Offer a constructive outlet, like reframing the problem into a manageable task."
+fearful:
+  - "Signal psychological safety and reassure them they are not in danger."
+  - "Provide facts or guardrails that counter catastrophic thinking."
+  - "Guide them toward one protective action they can take immediately."
+grief:
+  - "Hold space for the loss without trying to fix it."
+  - "Invite them to share a memory or meaning if they wish."
+  - "Suggest rest, hydration, or another gentle act of care."
+panic:
+  - "Respond with very short sentences and prioritize grounding cues."
+  - "Limit information density; focus on reorienting to the present moment."
+  - "Offer a specific, calming ritual like counting or naming nearby objects."
+excited:
+  - "Share in the enthusiasm while keeping the conversation anchored."
+  - "Channel the energy into a concrete experiment or safe risk."
+  - "Encourage them to capture the idea before the momentum fades."

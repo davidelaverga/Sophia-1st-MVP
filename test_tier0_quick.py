@@ -12,12 +12,14 @@ CRISIS_PATTERNS = [
     r"\b(better.*if.*died|end.*it.*all|take.*my.*life)\b",
 ]
 
+
 def _detect_crisis(text: str) -> bool:
     text_lower = text.lower()
     for pattern in CRISIS_PATTERNS:
         if re.search(pattern, text_lower, re.IGNORECASE):
             return True
     return False
+
 
 # Test data
 CRISIS_PHRASES = [
@@ -32,6 +34,7 @@ NON_CRISIS_PHRASES = [
     "I'm feeling happy",
     "What is DeFi?",
 ]
+
 
 def test_crisis_detection():
     print("🧪 Testing crisis detection...")
@@ -52,6 +55,7 @@ def test_crisis_detection():
 
     print("✅ Crisis detection tests passed!\n")
 
+
 def test_performance():
     print("⚡ Testing performance...")
 
@@ -70,6 +74,7 @@ def test_performance():
 
     assert p95 < 1.0, f"P95 latency {p95:.3f}ms exceeds 1ms"
     print("✅ Performance test passed (< 1ms)!\n")
+
 
 if __name__ == "__main__":
     test_crisis_detection()

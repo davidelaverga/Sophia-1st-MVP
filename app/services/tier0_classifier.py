@@ -11,7 +11,10 @@ import time
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
-from mistralai import Mistral
+try:
+    from mistralai import Mistral
+except ImportError:  # pragma: no cover - optional dependency for fast path
+    Mistral = None
 from app.config import get_settings
 
 logger = logging.getLogger("sophia-backend")
@@ -47,6 +50,7 @@ CRISIS_PATTERNS = [
 @dataclass
 class ClassificationResult:
     """Result of tier-0 classification"""
+
     type: str  # intent type
     emotion: str  # emotion label
     confidence: float  # classification confidence (0-1)
@@ -59,6 +63,8 @@ class ClassificationResult:
 
 def _get_mistral_client() -> Mistral:
     """Get Mistral API client"""
+    if Mistral is None:
+        raise RuntimeError("mistralai SDK is not installed")
     settings = get_settings()
     if not settings.MISTRAL_API_KEY:
         raise RuntimeError("MISTRAL_API_KEY is not set")
@@ -75,7 +81,9 @@ def _detect_crisis(text: str) -> bool:
     return False
 
 
-def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = None) -> Tuple[str, str, float]:
+def _rule_based_classify(
+    transcript: str, prosody: Optional[Dict[str, Any]] = None
+) -> Tuple[str, str, float]:
     """Rule-based intent and emotion classification (< 1ms fallback).
 
     Returns: (intent, emotion, confidence)
@@ -84,17 +92,107 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
 
     # 1. Crisis detection (highest priority)
     if _detect_crisis(transcript):
-        emotion = EMOTION_PANIC if prosody and prosody.get("intensity", 0) > 0.7 else EMOTION_ANXIOUS
+        emotion = (
+            EMOTION_PANIC
+            if prosody and prosody.get("intensity", 0) > 0.7
+            else EMOTION_ANXIOUS
+        )
         return INTENT_CRISIS, emotion, 0.95
 
     # 2. Detect emotions first (before intent detection)
     emotion_keywords = {
-        EMOTION_SAD: ["sad", "depressed", "down", "upset", "unhappy", "lonely", "miserable", "blue", "heartbroken", "feeling sad", "feel sad", "i'm sad", "грустн", "печал", "тоск", "одинок"],
-        EMOTION_ANXIOUS: ["worried", "anxious", "stressed", "nervous", "concerned", "uneasy", "tense", "overwhelmed", "feeling anxious", "feel worried", "i'm worried", "тревож", "беспоко", "волну"],
-        EMOTION_ANGRY: ["angry", "mad", "furious", "annoyed", "frustrated", "irritated", "pissed", "enraged", "feeling angry", "feel angry", "i'm angry", "злой", "раздраж", "бесит"],
-        EMOTION_FEARFUL: ["scared", "afraid", "terrified", "frightened", "fearful", "panicked", "feeling scared", "feel afraid", "i'm scared", "страшн", "боюсь"],
-        EMOTION_JOY: ["happy", "joyful", "glad", "cheerful", "delighted", "pleased", "excited", "thrilled", "feeling happy", "feel happy", "i'm happy", "радост", "счастлив", "весел"],
-        EMOTION_EXCITED: ["excited", "thrilled", "pumped", "energized", "enthusiastic", "eager", "feeling excited", "feel excited", "i'm excited", "взволнован", "воодушевл"],
+        EMOTION_SAD: [
+            "sad",
+            "depressed",
+            "down",
+            "upset",
+            "unhappy",
+            "lonely",
+            "miserable",
+            "blue",
+            "heartbroken",
+            "feeling sad",
+            "feel sad",
+            "i'm sad",
+            "грустн",
+            "печал",
+            "тоск",
+            "одинок",
+        ],
+        EMOTION_ANXIOUS: [
+            "worried",
+            "anxious",
+            "stressed",
+            "nervous",
+            "concerned",
+            "uneasy",
+            "tense",
+            "overwhelmed",
+            "feeling anxious",
+            "feel worried",
+            "i'm worried",
+            "тревож",
+            "беспоко",
+            "волну",
+        ],
+        EMOTION_ANGRY: [
+            "angry",
+            "mad",
+            "furious",
+            "annoyed",
+            "frustrated",
+            "irritated",
+            "pissed",
+            "enraged",
+            "feeling angry",
+            "feel angry",
+            "i'm angry",
+            "злой",
+            "раздраж",
+            "бесит",
+        ],
+        EMOTION_FEARFUL: [
+            "scared",
+            "afraid",
+            "terrified",
+            "frightened",
+            "fearful",
+            "panicked",
+            "feeling scared",
+            "feel afraid",
+            "i'm scared",
+            "страшн",
+            "боюсь",
+        ],
+        EMOTION_JOY: [
+            "happy",
+            "joyful",
+            "glad",
+            "cheerful",
+            "delighted",
+            "pleased",
+            "excited",
+            "thrilled",
+            "feeling happy",
+            "feel happy",
+            "i'm happy",
+            "радост",
+            "счастлив",
+            "весел",
+        ],
+        EMOTION_EXCITED: [
+            "excited",
+            "thrilled",
+            "pumped",
+            "energized",
+            "enthusiastic",
+            "eager",
+            "feeling excited",
+            "feel excited",
+            "i'm excited",
+            "взволнован",
+            "воодушевл",
+        ],
     }
 
     detected_emotion = EMOTION_NEUTRAL
@@ -112,11 +210,22 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
             detected_emotion = EMOTION_PANIC
 
     # 3. Intent detection (using detected emotion)
-    # 3a. Greeting detection
-    greet_patterns = [
-        r"\b(hi|hello|hey|привет|здравствуй|добр.*день|добр.*утро|добр.*вечер)\b",
+    # 3a. Greeting detection (English + Russian variants)
+    greeting_patterns = [
+        r"\b(hi|hello|hey|yo|sup|greetings)\b",
+        r"\b(good\s+(?:morning|afternoon|evening|day))\b",
+        r"\b(привет|здраст[вуйте]*|здравств[уйте]*)\b",
+        r"\b(доброе?\s+утро|добры[йе]\s+день|добры[йе]\s+вечер|доброй\s+ночи)\b",
     ]
-    is_greeting = any(re.search(p, text_lower) for p in greet_patterns)
+    greeting_terms = [
+        "доброе утро",
+        "добрый день",
+        "добрый вечер",
+        "доброй ночи",
+    ]
+    is_greeting = any(
+        re.search(pattern, text_lower) for pattern in greeting_patterns
+    ) or any(term in text_lower for term in greeting_terms)
 
     # 3b. Check if there are emotional keywords
     has_emotion = max_emotion_score > 0
@@ -133,9 +242,31 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
 
     # 4. Knowledge/DeFi question detection
     knowledge_keywords = [
-        "what", "how", "why", "explain", "tell",
-        "defi", "yield", "staking", "token", "blockchain", "ethereum",
-        "что", "как", "почему", "объясни", "расскажи",
+        "what",
+        "how",
+        "why",
+        "explain",
+        "tell",
+        "defi",
+        "yield",
+        "staking",
+        "стейкинг",
+        "token",
+        "tokenomics",
+        "blockchain",
+        "блокчейн",
+        "ethereum",
+        "liquidity",
+        "liquidity pool",
+        "smart contract",
+        "смарт контракт",
+        "crypto",
+        "крипт",
+        "что",
+        "как",
+        "почему",
+        "объясни",
+        "расскажи",
     ]
     if any(kw in text_lower for kw in knowledge_keywords):
         return INTENT_KNOWLEDGE, EMOTION_NEUTRAL, 0.70
@@ -144,7 +275,9 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
     return INTENT_CASUAL, EMOTION_NEUTRAL, 0.60
 
 
-async def _llm_classify(transcript: str, timeout_ms: int = 500) -> Tuple[str, str, float]:
+async def _llm_classify(
+    transcript: str, timeout_ms: int = 500
+) -> Tuple[str, str, float]:
     """LLM-based classification using Mistral Small with timeout.
 
     Returns: (intent, emotion, confidence)
@@ -169,8 +302,7 @@ Respond ONLY in this JSON format:
 
     client = _get_mistral_client()
 
-    # Use asyncio.wait_for to enforce timeout
-    async def _call_mistral():
+    def _invoke() -> Tuple[str, str, float]:
         response = client.chat.complete(
             model="mistral-small-latest",  # Fast model
             messages=[{"role": "user", "content": prompt}],
@@ -184,18 +316,17 @@ Respond ONLY in this JSON format:
 
         # Parse JSON response
         import json
+
         if not content or not content.strip():
             raise ValueError("Empty response from Mistral API")
         result = json.loads(content.strip())
         return result["intent"], result["emotion"], result["confidence"]
 
-    return await asyncio.wait_for(_call_mistral(), timeout=timeout_ms / 1000.0)
+    return await asyncio.to_thread(_invoke)
 
 
 async def classify_tier0_fast(
-    transcript: str,
-    prosody: Optional[Dict[str, Any]] = None,
-    timeout_ms: int = 500
+    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
 ) -> ClassificationResult:
     """Ultra-fast tier-0 classification with Mistral Small + rule-based fallback.
 
@@ -226,13 +357,18 @@ async def classify_tier0_fast(
     # Try LLM classification first
     try:
         logger.info(f"Tier-0: Attempting LLM classification (timeout={timeout_ms}ms)")
-        intent, emotion, confidence = await _llm_classify(transcript, timeout_ms)
+        intent, emotion, confidence = await asyncio.wait_for(
+            _llm_classify(transcript, timeout_ms),
+            timeout=timeout_ms / 1000.0,
+        )
 
         # Adjust emotion based on prosody
         if prosody and prosody.get("intensity", 0) > 0.8:
             if emotion == EMOTION_ANXIOUS:
                 emotion = EMOTION_PANIC
-                logger.info("Tier-0: Adjusted emotion anxious → panic (high prosody intensity)")
+                logger.info(
+                    "Tier-0: Adjusted emotion anxious → panic (high prosody intensity)"
+                )
 
         latency_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
@@ -242,7 +378,9 @@ async def classify_tier0_fast(
 
     except asyncio.TimeoutError:
         # Timeout - use rule-based fallback
-        logger.warning(f"Tier-0: LLM timeout ({timeout_ms}ms), using rule-based fallback")
+        logger.warning(
+            f"Tier-0: LLM timeout ({timeout_ms}ms), using rule-based fallback"
+        )
         fallback_used = True
         intent, emotion, confidence = _rule_based_classify(transcript, prosody)
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -257,7 +395,11 @@ async def classify_tier0_fast(
     # Double-check for crisis in fallback mode (safety net)
     if fallback_used and _detect_crisis(transcript):
         intent = INTENT_CRISIS
-        emotion = EMOTION_PANIC if prosody and prosody.get("intensity", 0) > 0.7 else EMOTION_ANXIOUS
+        emotion = (
+            EMOTION_PANIC
+            if prosody and prosody.get("intensity", 0) > 0.7
+            else EMOTION_ANXIOUS
+        )
         confidence = 0.95
         logger.warning("Tier-0: Crisis detected in fallback mode")
 
@@ -269,27 +411,32 @@ async def classify_tier0_fast(
         voice_signal_present=voice_signal_present,
         latency_ms=latency_ms,
         fallback_used=fallback_used,
-        source="rule_based_fallback" if fallback_used else "mistral_llm"
+        source="rule_based_fallback" if fallback_used else "mistral_llm",
     )
 
 
 # Synchronous wrapper for compatibility
 def classify_tier0_fast_sync(
-    transcript: str,
-    prosody: Optional[Dict[str, Any]] = None,
-    timeout_ms: int = 500
+    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
 ) -> Dict[str, Any]:
     """Synchronous wrapper for classify_tier0_fast().
 
     Returns dict with keys: type, emotion, confidence, asr_confidence,
                             voice_signal_present, latency_ms, fallback_used
     """
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(
-        classify_tier0_fast(transcript, prosody, timeout_ms)
-    )
+    coro = classify_tier0_fast(transcript, prosody, timeout_ms)
+    try:
+        result = asyncio.run(coro)
+    except RuntimeError as err:
+        if "asyncio.run()" not in str(err):
+            raise
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
     return {
         "type": result.type,
