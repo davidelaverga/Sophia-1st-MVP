@@ -3,14 +3,17 @@
 import os
 from functools import lru_cache
 from typing import Optional, List
+
 try:
     from dotenv import load_dotenv, find_dotenv
 except ImportError:  # pragma: no cover - optional in some test environments
+
     def load_dotenv(*_args, **_kwargs):
         return False
 
     def find_dotenv(*_args, **_kwargs):
         return ""
+
 
 # Load .env as early as possible so Settings reads populated values.
 # find_dotenv() will search parent directories to locate the .env file.

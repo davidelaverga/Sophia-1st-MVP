@@ -137,8 +137,6 @@ def _looks_like_audio(payload: bytes) -> bool:
     return any(b for b in payload[:512])
 
 
-
-
 # ==========================
 # Live Mode: WebSocket Voice
 # ==========================
@@ -198,7 +196,9 @@ async def ws_voice(websocket: WebSocket):
         "X-Discord-Id"
     )
 
-    logger.info(f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}")
+    logger.info(
+        f"🔌 WebSocket /ws/voice request: discord_id={discord_id}, has_token={bool(api_key)}"
+    )
 
     if api_key and not api_key.lower().startswith("bearer "):
         api_key = f"Bearer {api_key}"
@@ -370,14 +370,22 @@ async def ws_voice(websocket: WebSocket):
                         tokens_sent = 0
                         turn_state.set_status("streaming")
                         try:
-                            async for tok in langgraph_service.stream_conversation_response(wav_utter):
+                            async for (
+                                tok
+                            ) in langgraph_service.stream_conversation_response(
+                                wav_utter
+                            ):
                                 cancel_check()
                                 if not tok:
                                     continue
                                 # Check if this is tier-0 classification result
                                 if isinstance(tok, dict) and tok.get("__tier0__"):
-                                    await _ws_send_json(websocket, {"type": "tier0_result", **tok})
-                                    logger.info(f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}")
+                                    await _ws_send_json(
+                                        websocket, {"type": "tier0_result", **tok}
+                                    )
+                                    logger.info(
+                                        f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}"
+                                    )
                                     continue
                                 reply_tokens.append(tok)
                                 await _ws_send_json(

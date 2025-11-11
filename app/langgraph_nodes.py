@@ -844,7 +844,7 @@ class SophiaLangGraph:
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
-             "emotion_guidance": [],
+            "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral_large": False,  # Will be set by AudioIngestor
             "supabase_token": supabase_token,

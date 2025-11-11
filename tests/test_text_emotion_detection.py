@@ -4,7 +4,9 @@ try:
     from app.services.emotion import Emotion, infer_text_emotion
 except ModuleNotFoundError as exc:
     if exc.name == "pydantic":
-        pytest.skip("pydantic is required for text emotion tests", allow_module_level=True)
+        pytest.skip(
+            "pydantic is required for text emotion tests", allow_module_level=True
+        )
     raise
 
 try:

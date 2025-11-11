@@ -50,6 +50,7 @@ CRISIS_PATTERNS = [
 @dataclass
 class ClassificationResult:
     """Result of tier-0 classification"""
+
     type: str  # intent type
     emotion: str  # emotion label
     confidence: float  # classification confidence (0-1)
@@ -80,7 +81,9 @@ def _detect_crisis(text: str) -> bool:
     return False
 
 
-def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = None) -> Tuple[str, str, float]:
+def _rule_based_classify(
+    transcript: str, prosody: Optional[Dict[str, Any]] = None
+) -> Tuple[str, str, float]:
     """Rule-based intent and emotion classification (< 1ms fallback).
 
     Returns: (intent, emotion, confidence)
@@ -89,17 +92,107 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
 
     # 1. Crisis detection (highest priority)
     if _detect_crisis(transcript):
-        emotion = EMOTION_PANIC if prosody and prosody.get("intensity", 0) > 0.7 else EMOTION_ANXIOUS
+        emotion = (
+            EMOTION_PANIC
+            if prosody and prosody.get("intensity", 0) > 0.7
+            else EMOTION_ANXIOUS
+        )
         return INTENT_CRISIS, emotion, 0.95
 
     # 2. Detect emotions first (before intent detection)
     emotion_keywords = {
-        EMOTION_SAD: ["sad", "depressed", "down", "upset", "unhappy", "lonely", "miserable", "blue", "heartbroken", "feeling sad", "feel sad", "i'm sad", "грустн", "печал", "тоск", "одинок"],
-        EMOTION_ANXIOUS: ["worried", "anxious", "stressed", "nervous", "concerned", "uneasy", "tense", "overwhelmed", "feeling anxious", "feel worried", "i'm worried", "тревож", "беспоко", "волну"],
-        EMOTION_ANGRY: ["angry", "mad", "furious", "annoyed", "frustrated", "irritated", "pissed", "enraged", "feeling angry", "feel angry", "i'm angry", "злой", "раздраж", "бесит"],
-        EMOTION_FEARFUL: ["scared", "afraid", "terrified", "frightened", "fearful", "panicked", "feeling scared", "feel afraid", "i'm scared", "страшн", "боюсь"],
-        EMOTION_JOY: ["happy", "joyful", "glad", "cheerful", "delighted", "pleased", "excited", "thrilled", "feeling happy", "feel happy", "i'm happy", "радост", "счастлив", "весел"],
-        EMOTION_EXCITED: ["excited", "thrilled", "pumped", "energized", "enthusiastic", "eager", "feeling excited", "feel excited", "i'm excited", "взволнован", "воодушевл"],
+        EMOTION_SAD: [
+            "sad",
+            "depressed",
+            "down",
+            "upset",
+            "unhappy",
+            "lonely",
+            "miserable",
+            "blue",
+            "heartbroken",
+            "feeling sad",
+            "feel sad",
+            "i'm sad",
+            "грустн",
+            "печал",
+            "тоск",
+            "одинок",
+        ],
+        EMOTION_ANXIOUS: [
+            "worried",
+            "anxious",
+            "stressed",
+            "nervous",
+            "concerned",
+            "uneasy",
+            "tense",
+            "overwhelmed",
+            "feeling anxious",
+            "feel worried",
+            "i'm worried",
+            "тревож",
+            "беспоко",
+            "волну",
+        ],
+        EMOTION_ANGRY: [
+            "angry",
+            "mad",
+            "furious",
+            "annoyed",
+            "frustrated",
+            "irritated",
+            "pissed",
+            "enraged",
+            "feeling angry",
+            "feel angry",
+            "i'm angry",
+            "злой",
+            "раздраж",
+            "бесит",
+        ],
+        EMOTION_FEARFUL: [
+            "scared",
+            "afraid",
+            "terrified",
+            "frightened",
+            "fearful",
+            "panicked",
+            "feeling scared",
+            "feel afraid",
+            "i'm scared",
+            "страшн",
+            "боюсь",
+        ],
+        EMOTION_JOY: [
+            "happy",
+            "joyful",
+            "glad",
+            "cheerful",
+            "delighted",
+            "pleased",
+            "excited",
+            "thrilled",
+            "feeling happy",
+            "feel happy",
+            "i'm happy",
+            "радост",
+            "счастлив",
+            "весел",
+        ],
+        EMOTION_EXCITED: [
+            "excited",
+            "thrilled",
+            "pumped",
+            "energized",
+            "enthusiastic",
+            "eager",
+            "feeling excited",
+            "feel excited",
+            "i'm excited",
+            "взволнован",
+            "воодушевл",
+        ],
     }
 
     detected_emotion = EMOTION_NEUTRAL
@@ -130,9 +223,9 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
         "добрый вечер",
         "доброй ночи",
     ]
-    is_greeting = any(re.search(pattern, text_lower) for pattern in greeting_patterns) or any(
-        term in text_lower for term in greeting_terms
-    )
+    is_greeting = any(
+        re.search(pattern, text_lower) for pattern in greeting_patterns
+    ) or any(term in text_lower for term in greeting_terms)
 
     # 3b. Check if there are emotional keywords
     has_emotion = max_emotion_score > 0
@@ -182,7 +275,9 @@ def _rule_based_classify(transcript: str, prosody: Optional[Dict[str, Any]] = No
     return INTENT_CASUAL, EMOTION_NEUTRAL, 0.60
 
 
-async def _llm_classify(transcript: str, timeout_ms: int = 500) -> Tuple[str, str, float]:
+async def _llm_classify(
+    transcript: str, timeout_ms: int = 500
+) -> Tuple[str, str, float]:
     """LLM-based classification using Mistral Small with timeout.
 
     Returns: (intent, emotion, confidence)
@@ -221,6 +316,7 @@ Respond ONLY in this JSON format:
 
         # Parse JSON response
         import json
+
         if not content or not content.strip():
             raise ValueError("Empty response from Mistral API")
         result = json.loads(content.strip())
@@ -230,9 +326,7 @@ Respond ONLY in this JSON format:
 
 
 async def classify_tier0_fast(
-    transcript: str,
-    prosody: Optional[Dict[str, Any]] = None,
-    timeout_ms: int = 500
+    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
 ) -> ClassificationResult:
     """Ultra-fast tier-0 classification with Mistral Small + rule-based fallback.
 
@@ -272,7 +366,9 @@ async def classify_tier0_fast(
         if prosody and prosody.get("intensity", 0) > 0.8:
             if emotion == EMOTION_ANXIOUS:
                 emotion = EMOTION_PANIC
-                logger.info("Tier-0: Adjusted emotion anxious → panic (high prosody intensity)")
+                logger.info(
+                    "Tier-0: Adjusted emotion anxious → panic (high prosody intensity)"
+                )
 
         latency_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
@@ -282,7 +378,9 @@ async def classify_tier0_fast(
 
     except asyncio.TimeoutError:
         # Timeout - use rule-based fallback
-        logger.warning(f"Tier-0: LLM timeout ({timeout_ms}ms), using rule-based fallback")
+        logger.warning(
+            f"Tier-0: LLM timeout ({timeout_ms}ms), using rule-based fallback"
+        )
         fallback_used = True
         intent, emotion, confidence = _rule_based_classify(transcript, prosody)
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -297,7 +395,11 @@ async def classify_tier0_fast(
     # Double-check for crisis in fallback mode (safety net)
     if fallback_used and _detect_crisis(transcript):
         intent = INTENT_CRISIS
-        emotion = EMOTION_PANIC if prosody and prosody.get("intensity", 0) > 0.7 else EMOTION_ANXIOUS
+        emotion = (
+            EMOTION_PANIC
+            if prosody and prosody.get("intensity", 0) > 0.7
+            else EMOTION_ANXIOUS
+        )
         confidence = 0.95
         logger.warning("Tier-0: Crisis detected in fallback mode")
 
@@ -309,15 +411,13 @@ async def classify_tier0_fast(
         voice_signal_present=voice_signal_present,
         latency_ms=latency_ms,
         fallback_used=fallback_used,
-        source="rule_based_fallback" if fallback_used else "mistral_llm"
+        source="rule_based_fallback" if fallback_used else "mistral_llm",
     )
 
 
 # Synchronous wrapper for compatibility
 def classify_tier0_fast_sync(
-    transcript: str,
-    prosody: Optional[Dict[str, Any]] = None,
-    timeout_ms: int = 500
+    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
 ) -> Dict[str, Any]:
     """Synchronous wrapper for classify_tier0_fast().
 

@@ -72,9 +72,7 @@ def test_service_failure_falls_back_to_yaml():
 
 
 def test_format_guidance_block_outputs_bullets():
-    block = format_guidance_block(
-        ["Validate feelings", "", "Offer next step", "  "]
-    )
+    block = format_guidance_block(["Validate feelings", "", "Offer next step", "  "])
     assert block.startswith("Emotion guidance cues:")
     assert "- Validate feelings" in block
     assert block.count("\n- ") == 2

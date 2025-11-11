@@ -7,8 +7,7 @@ Verifies P95 latency ≤ 700ms and fallback behavior.
 import pytest
 import asyncio
 import time
-from unittest.mock import patch, MagicMock
-from typing import List
+from unittest.mock import patch
 
 from app.services.tier0_classifier import (
     classify_tier0_fast,
@@ -111,6 +110,7 @@ KNOWLEDGE_PHRASES = [
 # Crisis Detection Tests
 # ========================================
 
+
 def test_crisis_detection():
     """Test crisis phrase detection works correctly"""
     for phrase in CRISIS_PHRASES:
@@ -127,13 +127,16 @@ def test_crisis_classification_in_fallback():
     for phrase in CRISIS_PHRASES:
         intent, emotion, confidence = _rule_based_classify(phrase)
         assert intent == INTENT_CRISIS, f"Failed to classify as crisis: {phrase}"
-        assert emotion in [EMOTION_PANIC, EMOTION_ANXIOUS], f"Wrong emotion for crisis: {phrase}"
+        assert emotion in [EMOTION_PANIC, EMOTION_ANXIOUS], (
+            f"Wrong emotion for crisis: {phrase}"
+        )
         assert confidence >= 0.9, f"Low confidence for crisis: {phrase}"
 
 
 # ========================================
 # Rule-Based Fallback Tests (< 1ms)
 # ========================================
+
 
 def test_rule_based_greeting():
     """Test rule-based greeting classification"""
@@ -185,6 +188,7 @@ def test_rule_based_latency():
 # Prosody Adjustment Tests
 # ========================================
 
+
 def test_prosody_intensity_panic():
     """Test high intensity + anxious → panic adjustment"""
     phrase = "I'm worried about everything"
@@ -202,12 +206,15 @@ def test_prosody_intensity_panic():
 
     # High intensity should escalate anxious → panic
     if emotion1 == EMOTION_ANXIOUS:
-        assert emotion2 == EMOTION_PANIC, "High intensity should escalate anxious to panic"
+        assert emotion2 == EMOTION_PANIC, (
+            "High intensity should escalate anxious to panic"
+        )
 
 
 # ========================================
 # Full Classification Tests (with timeout)
 # ========================================
+
 
 @pytest.mark.asyncio
 async def test_classification_with_timeout():
@@ -222,16 +229,34 @@ async def test_classification_with_timeout():
     assert latency_ms < 700, f"Classification took {latency_ms:.1f}ms, exceeds 700ms"
 
     # Should return valid result
-    assert result.type in [INTENT_GREETING, INTENT_CASUAL, INTENT_EMOTIONAL, INTENT_CRISIS, INTENT_KNOWLEDGE]
-    assert result.emotion in [EMOTION_NEUTRAL, EMOTION_JOY, EMOTION_SAD, EMOTION_ANXIOUS,
-                              EMOTION_ANGRY, EMOTION_FEARFUL, EMOTION_GRIEF, EMOTION_PANIC, EMOTION_EXCITED]
+    assert result.type in [
+        INTENT_GREETING,
+        INTENT_CASUAL,
+        INTENT_EMOTIONAL,
+        INTENT_CRISIS,
+        INTENT_KNOWLEDGE,
+    ]
+    assert result.emotion in [
+        EMOTION_NEUTRAL,
+        EMOTION_JOY,
+        EMOTION_SAD,
+        EMOTION_ANXIOUS,
+        EMOTION_ANGRY,
+        EMOTION_FEARFUL,
+        EMOTION_GRIEF,
+        EMOTION_PANIC,
+        EMOTION_EXCITED,
+    ]
     assert 0.0 <= result.confidence <= 1.0
 
 
 @pytest.mark.asyncio
 async def test_fallback_on_llm_error():
     """Test fallback activates on LLM errors"""
-    with patch("app.services.tier0_classifier._llm_classify", side_effect=Exception("API Error")):
+    with patch(
+        "app.services.tier0_classifier._llm_classify",
+        side_effect=Exception("API Error"),
+    ):
         phrase = "Hello, how are you?"
         result = await classify_tier0_fast(phrase)
 
@@ -245,6 +270,7 @@ async def test_fallback_on_llm_error():
 @pytest.mark.asyncio
 async def test_fallback_on_timeout():
     """Test fallback activates on timeout"""
+
     async def slow_llm(*args, **kwargs):
         await asyncio.sleep(1.0)  # Simulate slow LLM
         return INTENT_KNOWLEDGE, EMOTION_NEUTRAL, 0.8
@@ -261,6 +287,7 @@ async def test_fallback_on_timeout():
 # ========================================
 # P95 Latency Tests
 # ========================================
+
 
 @pytest.mark.asyncio
 async def test_p95_latency_requirement():
@@ -279,16 +306,21 @@ async def test_p95_latency_requirement():
     p95_index = int(len(latencies) * 0.95)
     p95_latency = latencies_sorted[p95_index]
 
-    print(f"\n📊 Latency stats: min={min(latencies):.1f}ms, "
-          f"median={latencies_sorted[len(latencies)//2]:.1f}ms, "
-          f"p95={p95_latency:.1f}ms, max={max(latencies):.1f}ms")
+    print(
+        f"\n📊 Latency stats: min={min(latencies):.1f}ms, "
+        f"median={latencies_sorted[len(latencies) // 2]:.1f}ms, "
+        f"p95={p95_latency:.1f}ms, max={max(latencies):.1f}ms"
+    )
 
-    assert p95_latency <= 700, f"P95 latency {p95_latency:.1f}ms exceeds 700ms requirement"
+    assert p95_latency <= 700, (
+        f"P95 latency {p95_latency:.1f}ms exceeds 700ms requirement"
+    )
 
 
 # ========================================
 # Sync Wrapper Tests
 # ========================================
+
 
 def test_sync_wrapper():
     """Test synchronous wrapper works correctly"""
@@ -306,6 +338,7 @@ def test_sync_wrapper():
 # ========================================
 # Edge Cases
 # ========================================
+
 
 def test_empty_transcript():
     """Test handling of empty transcript"""
@@ -341,6 +374,7 @@ def test_prosody_none():
 # Integration Test
 # ========================================
 
+
 @pytest.mark.asyncio
 async def test_full_classification_all_intents():
     """Test classification across all intent types"""
@@ -362,7 +396,9 @@ async def test_full_classification_all_intents():
             assert result.emotion in [EMOTION_PANIC, EMOTION_ANXIOUS]
 
         # Log results for debugging
-        print(f"✓ '{phrase[:30]}...' → {result.type} ({result.emotion}, conf={result.confidence:.2f})")
+        print(
+            f"✓ '{phrase[:30]}...' → {result.type} ({result.emotion}, conf={result.confidence:.2f})"
+        )
 
 
 if __name__ == "__main__":

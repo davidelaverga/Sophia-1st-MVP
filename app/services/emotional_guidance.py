@@ -31,9 +31,7 @@ class _StaticGuidanceStore:
 
         def _normalize(value: str) -> str:
             stripped = value.strip()
-            if stripped.startswith(('"', "'")) and stripped.endswith(
-                ('"', "'")
-            ):
+            if stripped.startswith(('"', "'")) and stripped.endswith(('"', "'")):
                 stripped = stripped[1:-1]
             return stripped.strip()
 
@@ -91,7 +89,9 @@ class EmotionalGuidanceProvider:
         self._timeout = timeout_seconds or default_timeout
         self._http_post = http_post or self._default_http_post
 
-        default_yaml_path = Path(__file__).resolve().parents[1] / "data" / "emotional_guidance.yaml"
+        default_yaml_path = (
+            Path(__file__).resolve().parents[1] / "data" / "emotional_guidance.yaml"
+        )
         self._static_store = _StaticGuidanceStore(yaml_path or default_yaml_path)
 
     def get_guidance(self, emotion: Optional[str]) -> List[str]:
@@ -194,7 +194,9 @@ def override_guidance_provider(provider: Optional[EmotionalGuidanceProvider]) ->
 
 def format_guidance_block(guidance: Sequence[str]) -> str:
     """Return a formatted bullet block for inclusion in prompts."""
-    cleaned = [item.strip() for item in guidance if isinstance(item, str) and item.strip()]
+    cleaned = [
+        item.strip() for item in guidance if isinstance(item, str) and item.strip()
+    ]
     if not cleaned:
         return ""
     return "Emotion guidance cues:\n- " + "\n- ".join(cleaned)
