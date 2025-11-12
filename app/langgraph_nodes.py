@@ -18,10 +18,8 @@ from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
-from app.services.emotional_guidance import (
-    get_guidance as get_emotional_guidance,
-    format_guidance_block,
-)
+from app.services.memo import memo_client  # Task #42597
+from app.services.prompt_composer import prompt_composer  # Task #42597
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -43,6 +41,7 @@ class GraphState(TypedDict):
     user_emotion: EmotionData
     intent: str
     context_memory: Dict[str, Any]
+    memo_context: Dict[str, Any]  # Task #42597: MemO intelligent memory context
     llm_response: str
     sophia_emotion: EmotionData
     audio_url: str
@@ -339,8 +338,12 @@ class ResponseGenerator:
             context_dict = self._build_voxtral_context(state)
 
             # Use Voxtral Large for response generation with built-in fallback logic
-            # Build a comprehensive system prompt using existing transcript and context
-            system_prompt = self._build_voxtral_system_prompt(state.get("intent", ""))
+            # Build a comprehensive system prompt using existing transcript and context (Task #42597: with MemO)
+            system_prompt = self._build_voxtral_system_prompt(
+                intent=state.get("intent", ""),
+                memo_context=state.get("memo_context"),
+                user_emotion=state["user_emotion"].label
+            )
             prompt_with_context = self._build_voxtral_prompt_with_context(
                 state["transcript"], context_dict, system_prompt
             )
@@ -433,6 +436,25 @@ class ResponseGenerator:
         )
         state["context_memory"] = memory_context
 
+        # Task #42597: Get MemO intelligent memory
+        memo_memories = []
+        try:
+            # Extract user_id from session (assuming session_id format or use default)
+            user_id = state.get("user_id", state["session_id"])
+            memo_memories = asyncio.run(
+                memo_client.search_memories(
+                    user_id=user_id,
+                    query_text=state["transcript"],
+                    top_k=3
+                )
+            )
+            if memo_memories:
+                logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
+        except Exception as e:
+            logger.warning(f"MemO memory retrieval failed: {e}")
+
+        state["memo_context"] = {"memories": memo_memories}
+
         # Build context dictionary
         context = {
             "intent": state["intent"],
@@ -454,6 +476,10 @@ class ResponseGenerator:
         if "recent_intents" in memory_context:
             context["recent_intents"] = memory_context["recent_intents"]
 
+        # Add MemO context
+        if memo_memories:
+            context["memo_memories"] = memo_memories
+
         # Add RAG context for DeFi questions
         if state["intent"] == "defi_question":
             # We need the transcript for RAG lookup (already extracted by AudioIngestor)
@@ -472,6 +498,24 @@ class ResponseGenerator:
         )
         state["context_memory"] = context
 
+        # Task #42597: Get MemO intelligent memory (also for legacy path)
+        memo_memories = []
+        try:
+            user_id = state.get("user_id", state["session_id"])
+            memo_memories = asyncio.run(
+                memo_client.search_memories(
+                    user_id=user_id,
+                    query_text=state.get("transcript", ""),
+                    top_k=3
+                )
+            )
+            if memo_memories:
+                logger.info(f"MemO (legacy): Retrieved {len(memo_memories)} memories")
+        except Exception as e:
+            logger.warning(f"MemO memory retrieval (legacy) failed: {e}")
+
+        state["memo_context"] = {"memories": memo_memories}
+
         context_parts = []
         if "last_topics" in context and context["last_topics"]:
             context_parts.append(
@@ -486,25 +530,31 @@ class ResponseGenerator:
                 f"Recent conversation types: {', '.join(context['recent_intents'])}"
             )
 
+        # Add MemO context to string
+        if memo_memories:
+            memo_texts = [m.get("memory_text", "") for m in memo_memories[:2]]  # Top 2
+            if memo_texts:
+                context_parts.append(f"User memories: {'; '.join(memo_texts)}")
+
         return " | ".join(context_parts) if context_parts else ""
 
-    def _build_voxtral_system_prompt(self, intent: str) -> str:
-        """Build system prompt for Voxtral Large based on intent"""
+    def _build_voxtral_system_prompt(self, intent: str, memo_context: Dict[str, Any] = None, user_emotion: str = None) -> str:
+        """Build system prompt for Voxtral Large based on intent using PromptComposer (Task #42597)"""
+        # Use PromptComposer to build dynamic prompt with memory context
+        system_prompt = prompt_composer.compose_system_prompt(
+            memory_context=memo_context,
+            user_emotion=user_emotion
+        )
+
+        # Add intent-specific guidance
         if intent == "defi_question":
-            return (
-                "You are Sophia, a knowledgeable DeFi mentor. Use provided context to give accurate, "
-                "educational responses about DeFi concepts. Keep responses under 50 words."
-            )
+            system_prompt += "\n\nFocus: Provide accurate, educational DeFi guidance. Keep responses under 50 words."
         elif intent == "emotional_support":
-            return (
-                "You are Sophia, an empathetic AI companion. Provide supportive and encouraging "
-                "responses. Keep responses under 50 words."
-            )
+            system_prompt += "\n\nFocus: Provide supportive and encouraging responses. Keep responses under 50 words."
         else:
-            return (
-                "You are Sophia, a friendly AI assistant. Engage in casual conversation. "
-                "Keep responses under 50 words."
-            )
+            system_prompt += "\n\nFocus: Engage in friendly casual conversation. Keep responses under 50 words."
+
+        return system_prompt
 
     def _build_voxtral_prompt_with_context(
         self, transcript: str, context_dict: Dict[str, Any], system_prompt: str
@@ -777,10 +827,77 @@ class EvalLogger:
             access_token=state.get("supabase_token"),
         )
 
+        # Task #42597: Extract and store important information in MemO
+        try:
+            user_id = state.get("user_id", state["session_id"])
+            asyncio.run(self._extract_and_store_memories(
+                user_id=user_id,
+                session_id=state["session_id"],
+                transcript=state["transcript"],
+                response=state["llm_response"],
+                intent=state["intent"],
+                user_emotion=state["user_emotion"].label
+            ))
+        except Exception as e:
+            logger.warning(f"MemO memory storage failed: {e}")
+
         # Log to console for debugging
         logger.info(f"EvalLogger completed: {eval_entry}")
 
         return state
+
+    async def _extract_and_store_memories(
+        self,
+        user_id: str,
+        session_id: str,
+        transcript: str,
+        response: str,
+        intent: str,
+        user_emotion: str
+    ):
+        """Extract and store important memories from conversation (Task #42597)"""
+        memories_to_store = []
+
+        # Extract preferences from transcript
+        preference_keywords = ["i prefer", "i like", "i love", "i want", "i need", "my favorite"]
+        if any(keyword in transcript.lower() for keyword in preference_keywords):
+            memories_to_store.append({
+                "text": transcript,
+                "type": "preference",
+                "importance": 0.8
+            })
+
+        # Extract emotional patterns
+        if user_emotion in ["excited", "happy", "sad", "anxious", "angry"]:
+            if len(transcript) > 20:  # Only store meaningful emotional context
+                memories_to_store.append({
+                    "text": f"User expressed {user_emotion} emotion: {transcript}",
+                    "type": "emotion",
+                    "importance": 0.6
+                })
+
+        # Extract factual information (names, projects, important context)
+        fact_keywords = ["i am", "i'm", "my name is", "i work", "i study", "i'm working on"]
+        if any(keyword in transcript.lower() for keyword in fact_keywords):
+            memories_to_store.append({
+                "text": transcript,
+                "type": "fact",
+                "importance": 0.9
+            })
+
+        # Store all extracted memories
+        for memory in memories_to_store:
+            try:
+                await memo_client.store_memory(
+                    user_id=user_id,
+                    session_id=session_id,
+                    memory_text=memory["text"],
+                    memory_type=memory["type"],
+                    importance=memory["importance"]
+                )
+                logger.info(f"MemO: Stored {memory['type']} memory for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store {memory['type']} memory: {e}")
 
 
 class SophiaLangGraph:
