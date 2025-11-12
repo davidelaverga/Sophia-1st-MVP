@@ -3,7 +3,17 @@
 import os
 from functools import lru_cache
 from typing import Optional, List
-from dotenv import load_dotenv, find_dotenv
+
+try:
+    from dotenv import load_dotenv, find_dotenv
+except ImportError:  # pragma: no cover - optional in some test environments
+
+    def load_dotenv(*_args, **_kwargs):
+        return False
+
+    def find_dotenv(*_args, **_kwargs):
+        return ""
+
 
 # Load .env as early as possible so Settings reads populated values.
 # find_dotenv() will search parent directories to locate the .env file.
@@ -37,6 +47,7 @@ class Settings:
     # Supabase (HTTP client for storage/REST)
     SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
+    SUPABASE_ANON_KEY: Optional[str] = os.getenv("SUPABASE_ANON_KEY")
     SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
     SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
     SUPABASE_SIGNED_URL_TTL: int = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
@@ -77,6 +88,13 @@ class Settings:
     API_PUBLIC_PATHS: List[str] = [
         path.strip() for path in _public_raw.split(",") if path.strip()
     ]
+
+    # Emotional RAG (S2 Part 8)
+    EMO_RAG_PROVIDER: str = os.getenv("EMO_RAG_PROVIDER", "static").lower()
+    EMOTIONAL_RAG_SERVICE_URL: Optional[str] = os.getenv("EMOTIONAL_RAG_SERVICE_URL")
+    EMOTIONAL_RAG_TIMEOUT_SECONDS: float = float(
+        os.getenv("EMOTIONAL_RAG_TIMEOUT_SECONDS", "0.3")
+    )
 
 
 @lru_cache(maxsize=1)

@@ -6,7 +6,6 @@ import { LogOut } from 'lucide-react'
 import ChatInterface from './components/ChatInterface'
 import ConsentModal from './components/ConsentModal'
 import { useSupabase } from './providers'
-import type { Database } from '../lib/database.types'
 
 interface Message {
   id: string

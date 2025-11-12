@@ -118,6 +118,116 @@ def analyze_emotion_text(text: str) -> Emotion:
     return result
 
 
+def _keyword_emotion_lookup(text: str) -> Optional[Emotion]:
+    """Lightweight heuristic matcher for richer emotion labels."""
+    normalized = (text or "").lower()
+    if not normalized.strip():
+        return None
+
+    keyword_map = {
+        "sad": [
+            "sad",
+            "depressed",
+            "down",
+            "unhappy",
+            "lonely",
+            "miserable",
+            "heartbroken",
+            "blue",
+            "груст",
+            "печал",
+            "одинок",
+        ],
+        "anxious": [
+            "worried",
+            "anxious",
+            "stressed",
+            "nervous",
+            "overwhelmed",
+            "concerned",
+            "тревож",
+            "волн",
+            "беспок",
+        ],
+        "angry": [
+            "angry",
+            "mad",
+            "furious",
+            "annoyed",
+            "frustrated",
+            "irritated",
+            "злой",
+            "раздраж",
+            "бесит",
+        ],
+        "fearful": [
+            "afraid",
+            "scared",
+            "terrified",
+            "frightened",
+            "fearful",
+            "страшн",
+            "боюсь",
+        ],
+        "joy": [
+            "happy",
+            "joyful",
+            "glad",
+            "delighted",
+            "счастл",
+            "радост",
+        ],
+        "excited": [
+            "excited",
+            "thrilled",
+            "pumped",
+            "energized",
+            "воодушевл",
+            "энтузиазм",
+        ],
+        "grief": [
+            "grief",
+            "mourning",
+            "bereaved",
+            "скорб",
+        ],
+        "panic": [
+            "panic",
+            "panicking",
+            "can't breathe",
+            "losing control",
+        ],
+    }
+
+    for label, keywords in keyword_map.items():
+        if any(keyword in normalized for keyword in keywords):
+            confidence = 0.85 if label in {"panic", "joy"} else 0.8
+            return Emotion(label=label, confidence=confidence)
+    return None
+
+
+def infer_text_emotion(text: str) -> Emotion:
+    """Return best-effort emotion for text input with heuristics."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return Emotion(label="neutral", confidence=0.7)
+
+    try:
+        primary = analyze_emotion_text(normalized)
+    except Exception as exc:
+        logger.warning("Text emotion analysis failed: %s", exc)
+        primary = Emotion(label="neutral", confidence=0.6)
+
+    if primary and primary.label != "neutral":
+        return primary
+
+    heuristic = _keyword_emotion_lookup(normalized)
+    if heuristic:
+        return heuristic
+
+    return primary if primary else Emotion(label="neutral", confidence=0.7)
+
+
 def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
     """Classify emotion from audio using Phoenix Evals + Google Gemini.
     Requires GOOGLE_API_KEY in environment. Returns an Emotion model.
