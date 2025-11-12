@@ -54,6 +54,11 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setIsLoading(true)
 
     const sophiaId = generateSessionId()
+    const updateUserEmotion = (emotion: any) => {
+      setMessages(prev =>
+        prev.map(m => (m.id === userMessage.id ? { ...m, emotion } : m))
+      )
+    }
     const updateSophia = (updates: Partial<Message>) => {
       setMessages(prev =>
         prev.map(m => (m.id === sophiaId ? { ...m, ...updates } : m))
@@ -115,6 +120,9 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             const payload = JSON.parse(data)
             accumulated = payload.reply || accumulated
             updateSophia({ content: accumulated, isStreaming: false })
+            if (payload.user_emotion) {
+              updateUserEmotion(payload.user_emotion)
+            }
             replyFinished = true
           } else if (event === 'audio_url') {
             const payload = JSON.parse(data)
@@ -124,6 +132,9 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               emotion: payload.sophia_emotion,
               isSynthesizing: false
             })
+            if (payload.user_emotion) {
+              updateUserEmotion(payload.user_emotion)
+            }
             audioCompleted = true
             const mock = !!payload.mock_audio
             if (payload.audio_url && !mock && /^https?:\/\//.test(payload.audio_url)) {

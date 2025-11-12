@@ -179,14 +179,19 @@ class LangGraphService:
             logger.error(f"LangGraph text conversation processing failed: {e}")
             raise
 
-    async def stream_conversation_response(self, audio_bytes: bytes, session_id: str = None):
+    async def stream_conversation_response(
+        self, audio_bytes: bytes, session_id: str = None
+    ):
         """Stream conversation response with tier-0 classification - Task #42537"""
 
-        logger.info(f"Streaming conversation with tier-0 classifier for session {session_id}")
+        logger.info(
+            f"Streaming conversation with tier-0 classifier for session {session_id}"
+        )
 
         try:
             # Step 1: STT to get transcript
             from app.services.mistral import transcribe_audio_with_voxtral
+
             transcript = transcribe_audio_with_voxtral(audio_bytes)
             logger.info(f"📝 Transcript ({len(transcript)} chars): '{transcript}'")
 
@@ -196,11 +201,15 @@ class LangGraphService:
                 from app.services.tier0_classifier import classify_tier0_fast
 
                 # Call async function directly with await (now that we're in async generator)
-                result = await classify_tier0_fast(transcript, prosody=None, timeout_ms=500)
+                result = await classify_tier0_fast(
+                    transcript, prosody=None, timeout_ms=500
+                )
 
-                logger.info(f"🎯 Tier-0: intent={result.type}, emotion={result.emotion}, "
-                           f"confidence={result.confidence:.2f}, latency={result.latency_ms}ms, "
-                           f"source={result.source}")
+                logger.info(
+                    f"🎯 Tier-0: intent={result.type}, emotion={result.emotion}, "
+                    f"confidence={result.confidence:.2f}, latency={result.latency_ms}ms, "
+                    f"source={result.source}"
+                )
 
                 # Send tier-0 results to frontend as first yield
                 tier0_result = {
@@ -210,7 +219,7 @@ class LangGraphService:
                     "emotion": result.emotion,
                     "confidence": result.confidence,
                     "latency_ms": result.latency_ms,
-                    "source": result.source
+                    "source": result.source,
                 }
                 yield tier0_result
 
@@ -222,7 +231,9 @@ class LangGraphService:
                     return
 
             except Exception as e:
-                logger.warning(f"Tier-0 classifier failed: {e}, continuing without classification")
+                logger.warning(
+                    f"Tier-0 classifier failed: {e}, continuing without classification"
+                )
 
             # Step 3: Generate response with streaming
             from app.services.mistral import stream_generate_reply_from_audio

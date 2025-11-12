@@ -13,11 +13,15 @@ from app.services.mistral import (
     transcribe_audio_with_voxtral,
     generate_llm_reply,
 )
-from app.services.emotion import analyze_emotion_audio
+from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
+from app.services.emotional_guidance import (
+    get_guidance as get_emotional_guidance,
+    format_guidance_block,
+)
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,7 @@ class GraphState(TypedDict):
     audio_url: str
     tts_bytes: bytes
     evaluation_logs: List[Dict[str, Any]]
+    emotion_guidance: List[str]
     fallback_used: Dict[str, str]
     use_voxtral_large: bool  # Flag to indicate if Voxtral Large pipeline is active
     cancel_check: Optional[CancelCallback]
@@ -58,6 +63,30 @@ def _maybe_cancel(state: GraphState) -> None:
 def _raise_if_cancelled(exc: Exception) -> None:
     if isinstance(exc, asyncio.CancelledError):
         raise exc
+
+
+def _ensure_emotion_guidance(state: GraphState) -> List[str]:
+    """Populate emotion guidance in state with a single lookup per turn."""
+    guidance = state.get("emotion_guidance")
+    if guidance:
+        return guidance
+
+    label = getattr(state.get("user_emotion"), "label", "neutral")
+    guidance = get_emotional_guidance(label)
+    state["emotion_guidance"] = guidance
+
+    if guidance:
+        preview = "; ".join(guidance[:2])
+        logger.info(
+            "Emotion guidance applied for %s: %s%s",
+            label,
+            preview,
+            "..." if len(guidance) > 2 else "",
+        )
+    else:
+        logger.info("Emotion guidance lookup for %s returned empty result.", label)
+
+    return guidance
 
 
 class AudioIngestor:
@@ -380,11 +409,13 @@ class ResponseGenerator:
         cancel_check = state.get("cancel_check")
 
         context = self._build_context(state)
+        emotion_guidance = _ensure_emotion_guidance(state)
         response = self._generate_with_context(
             state.get("transcript", ""),
             state.get("intent", ""),
             state["user_emotion"],
             context,
+            emotion_guidance,
             cancel_check=cancel_check,
         )
         state["llm_response"] = response
@@ -410,6 +441,10 @@ class ResponseGenerator:
                 "confidence": state["user_emotion"].confidence,
             },
         }
+
+        emotion_guidance = _ensure_emotion_guidance(state)
+        if emotion_guidance:
+            context["emotion_guidance"] = emotion_guidance
 
         # Add memory context
         if "last_topics" in memory_context:
@@ -491,6 +526,16 @@ class ResponseGenerator:
                 f"User appears {emotion_label} (confidence: {emotion_conf:.2f})"
             )
 
+        emotion_guidance = context_dict.get("emotion_guidance") or []
+        guidance_block = format_guidance_block(emotion_guidance)
+        if guidance_block:
+            prompt_parts.append(guidance_block)
+            logger.info(
+                "Voxtral system prompt guidance applied: %s%s",
+                "; ".join(emotion_guidance[:2]),
+                "..." if len(emotion_guidance) > 2 else "",
+            )
+
         # Add RAG context for DeFi questions
         if "rag_context" in context_dict and context_dict["rag_context"]:
             prompt_parts.append(
@@ -507,6 +552,7 @@ class ResponseGenerator:
         intent: str,
         user_emotion: EmotionData,
         context: str,
+        emotion_guidance: List[str],
         *,
         cancel_check: Optional[CancelCallback] = None,
     ) -> str:
@@ -534,6 +580,15 @@ class ResponseGenerator:
 
         if context:
             prompt_parts.append(f"Conversation context: {context}")
+
+        guidance_block = format_guidance_block(emotion_guidance)
+        if guidance_block:
+            prompt_parts.append(guidance_block)
+            logger.info(
+                "Legacy system prompt guidance applied: %s%s",
+                "; ".join(emotion_guidance[:2]),
+                "..." if len(emotion_guidance) > 2 else "",
+            )
 
         if rag_context:
             prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
@@ -789,6 +844,7 @@ class SophiaLangGraph:
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
+            "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral_large": False,  # Will be set by AudioIngestor
             "supabase_token": supabase_token,
@@ -821,9 +877,7 @@ class SophiaLangGraph:
             "session_id": session_id,
             "audio_bytes": b"",  # Empty for text input
             "transcript": message,  # Use the text message directly
-            "user_emotion": EmotionData(
-                label="neutral", confidence=0.7
-            ),  # Default for text
+            "user_emotion": EmotionData(label="neutral", confidence=0.7),
             "intent": "",
             "context_memory": {},
             "llm_response": "",
@@ -831,11 +885,17 @@ class SophiaLangGraph:
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
+            "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral_large": False,  # Text-only uses legacy pipeline
             "supabase_token": supabase_token,
             "cancel_check": cancel_check,
         }
+
+        inferred = infer_text_emotion(message)
+        initial_state["user_emotion"] = EmotionData(
+            label=inferred.label, confidence=inferred.confidence
+        )
 
         logger.info(
             f"Starting LangGraph text processing for session {session_id} with message: '{message[:50]}...'"
@@ -892,6 +952,7 @@ class SophiaLangGraph:
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
+            "emotion_guidance": [],
             "fallback_used": {},
         }
 
@@ -937,6 +998,7 @@ class SophiaLangGraph:
             # Build context like ResponseGenerator does
             response_generator = ResponseGenerator()
             context = response_generator._build_context(state)
+            emotion_guidance = _ensure_emotion_guidance(state)
 
             # Get RAG context for DeFi questions
             rag_context = ""
@@ -953,6 +1015,10 @@ class SophiaLangGraph:
 
             if context:
                 prompt_parts.append(f"Conversation context: {context}")
+
+            guidance_block = format_guidance_block(emotion_guidance)
+            if guidance_block:
+                prompt_parts.append(guidance_block)
 
             if rag_context:
                 prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
@@ -997,6 +1063,10 @@ class SophiaLangGraph:
                 "confidence": state["user_emotion"].confidence,
             },
         }
+
+        emotion_guidance = _ensure_emotion_guidance(state)
+        if emotion_guidance:
+            context["emotion_guidance"] = emotion_guidance
 
         # Add memory context
         if "last_topics" in memory_context:
