@@ -1,4 +1,5 @@
 fastapi
+redis
 uvicorn[standard]
 python-multipart
 slowapi
@@ -20,4 +21,6 @@ opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp
 opentelemetry-instrumentation-fastapi
+sentence-transformers
+alembic
 nest-asyncio

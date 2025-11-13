@@ -47,7 +47,6 @@ from app.services.emotional_guidance import (
 )
 from dotenv import load_dotenv
 
-# OpenTelemetry disabled for build simplicity
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -643,7 +642,6 @@ def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
     return out or None
 
 
-# OpenTelemetry disabled for build simplicity
 provider = TracerProvider(resource=resource)
 otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
 otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
@@ -2041,6 +2039,141 @@ async def check_finished_conversations(
         raise HTTPException(
             status_code=500, detail="Failed to check finished conversations"
         )
+
+
+@app.post("/admin/reload-prompts")
+async def reload_prompts(
+    supabase_token: str = Depends(verify_api_key),
+):
+    """Hot reload system prompts from disk (Task #42597)"""
+    try:
+        from app.services.prompt_composer import prompt_composer
+
+        success = prompt_composer.reload_prompts()
+        status = prompt_composer.get_reload_status()
+
+        if success:
+            return {
+                "message": "Prompts reloaded successfully",
+                "status": status,
+                "timestamp": time.time(),
+            }
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "message": "Prompts reload failed or incomplete",
+                    "status": status,
+                    "timestamp": time.time(),
+                },
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to reload prompts: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reload prompts: {str(e)}")
+
+
+@app.get("/admin/memo-metrics")
+async def get_memo_metrics(
+    supabase_token: str = Depends(verify_api_key),
+):
+    """Get MemO performance metrics (Task #42597)"""
+    try:
+        from app.services.memo import memo_client
+
+        metrics = memo_client.get_metrics()
+
+        return {
+            "memo_enabled": memo_client.enabled,
+            "metrics": metrics,
+            "timestamp": time.time(),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get MemO metrics: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+
+
+@app.post("/admin/run-migration")
+async def run_migration(
+    supabase_token: str = Depends(verify_api_key),
+):
+    """Run user_memories table migration (Task #42597)"""
+    try:
+        import psycopg
+        from pathlib import Path
+
+        migration_file = Path("user_memories_migration.sql")
+        if not migration_file.exists():
+            raise HTTPException(status_code=404, detail="Migration file not found")
+
+        # Read migration SQL
+        with open(migration_file, "r") as f:
+            migration_sql = f.read()
+
+        # Get DB connection string from settings
+        settings = get_settings()
+        db_dsn = settings.SUPABASE_DB_DSN
+
+        if not db_dsn:
+            raise HTTPException(status_code=500, detail="SUPABASE_DB_DSN not configured")
+
+        # Execute migration
+        conn = psycopg.connect(db_dsn)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(migration_sql)
+            conn.commit()
+
+            # Verify table exists
+            cursor.execute("SELECT tablename FROM pg_tables WHERE tablename = 'user_memories'")
+            result = cursor.fetchone()
+
+            if result:
+                # Get table structure
+                cursor.execute("""
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_name = 'user_memories'
+                    ORDER BY ordinal_position
+                """)
+                columns = cursor.fetchall()
+
+                return {
+                    "message": "Migration executed successfully",
+                    "table_exists": True,
+                    "columns": [{"name": col[0], "type": col[1]} for col in columns],
+                    "timestamp": time.time(),
+                }
+            else:
+                return {
+                    "message": "Migration executed but table not found",
+                    "table_exists": False,
+                    "timestamp": time.time(),
+                }
+
+        except Exception as e:
+            conn.rollback()
+            error_str = str(e).lower()
+            if "already exists" in error_str:
+                return {
+                    "message": "Migration already applied (table exists)",
+                    "table_exists": True,
+                    "timestamp": time.time(),
+                }
+            else:
+                raise
+
+        finally:
+            cursor.close()
+            conn.close()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to run migration: {e}")
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
 
 
 if __name__ == "__main__":

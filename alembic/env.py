@@ -36,6 +36,9 @@ def get_url() -> str:
             "Database URL is not configured. Set SUPABASE_DB_DSN in the environment "
             "or provide sqlalchemy.url in alembic.ini."
         )
+    # Replace postgresql:// with postgresql+psycopg:// to use psycopg3 driver
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
 
