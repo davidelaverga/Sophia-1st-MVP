@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import numpy as np
@@ -12,10 +12,12 @@ from app.services.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
+
 # Memory metrics for monitoring
 @dataclass
 class MemOMetrics:
     """Metrics for MemO performance tracking"""
+
     total_searches: int = 0
     total_stores: int = 0
     total_errors: int = 0
@@ -43,7 +45,9 @@ class MemOClient:
         self._embedding_model = None
 
         if self.enabled:
-            logger.info(f"MemO enabled: top_k={self.top_k}, threshold={self.similarity_threshold}")
+            logger.info(
+                f"MemO enabled: top_k={self.top_k}, threshold={self.similarity_threshold}"
+            )
         else:
             logger.info("MemO disabled via MEMO_ENABLED=false")
 
@@ -52,6 +56,7 @@ class MemOClient:
         if self._embedding_model is None and self.enabled:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 logger.info(f"Loading embedding model: {self.embedding_model_name}")
                 self._embedding_model = SentenceTransformer(self.embedding_model_name)
                 logger.info("Embedding model loaded successfully")
@@ -116,12 +121,16 @@ class MemOClient:
 
             # Store in Supabase
             supabase_client = get_supabase(access_token)
-            result = supabase_client.table("user_memories").insert(memory_record).execute()
+            result = (
+                supabase_client.table("user_memories").insert(memory_record).execute()
+            )
 
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             self.metrics.total_stores += 1
-            logger.info(f"Memory stored: type={memory_type}, latency={latency_ms:.1f}ms")
+            logger.info(
+                f"Memory stored: type={memory_type}, latency={latency_ms:.1f}ms"
+            )
 
             return bool(result.data)
 
@@ -163,7 +172,11 @@ class MemOClient:
 
             # For now, let's use a simpler approach: fetch recent memories and rank in Python
             # In production, you'd want to use a proper vector search via RPC or direct SQL
-            query = supabase_client.table("user_memories").select("*").eq("user_id", user_id)
+            query = (
+                supabase_client.table("user_memories")
+                .select("*")
+                .eq("user_id", user_id)
+            )
 
             if memory_types:
                 query = query.in_("memory_type", memory_types)
@@ -228,11 +241,15 @@ class MemOClient:
 
         # Update avg and P95
         self.metrics.avg_search_latency_ms = float(np.mean(self._search_latencies))
-        self.metrics.p95_search_latency_ms = float(np.percentile(self._search_latencies, 95))
+        self.metrics.p95_search_latency_ms = float(
+            np.percentile(self._search_latencies, 95)
+        )
 
         # Update hit rate
         if self.metrics.total_searches > 0:
-            self.metrics.hit_rate = self.metrics.total_hits / self.metrics.total_searches
+            self.metrics.hit_rate = (
+                self.metrics.total_hits / self.metrics.total_searches
+            )
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get current MemO performance metrics"""
@@ -257,10 +274,7 @@ class MemOClient:
             )
 
             if not memories:
-                return {
-                    "memories": [],
-                    "memory_summary": "No relevant memories found"
-                }
+                return {"memories": [], "memory_summary": "No relevant memories found"}
 
             # Format memories for prompt
             memory_texts = []
@@ -270,12 +284,14 @@ class MemOClient:
                 text = mem.get("memory_text", "")
                 similarity = mem.get("similarity_score", 0.0)
 
-                memory_texts.append({
-                    "text": text,
-                    "type": memory_type,
-                    "importance": importance,
-                    "relevance": similarity,
-                })
+                memory_texts.append(
+                    {
+                        "text": text,
+                        "type": memory_type,
+                        "importance": importance,
+                        "relevance": similarity,
+                    }
+                )
 
             # Create summary
             summary = f"Retrieved {len(memories)} relevant memories (similarity ≥ {self.similarity_threshold})"

@@ -52,7 +52,13 @@ def _supabase_span(name: str, **attrs):
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
 
-    global _supabase, _anon_supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN, SUPABASE_SIGNED_URL_TTL
+    global \
+        _supabase, \
+        _anon_supabase, \
+        SUPABASE_BUCKET_AUDIO, \
+        SUPABASE_AUDIO_PREFIX, \
+        SUPABASE_DB_DSN, \
+        SUPABASE_SIGNED_URL_TTL
     if _supabase is not None:
         return _supabase
 
@@ -76,7 +82,9 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
         options = None
         if ClientOptions is not None:
             options = ClientOptions(persist_session=False)  # type: ignore[arg-type]
-        _anon_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options)
+        _anon_supabase = create_client(
+            settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options
+        )
     return _supabase
 
 
@@ -185,8 +193,7 @@ def insert_emotion_score(
     user_id: str,
     access_token: Optional[str] = None,
 ) -> None:
-    """Insert a row into the emotion_scores table
-    """
+    """Insert a row into the emotion_scores table"""
 
     payload = {
         "session_id": str(session_id),
@@ -210,9 +217,10 @@ def insert_emotion_score(
         # Don't raise the exception, just log it and continue
 
 
-def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str] = None) -> None:
-    """Insert a conversation session row using REST.
-    """
+def insert_conversation_session(
+    data: Dict[str, Any], access_token: Optional[str] = None
+) -> None:
+    """Insert a conversation session row using REST."""
 
     # Ensure all SQL parameters expected by insert_conversation_session_sql are present
     # If missing, provide sensible defaults.
