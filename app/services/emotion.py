@@ -1,11 +1,32 @@
 """Emotion classification utilities powered by Phoenix and fallback LLM heuristics."""
 
+# ========================================
+# CRITICAL: Apply nest_asyncio FIRST - before ANY other imports
+# ========================================
+try:
+    import nest_asyncio
+
+    nest_asyncio.apply()
+    _NEST_ASYNC_APPLIED = True
+except Exception:  # pragma: no cover - diagnostic only
+    _NEST_ASYNC_APPLIED = False
+
+# ========================================
+# NOW import everything else
+# ========================================
 import logging
+import sys
 from typing import Optional
 from pydantic import BaseModel
 from app.config import get_settings
 
 logger = logging.getLogger("emotion")
+
+# Log nest_asyncio status AFTER logger is ready
+if _NEST_ASYNC_APPLIED:
+    logger.info("✅ nest_asyncio applied successfully at module import")
+else:
+    logger.warning("⚠️ nest_asyncio not available - emotion analysis may fail")
 
 
 class Emotion(BaseModel):
@@ -22,34 +43,57 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
             from phoenix.evals import GoogleGenAIModel
         except Exception as e:
             logger.info(
-                f"Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: {e}"
+                "Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: %s",
+                e,
             )
             return None
+
+        settings = get_settings()
+        if not getattr(settings, "GOOGLE_API_KEY", None):
+            logger.warning(
+                "GOOGLE_API_KEY not set - skipping Phoenix emotion classification"
+            )
+            return None
+
+        import pandas as pd
+
         model = GoogleGenAIModel(model="gemini-2.5-flash")
-        get_settings()
+        df = pd.DataFrame([{"input": text}])
 
         result = llm_classify(
-            llm=model,
-            data=[{"input": text}],
+            data=df,
+            model=model,
             template=(
-                "Classify the overall sentiment of the INPUT as one of: positive, neutral, negative. "
-                "Return only the label."
+                "Classify the overall sentiment of the INPUT as one of: positive, neutral, "
+                "negative. Return only the label."
             ),
-            label_schema={"positive", "neutral", "negative"},
+            rails=["positive", "neutral", "negative"],
+            provide_explanation=False,
+            run_sync=True,
+            verbose=False,
         )
-        # Phoenix may return a dict-like with labeled outputs; adapt safely
-        label = None
-        score = 0.0
+
+        label = "neutral"
+        score = 0.5
         try:
-            label = result["label"][0]
-            score = float(result.get("score", [0.0])[0])
-        except Exception:
-            # Fallback parse
-            label = "neutral"
-            score = 0.5
-        if label not in {"positive", "neutral", "negative"}:
-            label = "neutral"
+            label_candidate = str(result["label"].iloc[0]).strip().lower()
+            if label_candidate in {"positive", "neutral", "negative"}:
+                label = label_candidate
+            if "score" in result.columns:
+                score = float(result["score"].iloc[0])
+            elif "confidence" in result.columns:
+                score = float(result["confidence"].iloc[0])
+        except Exception as parse_error:
+            logger.warning("Error parsing Phoenix result: %s", parse_error)
+
         return Emotion(label=label, confidence=score)
+    except RuntimeError as e:
+        # Specifically catch event loop errors
+        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
+            logger.warning(f"Phoenix emotion model failed due to event loop conflict: {e}. Falling back to Mistral LLM.")
+        else:
+            logger.warning(f"Phoenix emotion model failed with RuntimeError: {e}")
+        return None
     except Exception as e:
         logger.warning(f"Phoenix emotion model failed: {e}")
         return None
@@ -256,7 +300,15 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
             )
         except Exception as e:
             logger.info(
-                f"Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: {e}"
+                "Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: %s",
+                e,
+            )
+            return Emotion(label="neutral", confidence=0.5)
+
+        settings = get_settings()
+        if not getattr(settings, "GOOGLE_API_KEY", None):
+            logger.warning(
+                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
             )
             return Emotion(label="neutral", confidence=0.5)
 
@@ -309,14 +361,17 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
 
         # 4) run classification with improved template
         results = llm_classify(
-            model=model,
             data=df,
+            model=model,
             template=emotion_template,
             rails=EMOTION_RAILS,
+            provide_explanation=False,
+            run_sync=True,
+            verbose=False,
         )
 
         # 5) extract single label
-        label = str(results.iloc[0, 0]).strip().lower()
+        label = str(results["label"].iloc[0]).strip().lower()
         valid = [r.lower() for r in EMOTION_RAILS]
         if label not in valid:
             label = "neutral"
@@ -340,9 +395,14 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         db_label = emotion_mapping.get(label, "neutral")
 
         # Confidence not provided by default template; set midpoint
-        return Emotion(
-            label=db_label, confidence=0.8
-        )  # Higher confidence with improved template
+        return Emotion(label=db_label, confidence=0.8)  # Higher confidence with improved template
+    except RuntimeError as e:
+        # Specifically catch event loop errors
+        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
+            logger.warning(f"Audio emotion classification failed due to event loop conflict: {e}. Returning neutral.")
+        else:
+            logger.warning(f"Audio emotion classification failed with RuntimeError: {e}")
+        return Emotion(label="neutral", confidence=0.5)
     except Exception as e:
         logger.warning(f"Audio emotion classification failed: {e}")
         return Emotion(label="neutral", confidence=0.5)

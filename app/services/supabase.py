@@ -1,6 +1,8 @@
 """Supabase client utilities for storage uploads, consent checks, and conversation inserts."""
 
 import logging
+import os
+import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
@@ -25,10 +27,10 @@ load_dotenv(find_dotenv(), override=False)
 # Global Supabase client state
 _supabase: Optional[Client] = None
 _anon_supabase: Optional[Client] = None
-SUPABASE_BUCKET_AUDIO: str = "audio"
-SUPABASE_AUDIO_PREFIX: str = "uploads/"
-SUPABASE_SIGNED_URL_TTL: int = 3600
-SUPABASE_DB_DSN: Optional[str] = None
+SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio-uploads")
+SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
+SUPABASE_SIGNED_URL_TTL = os.getenv("SUPABASE_SIGNED_URL_TTL", 3600)
+SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
 
 logger = logging.getLogger("sophia-backend")
 _supabase_tracer = trace.get_tracer("sophia.supabase")
@@ -224,7 +226,7 @@ def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str
         data["id"] = str(uuid.uuid4())
     # Default optional fields to None if absent
     data.setdefault("transcript", None)
-    data.setdefault("reply", None)
+    data.setdefault("response", None)  # Changed from "reply"
     data.setdefault("user_emotion_label", None)
     data.setdefault("user_emotion_confidence", None)
     data.setdefault("sophia_emotion_label", None)
