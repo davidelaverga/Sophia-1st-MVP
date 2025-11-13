@@ -1754,6 +1754,7 @@ async def text_chat_stream(
     request: Request,
     body: TextChatRequest,
     supabase_token: str = Depends(verify_api_key),
+    consent_ok: None = Depends(require_consent),
 ):
     """Streaming variant for text-only chat.
 

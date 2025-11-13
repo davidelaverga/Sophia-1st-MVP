@@ -15,6 +15,7 @@ from app.services.mistral import (
     generate_llm_reply_with_context
 )
 from app.services.emotion import analyze_emotion_audio, infer_text_emotion
+from app.services.emotional_guidance import get_guidance as get_emotional_guidance, format_guidance_block
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn

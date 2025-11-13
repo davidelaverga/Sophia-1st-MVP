@@ -172,10 +172,7 @@ def verify_api_key(
 
     settings = get_settings()
     # Allow simple API keys for legacy automation/integration flows
-    allowed_keys = set(settings.API_KEYS)
-    if "PYTEST_CURRENT_TEST" in os.environ:
-        allowed_keys.add("test-key")
-    if token in allowed_keys:
+    if token in (settings.API_KEYS or []):
         if request is not None:
             request.state.supabase_token = token
             request.state.supabase_user_id = None

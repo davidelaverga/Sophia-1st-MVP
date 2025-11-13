@@ -77,7 +77,8 @@ class RAGSystem:
     def _ensure_faqs(self):
         if self._faqs:
             return
-        self._load_model()
+        if self.enabled:
+            self._load_model()
         self._faqs = self._load_faqs()
 
     def _load_faqs(self) -> List[FAQEntry]:
