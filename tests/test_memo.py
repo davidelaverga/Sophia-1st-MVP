@@ -1,9 +1,8 @@
 """Unit tests for MemO intelligent memory system (Task #42597)."""
 
 import pytest
-import asyncio
-from unittest.mock import Mock, patch, AsyncMock
-from app.services.memo import MemOClient, MemOMetrics
+from unittest.mock import Mock, patch
+from app.services.memo import MemOClient
 
 
 class TestMemOClient:
@@ -16,7 +15,9 @@ class TestMemOClient:
             mock_settings.return_value.MEMO_ENABLED = False
             mock_settings.return_value.MEMO_TOP_K = 5
             mock_settings.return_value.MEMO_SIMILARITY_THRESHOLD = 0.7
-            mock_settings.return_value.MEMO_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+            mock_settings.return_value.MEMO_EMBEDDING_MODEL = (
+                "sentence-transformers/all-MiniLM-L6-v2"
+            )
             client = MemOClient()
             return client
 
@@ -27,7 +28,9 @@ class TestMemOClient:
             mock_settings.return_value.MEMO_ENABLED = True
             mock_settings.return_value.MEMO_TOP_K = 5
             mock_settings.return_value.MEMO_SIMILARITY_THRESHOLD = 0.7
-            mock_settings.return_value.MEMO_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+            mock_settings.return_value.MEMO_EMBEDDING_MODEL = (
+                "sentence-transformers/all-MiniLM-L6-v2"
+            )
             client = MemOClient()
             return client
 
@@ -88,9 +91,10 @@ class TestMemOClient:
     @pytest.mark.asyncio
     async def test_store_memory_with_embedding(self, memo_client_enabled):
         """Test storing memory with embedding generation"""
-        with patch.object(memo_client_enabled, "_generate_embedding") as mock_embed, \
-             patch("app.services.memo.get_supabase") as mock_supabase:
-
+        with (
+            patch.object(memo_client_enabled, "_generate_embedding") as mock_embed,
+            patch("app.services.memo.get_supabase") as mock_supabase,
+        ):
             mock_embed.return_value = [0.1] * 384  # Mock embedding
             mock_result = Mock()
             mock_result.data = [{"id": "test-id"}]
@@ -110,9 +114,10 @@ class TestMemOClient:
     @pytest.mark.asyncio
     async def test_search_memories_with_results(self, memo_client_enabled):
         """Test searching memories with results"""
-        with patch.object(memo_client_enabled, "_generate_embedding") as mock_embed, \
-             patch("app.services.memo.get_supabase") as mock_supabase:
-
+        with (
+            patch.object(memo_client_enabled, "_generate_embedding") as mock_embed,
+            patch("app.services.memo.get_supabase") as mock_supabase,
+        ):
             # Mock query embedding
             query_embedding = [0.1] * 384
             mock_embed.return_value = query_embedding
@@ -142,7 +147,9 @@ class TestMemOClient:
             mock_query.order.return_value = mock_query
             mock_query.limit.return_value = mock_query
             mock_query.execute.return_value = mock_result
-            mock_supabase.return_value.table.return_value.select.return_value = mock_query
+            mock_supabase.return_value.table.return_value.select.return_value = (
+                mock_query
+            )
 
             memories = await memo_client_enabled.search_memories(
                 user_id="test-user",

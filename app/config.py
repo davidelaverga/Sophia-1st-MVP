@@ -59,8 +59,12 @@ class Settings:
     # MemO Memory (Task #42597)
     MEMO_ENABLED: bool = os.getenv("MEMO_ENABLED", "true").lower() == "true"
     MEMO_TOP_K: int = int(os.getenv("MEMO_TOP_K", "5"))
-    MEMO_SIMILARITY_THRESHOLD: float = float(os.getenv("MEMO_SIMILARITY_THRESHOLD", "0.7"))
-    MEMO_EMBEDDING_MODEL: str = os.getenv("MEMO_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    MEMO_SIMILARITY_THRESHOLD: float = float(
+        os.getenv("MEMO_SIMILARITY_THRESHOLD", "0.7")
+    )
+    MEMO_EMBEDDING_MODEL: str = os.getenv(
+        "MEMO_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     # OpenTelemetry (OTLP HTTP exporter)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = os.getenv(
