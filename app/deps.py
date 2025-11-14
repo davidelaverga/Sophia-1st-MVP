@@ -111,7 +111,9 @@ def _decode_jwt_payload(token: Optional[str]) -> Optional[dict[str, Any]]:
         return None
 
 
-def extract_identity_from_token(token: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def extract_identity_from_token(
+    token: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
     """Return `(user_id, discord_id)` extracted from a Supabase JWT."""
     claims = _decode_jwt_payload(token)
     if not claims:
@@ -247,9 +249,14 @@ def require_consent(
             discord_id = getattr(request.state, "supabase_discord_id", None)
 
     if not discord_id:
-        raise HTTPException(status_code=403, detail="Consent required: missing Discord identity")
+        raise HTTPException(
+            status_code=403, detail="Consent required: missing Discord identity"
+        )
 
     if not has_user_consent(discord_id, access_token=token):
-        raise HTTPException(status_code=403, detail="Consent required. Please accept data processing consent.")
+        raise HTTPException(
+            status_code=403,
+            detail="Consent required. Please accept data processing consent.",
+        )
 
     return None

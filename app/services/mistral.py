@@ -338,7 +338,14 @@ def generate_reply_from_audio(
         )
 
 
-def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None) -> str:
+def generate_llm_reply(
+    text: str,
+    cancel_check: Optional[CancelCallback] = None,
+    *,
+    system_prompt: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
         return "I didn’t catch that. Could you rephrase your question about DeFi?"
@@ -348,18 +355,24 @@ def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None)
         cancel = _ensure_cancel(cancel_check)
         cancel()
         # Prefer Responses API when available; fallback to Chat API for older SDKs
-        resp_iface = getattr(client, "responses", None)
-        if resp_iface is not None and _RESPONSES_AVAILABLE:
-            try:
+        try:
+            resp_iface = getattr(client, "responses", None)
+            if resp_iface is not None:
+                request_kwargs = {}
+                if max_tokens is not None:
+                    request_kwargs["max_tokens"] = max_tokens
+                if temperature is not None:
+                    request_kwargs["temperature"] = temperature
                 r = resp_iface.create(
-                    model="mistral-large-latest",
+                    model="mistral-small-latest",
                     input=[
                         {
                             "role": "system",
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                                    "text": system_prompt
+                                    or "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
                                 }
                             ],
                         },
@@ -373,42 +386,34 @@ def generate_llm_reply(text: str, cancel_check: Optional[CancelCallback] = None)
                             ],
                         },
                     ],
+                    **request_kwargs,
                 )
                 cancel()
                 out = getattr(r, "output_text", None)
                 if isinstance(out, str) and out.strip():
                     return out.strip()
                 return str(r)
-            except Exception as responses_exc:
-                _RESPONSES_AVAILABLE = False
-                status, body = _extract_http_details(responses_exc)
-                if status is not None and 400 <= status < 500:
-                    consequence = "Payload may be invalid; continuing with Chat API."
-                else:
-                    consequence = "Disabling Responses API for this process and using Chat API."
-                details = []
-                if status is not None:
-                    details.append(f"status={status}")
-                if body:
-                    details.append(f"response={body}")
-                detail_str = ", ".join(details) if details else "no additional diagnostics"
-                logger.warning(
-                    "Mistral Responses API call failed (%s). %s",
-                    detail_str,
-                    consequence,
-                )
+        except Exception as responses_exc:
+            pass
 
         # Chat API fallback
         cancel()
+        chat_kwargs = {}
+        if max_tokens is not None:
+            chat_kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            chat_kwargs["temperature"] = temperature
         r2 = client.chat.complete(
-            model="mistral-large-latest",
+            model="mistral-small-latest",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                    "content": system_prompt
+                    or "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
                 },
                 {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
             ],
+            **chat_kwargs,
         )
         cancel()
         content = getattr(r2.choices[0].message, "content", r2.choices[0].message)

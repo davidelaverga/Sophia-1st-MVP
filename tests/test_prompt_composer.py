@@ -1,8 +1,6 @@
 """Unit tests for PromptComposer (Task #42597)."""
 
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
 from app.services.prompt_composer import PromptComposer
 
 
@@ -51,7 +49,10 @@ You are Sophia, a friendly and knowledgeable DeFi mentor.
         """Test composer falls back when file missing"""
         assert composer_without_file._base_identity is not None
         assert "Sophia" in composer_without_file._base_identity
-        assert "fallback" in composer_without_file._base_identity.lower() or "DeFi" in composer_without_file._base_identity
+        assert (
+            "fallback" in composer_without_file._base_identity.lower()
+            or "DeFi" in composer_without_file._base_identity
+        )
 
     def test_reload_prompts_success(self, composer_with_file):
         """Test successful prompt reload"""

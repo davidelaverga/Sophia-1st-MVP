@@ -192,7 +192,6 @@ async def ws_voice(websocket: WebSocket):
         "Authorization"
     )
 
-
     if api_key and not api_key.lower().startswith("bearer "):
         api_key = f"Bearer {api_key}"
 
@@ -732,6 +731,7 @@ class DefiChatResponse(BaseModel):
     session_id: str
     transcript: str
     reply: str
+    response_path: Optional[str] = None
     user_emotion: Emotion
     sophia_emotion: Emotion
     audio_url: str
@@ -2071,7 +2071,9 @@ async def reload_prompts(
 
     except Exception as e:
         logger.error(f"Failed to reload prompts: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to reload prompts: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to reload prompts: {str(e)}"
+        )
 
 
 @app.get("/admin/memo-metrics")
@@ -2117,7 +2119,9 @@ async def run_migration(
         db_dsn = settings.SUPABASE_DB_DSN
 
         if not db_dsn:
-            raise HTTPException(status_code=500, detail="SUPABASE_DB_DSN not configured")
+            raise HTTPException(
+                status_code=500, detail="SUPABASE_DB_DSN not configured"
+            )
 
         # Execute migration
         conn = psycopg.connect(db_dsn)
@@ -2128,7 +2132,9 @@ async def run_migration(
             conn.commit()
 
             # Verify table exists
-            cursor.execute("SELECT tablename FROM pg_tables WHERE tablename = 'user_memories'")
+            cursor.execute(
+                "SELECT tablename FROM pg_tables WHERE tablename = 'user_memories'"
+            )
             result = cursor.fetchone()
 
             if result:

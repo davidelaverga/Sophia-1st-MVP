@@ -68,6 +68,7 @@ class LangGraphService:
                 "session_id": final_state["session_id"],
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
+                "response_path": final_state.get("response_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
@@ -151,6 +152,7 @@ class LangGraphService:
                 "session_id": final_state["session_id"],
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
+                "response_path": final_state.get("response_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,

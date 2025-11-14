@@ -4,7 +4,8 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Callable, Dict, Any, Optional, List, TypedDict
+from enum import Enum
+from typing import Callable, Dict, Any, Optional, List, TypedDict, Sequence
 from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
@@ -22,6 +23,10 @@ from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
+from app.services.emotional_guidance import (
+    get_guidance as get_emotional_guidance,
+    format_guidance_block,
+)
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -31,6 +36,12 @@ logger = logging.getLogger(__name__)
 class EmotionData:
     label: str
     confidence: float
+
+
+class ResponsePath(str, Enum):
+    DIRECT = "direct"
+    LIGHT = "light"
+    AGENTIC = "agentic"
 
 
 CancelCallback = Callable[[], None]
@@ -45,6 +56,7 @@ class GraphState(TypedDict):
     context_memory: Dict[str, Any]
     memo_context: Dict[str, Any]  # Task #42597: MemO intelligent memory context
     llm_response: str
+    response_path: str
     sophia_emotion: EmotionData
     audio_url: str
     tts_bytes: bytes
@@ -325,6 +337,9 @@ class ResponseGenerator:
     def __init__(self, use_voxtral_large: bool = True):
         self.settings = get_settings()
         self.use_voxtral_large = use_voxtral_large
+        self._response_path_split = getattr(
+            self.settings, "ENABLE_RESPONSE_PATH_SPLIT", False
+        )
         logger.info(
             f"ResponseGenerator initialized (Voxtral Large preference: {use_voxtral_large})"
         )
@@ -365,6 +380,7 @@ class ResponseGenerator:
         from app.services.shared_services import shared_services
 
         logger.info("ResponseGenerator: Processing with Voxtral Large")
+        state["response_path"] = ResponsePath.AGENTIC.value
         cancel_check = state.get("cancel_check")
 
         try:
@@ -380,7 +396,8 @@ class ResponseGenerator:
             system_prompt = self._build_voxtral_system_prompt(
                 intent=state.get("intent", ""),
                 memo_context=state.get("memo_context"),
-                user_emotion=state["user_emotion"].label
+                user_emotion=state["user_emotion"].label,
+                emotion_guidance=context_dict.get("emotion_guidance"),
             )
             prompt_with_context = self._build_voxtral_prompt_with_context(
                 state["transcript"], context_dict, system_prompt
@@ -449,20 +466,45 @@ class ResponseGenerator:
         _maybe_cancel(state)
         cancel_check = state.get("cancel_check")
 
-        context = self._build_context(state)
-        emotion_guidance = _ensure_emotion_guidance(state)
-        response = self._generate_with_context(
-            state.get("transcript", ""),
-            state.get("intent", ""),
-            state["user_emotion"],
-            context,
-            emotion_guidance,
-            cancel_check=cancel_check,
-        )
-        state["llm_response"] = response
+        if not self._response_path_split:
+            state["response_path"] = ResponsePath.AGENTIC.value
+            state["llm_response"] = self._generate_agentic_response(
+                state, cancel_check=cancel_check
+            )
+            logger.info(
+                "ResponseGenerator response-path split disabled; forcing AGENTIC for session %s",
+                state["session_id"],
+            )
+            return state
 
+        path = self._select_response_path(state)
+        state["response_path"] = path.value
+
+        if path is ResponsePath.DIRECT:
+            state["llm_response"] = self._generate_direct_snippet(state)
+            logger.info(
+                "ResponseGenerator selected DIRECT path for session %s",
+                state["session_id"],
+            )
+            return state
+
+        if path is ResponsePath.LIGHT:
+            state["llm_response"] = self._generate_light_response(
+                state, cancel_check=cancel_check
+            )
+            logger.info(
+                "ResponseGenerator selected LIGHT path for session %s",
+                state["session_id"],
+            )
+            return state
+
+        state["llm_response"] = self._generate_agentic_response(
+            state, cancel_check=cancel_check
+        )
         logger.info(
-            f"ResponseGenerator (legacy) completed: response='{state['llm_response'][:50]}...'"
+            "ResponseGenerator selected AGENTIC path for session %s: response='%s...'",
+            state["session_id"],
+            state["llm_response"][:50],
         )
         return state
 
@@ -481,9 +523,7 @@ class ResponseGenerator:
             user_id = state.get("user_id", state["session_id"])
             memo_memories = asyncio.run(
                 memo_client.search_memories(
-                    user_id=user_id,
-                    query_text=state["transcript"],
-                    top_k=3
+                    user_id=user_id, query_text=state["transcript"], top_k=3
                 )
             )
             if memo_memories:
@@ -530,29 +570,8 @@ class ResponseGenerator:
 
     def _build_context(self, state: GraphState) -> str:
         """Build context from memory and current state"""
-        # Get context from memory manager
-        context = memory_manager.get_context_for_llm(
-            state["session_id"], access_token=state.get("supabase_token")
-        )
-        state["context_memory"] = context
-
-        # Task #42597: Get MemO intelligent memory (also for legacy path)
-        memo_memories = []
-        try:
-            user_id = state.get("user_id", state["session_id"])
-            memo_memories = asyncio.run(
-                memo_client.search_memories(
-                    user_id=user_id,
-                    query_text=state.get("transcript", ""),
-                    top_k=3
-                )
-            )
-            if memo_memories:
-                logger.info(f"MemO (legacy): Retrieved {len(memo_memories)} memories")
-        except Exception as e:
-            logger.warning(f"MemO memory retrieval (legacy) failed: {e}")
-
-        state["memo_context"] = {"memories": memo_memories}
+        context = self._ensure_flash_context(state)
+        memo_context = self._ensure_memo_context(state)
 
         context_parts = []
         if "last_topics" in context and context["last_topics"]:
@@ -569,19 +588,29 @@ class ResponseGenerator:
             )
 
         # Add MemO context to string
-        if memo_memories:
-            memo_texts = [m.get("memory_text", "") for m in memo_memories[:2]]  # Top 2
+        memories = memo_context.get("memories", []) if memo_context else []
+        if memories:
+            memo_texts = []
+            for mem in memories[:2]:
+                memo_texts.append(mem.get("text") or mem.get("memory_text", ""))
             if memo_texts:
                 context_parts.append(f"User memories: {'; '.join(memo_texts)}")
 
         return " | ".join(context_parts) if context_parts else ""
 
-    def _build_voxtral_system_prompt(self, intent: str, memo_context: Dict[str, Any] = None, user_emotion: str = None) -> str:
+    def _build_voxtral_system_prompt(
+        self,
+        intent: str,
+        memo_context: Dict[str, Any] = None,
+        user_emotion: str = None,
+        emotion_guidance: Optional[Sequence[str]] = None,
+    ) -> str:
         """Build system prompt for Voxtral Large based on intent using PromptComposer (Task #42597)"""
         # Use PromptComposer to build dynamic prompt with memory context
         system_prompt = prompt_composer.compose_system_prompt(
             memory_context=memo_context,
-            user_emotion=user_emotion
+            user_emotion=user_emotion,
+            emotion_guidance=emotion_guidance,
         )
 
         # Add intent-specific guidance
@@ -634,68 +663,217 @@ class ResponseGenerator:
 
         return " | ".join(prompt_parts)
 
-    def _generate_with_context(
+    def _select_response_path(self, state: GraphState) -> ResponsePath:
+        transcript = (state.get("transcript") or "").strip()
+        if not transcript or self._looks_like_greeting(transcript):
+            return ResponsePath.DIRECT
+
+        if (state.get("intent") or "").lower() == "defi_question":
+            return ResponsePath.AGENTIC
+
+        flash_context = self._ensure_flash_context(state)
+        if (
+            flash_context.get("last_topics")
+            or flash_context.get("recent_intents")
+            or flash_context.get("conversation_turns", 0) > 0
+        ):
+            return ResponsePath.AGENTIC
+
+        if len(transcript.split()) <= 40:
+            return ResponsePath.LIGHT
+
+        return ResponsePath.AGENTIC
+
+    @staticmethod
+    def _looks_like_greeting(transcript: str) -> bool:
+        normalized = (transcript or "").strip().lower()
+        if not normalized:
+            return True
+        greetings = {
+            "hi",
+            "hey",
+            "hello",
+            "yo",
+            "gm",
+            "sup",
+            "привет",
+            "здравствуй",
+        }
+        if normalized in greetings:
+            return True
+        for token in ("hey", "hi", "hello", "hola", "привет"):
+            if normalized.startswith(f"{token} "):
+                return True
+        return False
+
+    _DIRECT_NEGATIVE_EMOTIONS = {"sad", "anxious", "grief", "panic"}
+    _DIRECT_NEGATIVE_RESPONSE = "I'm here. We can take this one step at a time."
+    _DIRECT_DEFAULT_RESPONSE = (
+        "Hi—I'm here with you. What would you like to talk about?"
+    )
+
+    def _generate_direct_snippet(self, state: GraphState) -> str:
+        emotion_label = getattr(state.get("user_emotion"), "label", "neutral").lower()
+        if emotion_label in self._DIRECT_NEGATIVE_EMOTIONS:
+            return self._DIRECT_NEGATIVE_RESPONSE
+        return self._DIRECT_DEFAULT_RESPONSE
+
+    _EMOTION_TONE = {
+        "joy": "celebratory yet grounded",
+        "sad": "gentle and reassuring",
+        "anxious": "steady and calming",
+        "angry": "calm, validating, and steady",
+        "fearful": "soothing and protective",
+        "excited": "enthusiastic but focused",
+    }
+
+    def _map_emotion_to_tone(self, label: str) -> str:
+        safe_label = (label or "neutral").lower()
+        return self._EMOTION_TONE.get(safe_label, "calm and confident")
+
+    def _generate_light_response(
+        self, state: GraphState, cancel_check: Optional[CancelCallback]
+    ) -> str:
+        transcript = state.get("transcript", "")
+        tone = self._map_emotion_to_tone(state["user_emotion"].label)
+        system_prompt = (
+            "You are Sophia, a concise companion. Keep replies under three sentences, "
+            f"use a {tone} tone, and offer one actionable next step when helpful."
+        )
+        if cancel_check:
+            cancel_check()
+        return generate_llm_reply(
+            transcript,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=180,
+        )
+
+    def _generate_agentic_response(
+        self, state: GraphState, cancel_check: Optional[CancelCallback]
+    ) -> str:
+        transcript = state.get("transcript", "")
+        flash_context = self._ensure_flash_context(state)
+        memo_context = self._ensure_memo_context(state)
+        emotion_guidance = _ensure_emotion_guidance(state)
+
+        rag_context = ""
+        if (state.get("intent") or "").lower() == "defi_question":
+            try:
+                rag_context = rag_system.get_context_for_llm(transcript)
+                if rag_context:
+                    logger.info(
+                        "RAG context retrieved for session %s: %d chars",
+                        state["session_id"],
+                        len(rag_context),
+                    )
+            except Exception as exc:
+                logger.warning("RAG context lookup failed: %s", exc)
+                rag_context = ""
+
+        additional_context = self._build_agentic_additional_context(
+            flash_context, rag_context
+        )
+        system_prompt = prompt_composer.compose_system_prompt(
+            memory_context=memo_context,
+            user_emotion=state["user_emotion"].label,
+            additional_context=additional_context,
+            emotion_guidance=emotion_guidance,
+        )
+        user_prompt = self._build_agentic_user_prompt(
+            transcript, state["user_emotion"], flash_context, rag_context
+        )
+
+        if cancel_check:
+            cancel_check()
+        return generate_llm_reply(
+            user_prompt,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=256,
+        )
+
+    def _ensure_flash_context(self, state: GraphState) -> Dict[str, Any]:
+        context = state.get("context_memory")
+        if context:
+            return context
+        try:
+            context = memory_manager.get_context_for_llm(
+                state["session_id"], access_token=state.get("supabase_token")
+            )
+        except Exception as exc:
+            logger.warning("Flash memory retrieval failed: %s", exc)
+            context = {}
+        state["context_memory"] = context or {}
+        return state["context_memory"]
+
+    def _ensure_memo_context(self, state: GraphState) -> Dict[str, Any]:
+        memo_context = state.get("memo_context") or {}
+        if memo_context.get("memories"):
+            return memo_context
+        try:
+            user_id = state.get("user_id", state["session_id"])
+            memo_context = asyncio.run(
+                memo_client.get_context_for_llm(
+                    user_id=user_id,
+                    current_query=state.get("transcript", ""),
+                    access_token=state.get("supabase_token"),
+                )
+            )
+        except Exception as exc:
+            logger.warning("MemO context retrieval failed: %s", exc)
+            memo_context = {
+                "memories": [],
+                "memory_summary": "error retrieving memories",
+            }
+        state["memo_context"] = memo_context
+        return memo_context
+
+    def _build_agentic_additional_context(
+        self, flash_context: Dict[str, Any], rag_context: str
+    ) -> str:
+        sections: List[str] = []
+        flash_block = self._format_flash_context_for_prompt(flash_context)
+        if flash_block:
+            sections.append("Flash memory snapshot:\n" + flash_block)
+        if rag_context:
+            sections.append(f"Knowledge snippets:\n{rag_context}")
+        return "\n\n".join(sections)
+
+    def _format_flash_context_for_prompt(self, context: Dict[str, Any]) -> str:
+        if not context:
+            return ""
+        parts: List[str] = []
+        if context.get("last_topics"):
+            parts.append(f"Recent topics: {', '.join(context['last_topics'])}")
+        if context.get("last_user_tone"):
+            parts.append(f"Previous user tone: {context['last_user_tone']}")
+        if context.get("recent_intents"):
+            parts.append(
+                f"Recent conversation intents: {', '.join(context['recent_intents'])}"
+            )
+        if context.get("conversation_turns"):
+            parts.append(f"Stored turns: {context['conversation_turns']}")
+        return "\n".join(parts)
+
+    def _build_agentic_user_prompt(
         self,
         transcript: str,
-        intent: str,
         user_emotion: EmotionData,
-        context: str,
-        emotion_guidance: List[str],
-        *,
-        cancel_check: Optional[CancelCallback] = None,
+        flash_context: Dict[str, Any],
+        rag_context: str,
     ) -> str:
-        """Generate response with context and emotion awareness"""
-        if cancel_check:
-            cancel_check()
-        # Get RAG context for DeFi questions
-        rag_context = ""
-        if intent == "defi_question":
-            rag_context = rag_system.get_context_for_llm(transcript)
-            logger.info(f"RAG context retrieved: {len(rag_context)} characters")
-
-        # Enhanced prompt based on intent and emotion
-        # if intent == "defi_question":
-        #    system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Use the provided FAQ context to give accurate, educational responses about DeFi concepts. Keep responses under 50 words."
-        # elif intent == "emotional_support":
-        #    system_prompt = "You are Sophia, an empathetic AI companion. Provide supportive and encouraging responses. Keep responses under 50 words."
-        # else:
-        #    system_prompt = "You are Sophia, a friendly AI assistant. Engage in casual conversation. Keep responses under 50 words."
-
-        # Build comprehensive prompt
-        prompt_parts = [
-            f"The user seems {user_emotion.label} (confidence: {user_emotion.confidence:.2f})."
+        parts = [
+            f"The user currently feels {user_emotion.label} (confidence {user_emotion.confidence:.2f})."
         ]
-
-        if context:
-            prompt_parts.append(f"Conversation context: {context}")
-
-        guidance_block = format_guidance_block(emotion_guidance)
-        if guidance_block:
-            prompt_parts.append(guidance_block)
-            logger.info(
-                "Legacy system prompt guidance applied: %s%s",
-                "; ".join(emotion_guidance[:2]),
-                "..." if len(emotion_guidance) > 2 else "",
+        if flash_context.get("last_topics"):
+            parts.append(
+                f"They were previously discussing: {', '.join(flash_context['last_topics'])}."
             )
-
+        parts.append(f"Latest message: {transcript}")
         if rag_context:
-            prompt_parts.append(f"Relevant knowledge base:\n{rag_context}")
-
-        prompt_parts.append(f"User question: {transcript}")
-
-        full_prompt = " | ".join(prompt_parts)
-
-        if cancel_check:
-            cancel_check()
-        return generate_llm_reply(full_prompt, cancel_check=cancel_check)
-        # Use the new context-aware function instead of cramming everything into user message
-        # return generate_llm_reply_with_context(
-        #     user_question=transcript,
-        #     rag_context=rag_context,
-        #     emotion_label=user_emotion.label,
-        #     memory_context=context,
-        #     intent=intent
-        # )
+            parts.append(f"Relevant knowledge:\n{rag_context}")
+        return " | ".join(parts)
 
     def _claude_fallback(
         self,
@@ -902,14 +1080,16 @@ class EvalLogger:
         # Task #42597: Extract and store important information in MemO
         try:
             user_id = state.get("user_id", state["session_id"])
-            asyncio.run(self._extract_and_store_memories(
-                user_id=user_id,
-                session_id=state["session_id"],
-                transcript=state["transcript"],
-                response=state["llm_response"],
-                intent=state["intent"],
-                user_emotion=state["user_emotion"].label
-            ))
+            asyncio.run(
+                self._extract_and_store_memories(
+                    user_id=user_id,
+                    session_id=state["session_id"],
+                    transcript=state["transcript"],
+                    response=state["llm_response"],
+                    intent=state["intent"],
+                    user_emotion=state["user_emotion"].label,
+                )
+            )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
 
@@ -925,37 +1105,49 @@ class EvalLogger:
         transcript: str,
         response: str,
         intent: str,
-        user_emotion: str
+        user_emotion: str,
     ):
         """Extract and store important memories from conversation (Task #42597)"""
         memories_to_store = []
 
         # Extract preferences from transcript
-        preference_keywords = ["i prefer", "i like", "i love", "i want", "i need", "my favorite"]
+        preference_keywords = [
+            "i prefer",
+            "i like",
+            "i love",
+            "i want",
+            "i need",
+            "my favorite",
+        ]
         if any(keyword in transcript.lower() for keyword in preference_keywords):
-            memories_to_store.append({
-                "text": transcript,
-                "type": "preference",
-                "importance": 0.8
-            })
+            memories_to_store.append(
+                {"text": transcript, "type": "preference", "importance": 0.8}
+            )
 
         # Extract emotional patterns
         if user_emotion in ["excited", "happy", "sad", "anxious", "angry"]:
             if len(transcript) > 20:  # Only store meaningful emotional context
-                memories_to_store.append({
-                    "text": f"User expressed {user_emotion} emotion: {transcript}",
-                    "type": "emotion",
-                    "importance": 0.6
-                })
+                memories_to_store.append(
+                    {
+                        "text": f"User expressed {user_emotion} emotion: {transcript}",
+                        "type": "emotion",
+                        "importance": 0.6,
+                    }
+                )
 
         # Extract factual information (names, projects, important context)
-        fact_keywords = ["i am", "i'm", "my name is", "i work", "i study", "i'm working on"]
+        fact_keywords = [
+            "i am",
+            "i'm",
+            "my name is",
+            "i work",
+            "i study",
+            "i'm working on",
+        ]
         if any(keyword in transcript.lower() for keyword in fact_keywords):
-            memories_to_store.append({
-                "text": transcript,
-                "type": "fact",
-                "importance": 0.9
-            })
+            memories_to_store.append(
+                {"text": transcript, "type": "fact", "importance": 0.9}
+            )
 
         # Store all extracted memories
         for memory in memories_to_store:
@@ -965,7 +1157,7 @@ class EvalLogger:
                     session_id=session_id,
                     memory_text=memory["text"],
                     memory_type=memory["type"],
-                    importance=memory["importance"]
+                    importance=memory["importance"],
                 )
                 logger.info(f"MemO: Stored {memory['type']} memory for user {user_id}")
             except Exception as e:
@@ -1028,7 +1220,9 @@ class SophiaLangGraph:
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
             "context_memory": {},
+            "memo_context": {"memories": []},
             "llm_response": "",
+            "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
             "tts_bytes": b"",
@@ -1070,6 +1264,8 @@ class SophiaLangGraph:
             "intent": "",
             "context_memory": {},
             "llm_response": "",
+            "memo_context": {"memories": []},
+            "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
             "tts_bytes": b"",
@@ -1137,12 +1333,15 @@ class SophiaLangGraph:
             "intent": "",
             "context_memory": {},
             "llm_response": "",
+            "memo_context": {"memories": []},
+            "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
             "emotion_guidance": [],
             "fallback_used": {},
+            "use_voxtral_large": False,
         }
 
         # Process through initial nodes
