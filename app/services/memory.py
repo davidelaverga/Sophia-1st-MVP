@@ -3,7 +3,7 @@
 import json
 import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from app.config import get_settings
 from app.services.supabase import get_supabase
@@ -39,6 +39,20 @@ class MemoryManager:
         self.settings = get_settings()
         self.redis_client = self._init_redis()
         self.max_turns = 3  # Keep last 3 turns in memory
+        ttl = getattr(self.settings, "MEMORY_LOCAL_TTL_SECONDS", 3600)
+        try:
+            ttl = int(ttl)
+        except (TypeError, ValueError):
+            ttl = 3600
+        ttl = max(60, ttl)
+        cache_limit = getattr(self.settings, "MEMORY_LOCAL_CACHE_LIMIT", 256)
+        try:
+            cache_limit = int(cache_limit)
+        except (TypeError, ValueError):
+            cache_limit = 256
+        self._local_store_ttl = ttl
+        self._local_store_limit = max(1, cache_limit)
+        self._local_store: Dict[str, Tuple[SessionMemory, float]] = {}
 
     def _init_redis(self):
         """Initialize Redis client"""
@@ -70,6 +84,11 @@ class MemoryManager:
             except Exception as e:
                 logger.error(f"Redis get failed: {e}")
 
+        # Fallback to local in-process cache before Supabase
+        local_memory = self._get_local_memory(session_id)
+        if local_memory:
+            return local_memory
+
         # Fallback to Supabase
         try:
             supabase_client = get_supabase(access_token)
@@ -81,7 +100,9 @@ class MemoryManager:
             )
             if result.data:
                 session_data = result.data[0]
-                return self._build_memory_from_session(session_data)
+                memory = self._build_memory_from_session(session_data)
+                self._set_local_memory(session_id, memory)
+                return memory
         except Exception as e:
             logger.error(f"Supabase memory retrieval failed: {e}")
 
@@ -141,6 +162,7 @@ class MemoryManager:
 
         # Also persist to Supabase
         self._persist_to_supabase(memory)
+        self._set_local_memory(session_id, memory)
 
         return memory
 
@@ -152,6 +174,17 @@ class MemoryManager:
         if not memory:
             return {}
 
+        recent_turns = [
+            {
+                "user": turn.query,
+                "sophia": turn.response,
+                "intent": turn.intent,
+                "timestamp": turn.timestamp,
+            }
+            for turn in memory.turns[-self.max_turns :]
+            if turn.query or turn.response
+        ]
+
         context = {
             "last_topics": memory.topics,
             "last_user_tone": memory.user_tone_history[-1]
@@ -161,9 +194,51 @@ class MemoryManager:
             "recent_intents": [turn.intent for turn in memory.turns[-2:]]
             if len(memory.turns) >= 2
             else [],
+            "recent_turns": recent_turns,
         }
 
         return context
+
+    def _get_local_memory(self, session_id: str) -> Optional[SessionMemory]:
+        """Return cached memory from the local in-process store if available."""
+        entry = self._local_store.get(session_id)
+        if not entry:
+            self._prune_local_store()
+            return None
+        memory, expires_at = entry
+        if expires_at < time.time():
+            self._local_store.pop(session_id, None)
+            return None
+        return memory
+
+    def _set_local_memory(self, session_id: str, memory: SessionMemory) -> None:
+        """Store memory in local cache with TTL so we still have context without Redis."""
+        expires_at = time.time() + self._local_store_ttl
+        self._local_store[session_id] = (memory, expires_at)
+        self._prune_local_store()
+
+    def _prune_local_store(self) -> None:
+        """Remove expired or overflow entries from the local cache."""
+        now = time.time()
+        expired = [
+            session_id
+            for session_id, (_, expires_at) in self._local_store.items()
+            if expires_at < now
+        ]
+        for session_id in expired:
+            self._local_store.pop(session_id, None)
+
+        if len(self._local_store) <= self._local_store_limit:
+            return
+
+        overflow = len(self._local_store) - self._local_store_limit
+        if overflow <= 0:
+            return
+
+        # Remove the soonest-to-expire entries first
+        sorted_sessions = sorted(self._local_store.items(), key=lambda item: item[1][1])
+        for session_id, _ in sorted_sessions[:overflow]:
+            self._local_store.pop(session_id, None)
 
     def _extract_topics(self, query: str) -> List[str]:
         """Simple topic extraction from query"""

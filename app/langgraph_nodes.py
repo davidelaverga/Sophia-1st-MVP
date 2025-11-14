@@ -558,7 +558,36 @@ class ResponseGenerator:
             if memo_texts:
                 context_parts.append(f"User memories: {'; '.join(memo_texts)}")
 
+        history_block = self._format_recent_turns_for_prompt(
+            context.get("recent_turns")
+        )
+        if history_block:
+            context_parts.append(f"Recent conversation:\n{history_block}")
+
         return " | ".join(context_parts) if context_parts else ""
+
+    def _format_recent_turns_for_prompt(
+        self, recent_turns: Optional[Sequence[Dict[str, Any]]], *, max_turns: int = 3
+    ) -> str:
+        """Format recent user/Sophia turns into a compact prompt snippet."""
+        if not recent_turns:
+            return ""
+
+        trimmed = [
+            turn for turn in recent_turns if turn.get("user") or turn.get("sophia")
+        ]
+        if not trimmed:
+            return ""
+
+        lines: List[str] = []
+        for turn in trimmed[-max_turns:]:
+            user_line = (turn.get("user") or "").strip()
+            sophia_line = (turn.get("sophia") or "").strip()
+            if user_line:
+                lines.append(f"User: {user_line}")
+            if sophia_line:
+                lines.append(f"Sophia: {sophia_line}")
+        return "\n".join(lines)
 
     def _build_voxtral_system_prompt(
         self,
@@ -798,6 +827,11 @@ class ResponseGenerator:
         flash_block = self._format_flash_context_for_prompt(flash_context)
         if flash_block:
             sections.append("Flash memory snapshot:\n" + flash_block)
+        history_block = self._format_recent_turns_for_prompt(
+            flash_context.get("recent_turns")
+        )
+        if history_block:
+            sections.append("Conversation history:\n" + history_block)
         if rag_context:
             sections.append(f"Knowledge snippets:\n{rag_context}")
         return "\n\n".join(sections)
@@ -832,6 +866,11 @@ class ResponseGenerator:
             parts.append(
                 f"They were previously discussing: {', '.join(flash_context['last_topics'])}."
             )
+        history_block = self._format_recent_turns_for_prompt(
+            flash_context.get("recent_turns"), max_turns=2
+        )
+        if history_block:
+            parts.append(f"Conversation so far:\n{history_block}")
         parts.append(f"Latest message: {transcript}")
         if rag_context:
             parts.append(f"Relevant knowledge:\n{rag_context}")

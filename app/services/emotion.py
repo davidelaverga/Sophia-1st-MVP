@@ -13,6 +13,29 @@ class Emotion(BaseModel):
     confidence: float
 
 
+def _map_raw_label(label: Optional[str]) -> str:
+    normalized = (label or "").strip().lower()
+    mapping = {
+        "negative": "negative",
+        "sad": "negative",
+        "anger": "negative",
+        "angry": "negative",
+        "fear": "negative",
+        "fearful": "negative",
+        "grief": "negative",
+        "panic": "negative",
+        "depressed": "negative",
+        "unhappy": "negative",
+        "positive": "positive",
+        "joy": "positive",
+        "happy": "positive",
+        "excited": "positive",
+        "neutral": "neutral",
+        "calm": "neutral",
+    }
+    return mapping.get(normalized, "neutral")
+
+
 def _classify_with_phoenix(text: str) -> Optional[Emotion]:
     try:
         # Lazy import to avoid hard dep if not installed in some envs
@@ -47,9 +70,8 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
             # Fallback parse
             label = "neutral"
             score = 0.5
-        if label not in {"positive", "neutral", "negative"}:
-            label = "neutral"
-        return Emotion(label=label, confidence=score)
+        mapped = _map_raw_label(label)
+        return Emotion(label=mapped, confidence=score)
     except Exception as e:
         logger.warning(f"Phoenix emotion model failed: {e}")
         return None
@@ -92,29 +114,22 @@ def _classify_with_llm(text: str) -> Emotion:
         except Exception:
             label = "neutral"
             conf = 0.5
-        if label not in {"positive", "neutral", "negative"}:
-            label = "neutral"
+        mapped = _map_raw_label(label)
         conf = max(0.0, min(1.0, conf))
-        return Emotion(label=label, confidence=conf)
+        return Emotion(label=mapped, confidence=conf)
     except Exception:
         return Emotion(label="neutral", confidence=0.5)
 
 
 def analyze_emotion_text(text: str) -> Emotion:
     # Define allowed emotion labels for database compatibility
-    ALLOWED_LABELS = ["positive", "neutral", "negative"]
-
     phoenix = _classify_with_phoenix(text)
     if phoenix:
-        # Ensure label is in allowed list
-        if phoenix.label not in ALLOWED_LABELS:
-            phoenix.label = "neutral"
+        phoenix.label = _map_raw_label(phoenix.label)
         return phoenix
 
     result = _classify_with_llm(text)
-    # Ensure label is in allowed list
-    if result.label not in ALLOWED_LABELS:
-        result.label = "neutral"
+    result.label = _map_raw_label(result.label)
     return result
 
 

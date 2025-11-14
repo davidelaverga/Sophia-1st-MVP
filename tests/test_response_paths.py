@@ -103,7 +103,14 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
     with (
         patch(
             "app.langgraph_nodes.memory_manager.get_context_for_llm",
-            return_value={"last_topics": ["staking"], "conversation_turns": 2},
+            return_value={
+                "last_topics": ["staking"],
+                "conversation_turns": 2,
+                "recent_turns": [
+                    {"user": "Hi Sophia", "sophia": "Hey there"},
+                    {"user": "Explain APY versus APR for staking.", "sophia": ""},
+                ],
+            },
         ) as mock_flash,
         patch(
             "app.langgraph_nodes.memo_client.get_context_for_llm",
@@ -148,3 +155,5 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
     args, kwargs = mock_llm.call_args
     assert kwargs["system_prompt"] == "system-with-guidance"
     assert "Explain APY" in args[0]
+    assert "Conversation so far" in args[0]
+    assert "Hi Sophia" in args[0]
