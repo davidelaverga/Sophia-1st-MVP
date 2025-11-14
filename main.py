@@ -45,6 +45,7 @@ from app.services.emotional_guidance import (
     get_guidance as get_emotional_guidance,
     build_emotion_guided_prompt,
 )
+from app.services.memory import memory_manager, ConversationTurn
 from dotenv import load_dotenv
 
 from opentelemetry import trace
@@ -1482,6 +1483,65 @@ async def text_chat(
             )
 
 
+def _format_memory_context_for_prompt(context: Optional[Dict[str, Any]]) -> str:
+    if not context:
+        return ""
+
+    parts: list[str] = []
+    topics = context.get("last_topics") or []
+    if topics:
+        parts.append(f"Recent topics: {', '.join(topics)}")
+
+    tone = context.get("last_user_tone")
+    if tone:
+        parts.append(f"Previous user tone: {tone}")
+
+    intents = context.get("recent_intents") or []
+    if intents:
+        parts.append(f"Recent intents: {', '.join(intents)}")
+
+    recent_turns = context.get("recent_turns") or []
+    if recent_turns:
+        snippet_lines: list[str] = [
+            "Conversation so far (use for context only; do not repeat lines verbatim):"
+        ]
+        for turn in recent_turns[-3:]:
+            user_line = (turn.get("user") or "").strip()
+            sophia_line = (turn.get("sophia") or "").strip()
+            if user_line:
+                snippet_lines.append(f"User: {user_line}")
+            if sophia_line:
+                snippet_lines.append(f"Sophia: {sophia_line}")
+        if len(snippet_lines) > 1:
+            parts.append("\n".join(snippet_lines))
+
+    return "\n".join(parts)
+
+
+def _record_text_stream_turn(
+    session_id: str,
+    user_text: str,
+    reply: str,
+    user_emotion: Dict[str, Any],
+    sophia_emotion: Optional[Emotion],
+    supabase_token: Optional[str],
+):
+    try:
+        turn = ConversationTurn(
+            query=user_text,
+            response=reply,
+            user_emotion=user_emotion.get("label") or "neutral",
+            sophia_emotion=getattr(sophia_emotion, "label", "neutral"),
+            intent="text_chat",
+            timestamp=time.time(),
+        )
+        memory_manager.update_session_memory(
+            session_id, turn, access_token=supabase_token
+        )
+    except Exception as exc:
+        logger.warning("Text chat stream memory update failed: %s", exc)
+
+
 @app.post("/text-chat/stream")
 @limiter.limit(settings.API_RATE_LIMIT)
 async def text_chat_stream(
@@ -1551,11 +1611,26 @@ async def text_chat_stream(
                     )
                     emotion_guidance = []
 
+                memory_context_text = ""
+                try:
+                    flash_context = memory_manager.get_context_for_llm(
+                        session_identifier, access_token=supabase_token
+                    )
+                    memory_context_text = _format_memory_context_for_prompt(
+                        flash_context
+                    )
+                except Exception as context_error:
+                    logger.warning(
+                        "Text chat stream memory lookup failed: %s", context_error
+                    )
+                    memory_context_text = ""
+
                 guided_prompt = build_emotion_guided_prompt(
                     body.message,
                     emotion_label,
                     emotion_conf,
                     emotion_guidance,
+                    conversation_context=memory_context_text,
                 )
 
                 turn_state.set_status("streaming")
@@ -1612,6 +1687,15 @@ async def text_chat_stream(
                     "mock_audio": mock_audio,
                     "user_emotion": user_emotion_payload,
                 }
+
+                _record_text_stream_turn(
+                    session_identifier,
+                    body.message,
+                    reply,
+                    user_emotion_payload,
+                    sophia_emotion,
+                    supabase_token,
+                )
                 turn_state.set_status("completed")
                 yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
 
@@ -1649,8 +1733,6 @@ async def get_memory(
 ):
     """Get conversation memory for a session"""
     try:
-        from app.services.memory import memory_manager
-
         context = memory_manager.get_context_for_llm(
             session_id, access_token=supabase_token
         )

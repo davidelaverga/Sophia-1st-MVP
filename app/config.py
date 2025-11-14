@@ -100,6 +100,14 @@ class Settings:
         os.getenv("EMOTIONAL_RAG_TIMEOUT_SECONDS", "0.3")
     )
 
+    # Affect snapshot / Phoenix background
+    AFFECT_SNAPSHOT_TTL_SECONDS: int = int(
+        os.getenv("AFFECT_SNAPSHOT_TTL_SECONDS", "300")
+    )
+    PHOENIX_BG_TIMEOUT_SECONDS: float = float(
+        os.getenv("PHOENIX_BG_TIMEOUT_SECONDS", "12.0")
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

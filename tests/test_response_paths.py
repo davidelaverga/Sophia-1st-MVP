@@ -38,12 +38,16 @@ def test_direct_path_returns_snippet_without_llm():
     with (
         patch("app.langgraph_nodes.generate_llm_reply") as mock_llm,
         patch("app.langgraph_nodes.memory_manager.get_context_for_llm") as mock_flash,
+        patch("app.langgraph_nodes.trigger_phoenix_bg") as mock_phoenix,
     ):
         generator._process_with_legacy_llm(state)
 
     assert state["response_path"] == ResponsePath.DIRECT.value
     mock_llm.assert_not_called()
     mock_flash.assert_not_called()
+    mock_phoenix.assert_called_once_with(
+        state["session_id"], state["transcript"], False
+    )
     assert (
         state["llm_response"]
         == "Hi—I'm here with you. What would you like to talk about?"
@@ -57,7 +61,8 @@ def test_direct_path_negative_emotion_uses_calming_message():
     generator = ResponseGenerator(use_voxtral_large=False)
     generator._response_path_split = True
 
-    generator._process_with_legacy_llm(state)
+    with patch("app.langgraph_nodes.trigger_phoenix_bg"):
+        generator._process_with_legacy_llm(state)
 
     assert state["response_path"] == ResponsePath.DIRECT.value
     assert state["llm_response"] == "I'm here. We can take this one step at a time."
@@ -82,6 +87,7 @@ def test_light_path_uses_tone_and_token_limit():
         patch(
             "app.langgraph_nodes.generate_llm_reply", return_value="light reply"
         ) as mock_llm,
+        patch("app.langgraph_nodes.trigger_phoenix_bg") as mock_phoenix,
     ):
         generator._process_with_legacy_llm(state)
 
@@ -91,6 +97,9 @@ def test_light_path_uses_tone_and_token_limit():
     _, kwargs = mock_llm.call_args
     assert kwargs["max_tokens"] == 180
     assert "gentle" in kwargs["system_prompt"].lower()
+    mock_phoenix.assert_called_once_with(
+        state["session_id"], state["transcript"], False
+    )
 
 
 def test_agentic_path_includes_emotion_guidance_in_prompt():
@@ -103,7 +112,14 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
     with (
         patch(
             "app.langgraph_nodes.memory_manager.get_context_for_llm",
-            return_value={"last_topics": ["staking"], "conversation_turns": 2},
+            return_value={
+                "last_topics": ["staking"],
+                "conversation_turns": 2,
+                "recent_turns": [
+                    {"user": "Hi Sophia", "sophia": "Hey there"},
+                    {"user": "Explain APY versus APR for staking.", "sophia": ""},
+                ],
+            },
         ) as mock_flash,
         patch(
             "app.langgraph_nodes.memo_client.get_context_for_llm",
@@ -148,3 +164,28 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
     args, kwargs = mock_llm.call_args
     assert kwargs["system_prompt"] == "system-with-guidance"
     assert "Explain APY" in args[0]
+    assert "Conversation so far" in args[0]
+    assert "Hi Sophia" in args[0]
+
+
+def test_affect_snapshot_seeds_direct_path_emotion():
+    state = _base_state()
+    state["transcript"] = "hello there"
+    state["user_emotion"] = EmotionData(label="neutral", confidence=0.2)
+    generator = ResponseGenerator(use_voxtral_large=False)
+    generator._response_path_split = True
+
+    snapshot = {"emotion": "panic", "confidence": 0.92}
+
+    with (
+        patch(
+            "app.langgraph_nodes.memory_manager.get_context_for_llm", return_value={}
+        ),
+        patch("app.langgraph_nodes.memory_manager.peek_affect", return_value=snapshot),
+        patch("app.langgraph_nodes.trigger_phoenix_bg"),
+    ):
+        generator._process_with_legacy_llm(state)
+
+    assert state["response_path"] == ResponsePath.DIRECT.value
+    assert state["user_emotion"].label == "panic"
+    assert state["llm_response"] == "I'm here. We can take this one step at a time."

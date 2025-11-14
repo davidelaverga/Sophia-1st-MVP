@@ -3,8 +3,9 @@
 import json
 import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from app.config import get_settings
 from app.services.supabase import get_supabase
 
@@ -32,6 +33,28 @@ class SessionMemory:
     updated_at: float
 
 
+@dataclass
+class AffectSnapshot:
+    """Structured affect payload stored in Flash/Redis."""
+
+    emotion: str
+    confidence: float
+    trend: str
+    sentiment: str
+    voice_signal_present: bool
+    updated_at: str
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "emotion": self.emotion,
+            "confidence": self.confidence,
+            "trend": self.trend,
+            "sentiment": self.sentiment,
+            "voice_signal_present": self.voice_signal_present,
+            "updated_at": self.updated_at,
+        }
+
+
 class MemoryManager:
     """Manages conversation memory using Redis for fast access and Supabase for persistence"""
 
@@ -39,6 +62,28 @@ class MemoryManager:
         self.settings = get_settings()
         self.redis_client = self._init_redis()
         self.max_turns = 3  # Keep last 3 turns in memory
+        ttl = getattr(self.settings, "MEMORY_LOCAL_TTL_SECONDS", 3600)
+        try:
+            ttl = int(ttl)
+        except (TypeError, ValueError):
+            ttl = 3600
+        ttl = max(60, ttl)
+        cache_limit = getattr(self.settings, "MEMORY_LOCAL_CACHE_LIMIT", 256)
+        try:
+            cache_limit = int(cache_limit)
+        except (TypeError, ValueError):
+            cache_limit = 256
+        self._local_store_ttl = ttl
+        self._local_store_limit = max(1, cache_limit)
+        self._local_store: Dict[str, Tuple[SessionMemory, float]] = {}
+
+        affect_ttl = getattr(self.settings, "AFFECT_SNAPSHOT_TTL_SECONDS", 300)
+        try:
+            affect_ttl = int(affect_ttl)
+        except (TypeError, ValueError):
+            affect_ttl = 300
+        self._affect_ttl_seconds = max(5, affect_ttl)
+        self._affect_flash_store: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
     def _init_redis(self):
         """Initialize Redis client"""
@@ -55,6 +100,35 @@ class MemoryManager:
             logger.warning(f"Redis connection failed: {e}. Using in-memory fallback.")
             return None
 
+    def _affect_key(self, session_id: str) -> str:
+        return f"affect:{session_id}"
+
+    def _set_local_affect(self, session_id: str, payload: Dict[str, Any]) -> None:
+        expires_at = time.time() + self._affect_ttl_seconds
+        self._affect_flash_store[session_id] = (payload, expires_at)
+
+    def _get_local_affect(self, session_id: str) -> Optional[Dict[str, Any]]:
+        entry = self._affect_flash_store.get(session_id)
+        if not entry:
+            return None
+        payload, expires_at = entry
+        if expires_at < time.time():
+            self._affect_flash_store.pop(session_id, None)
+            return None
+        return payload.copy()
+
+    def _normalize_affect_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        now_iso = datetime.utcnow().isoformat()
+        snapshot = AffectSnapshot(
+            emotion=str(payload.get("emotion") or "neutral"),
+            confidence=float(payload.get("confidence", 0.5)),
+            trend=str(payload.get("trend") or "steady"),
+            sentiment=str(payload.get("sentiment") or "neutral"),
+            voice_signal_present=bool(payload.get("voice_signal_present", False)),
+            updated_at=str(payload.get("updated_at") or now_iso),
+        )
+        return snapshot.to_payload()
+
     def get_session_memory(
         self, session_id: str, access_token: Optional[str] = None
     ) -> Optional[SessionMemory]:
@@ -70,6 +144,11 @@ class MemoryManager:
             except Exception as e:
                 logger.error(f"Redis get failed: {e}")
 
+        # Fallback to local in-process cache before Supabase
+        local_memory = self._get_local_memory(session_id)
+        if local_memory:
+            return local_memory
+
         # Fallback to Supabase
         try:
             supabase_client = get_supabase(access_token)
@@ -81,7 +160,9 @@ class MemoryManager:
             )
             if result.data:
                 session_data = result.data[0]
-                return self._build_memory_from_session(session_data)
+                memory = self._build_memory_from_session(session_data)
+                self._set_local_memory(session_id, memory)
+                return memory
         except Exception as e:
             logger.error(f"Supabase memory retrieval failed: {e}")
 
@@ -141,6 +222,7 @@ class MemoryManager:
 
         # Also persist to Supabase
         self._persist_to_supabase(memory)
+        self._set_local_memory(session_id, memory)
 
         return memory
 
@@ -152,6 +234,17 @@ class MemoryManager:
         if not memory:
             return {}
 
+        recent_turns = [
+            {
+                "user": turn.query,
+                "sophia": turn.response,
+                "intent": turn.intent,
+                "timestamp": turn.timestamp,
+            }
+            for turn in memory.turns[-self.max_turns :]
+            if turn.query or turn.response
+        ]
+
         context = {
             "last_topics": memory.topics,
             "last_user_tone": memory.user_tone_history[-1]
@@ -161,9 +254,98 @@ class MemoryManager:
             "recent_intents": [turn.intent for turn in memory.turns[-2:]]
             if len(memory.turns) >= 2
             else [],
+            "recent_turns": recent_turns,
         }
 
         return context
+
+    def set_affect_snapshot(self, session_id: str, payload: Dict[str, Any]) -> None:
+        """Persist affect snapshot in flash + redis."""
+        if not session_id or not isinstance(payload, dict):
+            return
+        snapshot = self._normalize_affect_payload(payload)
+        self._set_local_affect(session_id, snapshot)
+        if self.redis_client:
+            try:
+                self.redis_client.setex(
+                    self._affect_key(session_id),
+                    self._affect_ttl_seconds,
+                    json.dumps(snapshot),
+                )
+            except Exception as exc:
+                logger.warning("Redis affect snapshot store failed: %s", exc)
+
+    def get_affect_snapshot(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve affect snapshot with Redis fallback."""
+        if not session_id:
+            return None
+        snapshot = self._get_local_affect(session_id)
+        if snapshot:
+            return snapshot
+        if not self.redis_client:
+            return None
+        try:
+            raw = self.redis_client.get(self._affect_key(session_id))
+            if not raw:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            snapshot = json.loads(raw)
+            self._set_local_affect(session_id, snapshot)
+            return snapshot
+        except Exception as exc:
+            logger.warning("Redis affect snapshot fetch failed: %s", exc)
+            return None
+
+    def peek_affect(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Lightweight affect lookup that prefers flash memory."""
+        if not session_id:
+            return None
+        snapshot = self._get_local_affect(session_id)
+        if snapshot:
+            return snapshot
+        return self.get_affect_snapshot(session_id)
+
+    def _get_local_memory(self, session_id: str) -> Optional[SessionMemory]:
+        """Return cached memory from the local in-process store if available."""
+        entry = self._local_store.get(session_id)
+        if not entry:
+            self._prune_local_store()
+            return None
+        memory, expires_at = entry
+        if expires_at < time.time():
+            self._local_store.pop(session_id, None)
+            return None
+        return memory
+
+    def _set_local_memory(self, session_id: str, memory: SessionMemory) -> None:
+        """Store memory in local cache with TTL so we still have context without Redis."""
+        expires_at = time.time() + self._local_store_ttl
+        self._local_store[session_id] = (memory, expires_at)
+        self._prune_local_store()
+
+    def _prune_local_store(self) -> None:
+        """Remove expired or overflow entries from the local cache."""
+        now = time.time()
+        expired = [
+            session_id
+            for session_id, (_, expires_at) in self._local_store.items()
+            if expires_at < now
+        ]
+        for session_id in expired:
+            self._local_store.pop(session_id, None)
+
+        if len(self._local_store) <= self._local_store_limit:
+            return
+
+        overflow = len(self._local_store) - self._local_store_limit
+        if overflow <= 0:
+            return
+
+        # Remove the soonest-to-expire entries first
+        sorted_sessions = sorted(self._local_store.items(), key=lambda item: item[1][1])
+        for session_id, _ in sorted_sessions[:overflow]:
+            self._local_store.pop(session_id, None)
 
     def _extract_topics(self, query: str) -> List[str]:
         """Simple topic extraction from query"""
