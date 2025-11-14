@@ -14,7 +14,11 @@ from app.services.mistral import (
     transcribe_audio_with_voxtral,
     generate_llm_reply,
 )
-from app.services.emotion import analyze_emotion_audio, infer_text_emotion
+from app.services.emotion import (
+    analyze_emotion_audio,
+    infer_text_emotion,
+    trigger_phoenix_bg,
+)
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
@@ -439,10 +443,12 @@ class ResponseGenerator:
             )
             return state
 
+        self._seed_emotion_from_affect_snapshot(state)
         path = self._select_response_path(state)
         state["response_path"] = path.value
 
         if path is ResponsePath.DIRECT:
+            self._launch_phoenix_background(state)
             state["llm_response"] = self._generate_direct_snippet(state)
             logger.info(
                 "ResponseGenerator selected DIRECT path for session %s",
@@ -451,6 +457,7 @@ class ResponseGenerator:
             return state
 
         if path is ResponsePath.LIGHT:
+            self._launch_phoenix_background(state)
             state["llm_response"] = self._generate_light_response(
                 state, cancel_check=cancel_check
             )
@@ -653,6 +660,53 @@ class ResponseGenerator:
         prompt_parts.append(f"User question: {transcript}")
 
         return " | ".join(prompt_parts)
+
+    def _prosody_present(self, state: GraphState) -> bool:
+        audio_bytes = state.get("audio_bytes")
+        return bool(audio_bytes and len(audio_bytes) > 0)
+
+    def _launch_phoenix_background(self, state: GraphState) -> None:
+        transcript = state.get("transcript", "")
+        if not transcript:
+            return
+        try:
+            trigger_phoenix_bg(
+                state["session_id"], transcript, self._prosody_present(state)
+            )
+        except Exception as exc:
+            logger.warning("Phoenix background trigger failed: %s", exc)
+
+    def _seed_emotion_from_affect_snapshot(
+        self, state: GraphState
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            snapshot = memory_manager.peek_affect(state["session_id"])
+        except Exception as exc:
+            logger.warning("Affect snapshot lookup failed: %s", exc)
+            return None
+
+        if not snapshot:
+            return None
+
+        state["affect_snapshot"] = snapshot
+        current = state.get("user_emotion")
+        current_label = getattr(current, "label", "neutral")
+        current_conf = getattr(current, "confidence", 0.0)
+
+        if current_label == "neutral" or current_conf < 0.55:
+            new_label = snapshot.get("emotion", current_label)
+            try:
+                new_conf = float(snapshot.get("confidence", current_conf or 0.6))
+            except (TypeError, ValueError):
+                new_conf = 0.6
+            state["user_emotion"] = EmotionData(label=new_label, confidence=new_conf)
+            logger.info(
+                "Seeded user emotion from affect snapshot for %s → %s (%.2f)",
+                state["session_id"],
+                new_label,
+                new_conf,
+            )
+        return snapshot
 
     def _select_response_path(self, state: GraphState) -> ResponsePath:
         transcript = (state.get("transcript") or "").strip()
