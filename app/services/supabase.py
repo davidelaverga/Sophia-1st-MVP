@@ -6,7 +6,18 @@ import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
-from dotenv import load_dotenv, find_dotenv
+
+try:
+    from dotenv import load_dotenv, find_dotenv
+except ImportError:  # pragma: no cover - optional dependency for local dev
+
+    def load_dotenv(*_args, **_kwargs):  # type: ignore[override]
+        return False
+
+    def find_dotenv(*_args, **_kwargs):  # type: ignore[override]
+        return ""
+
+
 from supabase import Client, create_client
 
 try:

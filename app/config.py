@@ -49,7 +49,7 @@ class Settings:
     SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_ANON_KEY: Optional[str] = os.getenv("SUPABASE_ANON_KEY")
-    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
+    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "audio")
     SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
     SUPABASE_SIGNED_URL_TTL: int = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 
@@ -99,6 +99,14 @@ class Settings:
     EMOTIONAL_RAG_SERVICE_URL: Optional[str] = os.getenv("EMOTIONAL_RAG_SERVICE_URL")
     EMOTIONAL_RAG_TIMEOUT_SECONDS: float = float(
         os.getenv("EMOTIONAL_RAG_TIMEOUT_SECONDS", "0.3")
+    )
+
+    # Affect snapshot / Phoenix background
+    AFFECT_SNAPSHOT_TTL_SECONDS: int = int(
+        os.getenv("AFFECT_SNAPSHOT_TTL_SECONDS", "300")
+    )
+    PHOENIX_BG_TIMEOUT_SECONDS: float = float(
+        os.getenv("PHOENIX_BG_TIMEOUT_SECONDS", "12.0")
     )
 
 

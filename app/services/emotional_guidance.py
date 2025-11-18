@@ -208,6 +208,8 @@ def build_emotion_guided_prompt(
     emotion_confidence: float,
     guidance: Sequence[str],
     *,
+    conversation_context: Optional[str] = None,
+    additional_context: Optional[str] = None,
     max_words: int = 60,
 ) -> str:
     """Compose an instruction string that carries emotion cues into downstream prompts."""
@@ -222,6 +224,12 @@ def build_emotion_guided_prompt(
     guidance_block = format_guidance_block(guidance)
     if guidance_block:
         prompt_parts.append(guidance_block)
+
+    if conversation_context:
+        prompt_parts.append(f"Conversation context:\n{conversation_context.strip()}")
+
+    if additional_context:
+        prompt_parts.append(additional_context.strip())
 
     if safe_message:
         prompt_parts.append(f"User question: {safe_message}")

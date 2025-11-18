@@ -4,6 +4,13 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Loader2 } from 'lucide-react'
 import EmotionDisplay from './EmotionDisplay'
 
+const createLocalId = () =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+
 interface Message {
   id: string
   type: 'user' | 'sophia'
@@ -27,6 +34,7 @@ interface ChatInterfaceProps {
 
 export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading, accessToken }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('')
+  const [sessionId, setSessionId] = useState(() => createLocalId())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -38,11 +46,17 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     scrollToBottom()
   }, [messages])
 
+  useEffect(() => {
+    if (messages.length === 0) {
+      setSessionId(createLocalId())
+    }
+  }, [messages.length])
+
   const sendTextMessage = async () => {
     if (!inputText.trim() || isLoading) return
 
     const userMessage: Message = {
-      id: generateSessionId(),
+      id: createLocalId(),
       type: 'user',
       content: inputText.trim(),
       sender: 'user',
@@ -53,7 +67,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setInputText('')
     setIsLoading(true)
 
-    const sophiaId = generateSessionId()
+    const sophiaId = createLocalId()
     const updateUserEmotion = (emotion: any) => {
       setMessages(prev =>
         prev.map(m => (m.id === userMessage.id ? { ...m, emotion } : m))
@@ -79,7 +93,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
         },
         body: JSON.stringify({
           message: userMessage.content,
-          session_id: generateSessionId()
+          session_id: sessionId
         })
       })
 
@@ -199,7 +213,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
         })
       }
       const errorMessage: Message = {
-        id: generateSessionId(),
+        id: createLocalId(),
         type: 'sophia',
         content: `Sorry, I encountered an error: ${error.message}`,
         sender: 'ai',
@@ -224,14 +238,6 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     } catch (error) {
       console.error('Audio playback failed:', error)
     }
-  }
-
-  const generateSessionId = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0
-      const v = c == 'x' ? r : (r & 0x3 | 0x8)
-      return v.toString(16)
-    })
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
