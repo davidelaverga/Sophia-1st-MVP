@@ -1,3 +1,5 @@
+"""Lightweight psycopg helpers for inserting Supabase conversation data via SQL."""
+
 import contextlib
 from typing import Any, Dict
 import psycopg
@@ -28,7 +30,7 @@ def insert_conversation_session_sql(data: Dict[str, Any]) -> None:
         "id",
         "user_id",
         "transcript",
-        "response",  # Changed from "reply"
+        "reply",
         "user_emotion_label",
         "user_emotion_confidence",
         "sophia_emotion_label",
@@ -36,7 +38,11 @@ def insert_conversation_session_sql(data: Dict[str, Any]) -> None:
         "audio_url",
     ]
     sql = (
-        "insert into public.conversation_sessions (" + ",".join(cols) + ") values (" + ",".join([f"%({c})s" for c in cols]) + ")"
+        "insert into public.conversation_sessions ("
+        + ",".join(cols)
+        + ") values ("
+        + ",".join([f"%({c})s" for c in cols])
+        + ")"
     )
     with contextlib.closing(_get_conn()) as conn:
         with conn.cursor() as cur:
