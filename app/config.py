@@ -34,6 +34,7 @@ class Settings:
 
     # External services
     MISTRAL_API_KEY: Optional[str] = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_API_BASE: str = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai")
     INWORLD_API_KEY: Optional[str] = os.getenv("INWORLD_API_KEY")  # Base64 Basic token
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
@@ -48,7 +49,7 @@ class Settings:
     SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_ANON_KEY: Optional[str] = os.getenv("SUPABASE_ANON_KEY")
-    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
+    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "audio")
     SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
     SUPABASE_SIGNED_URL_TTL: int = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 

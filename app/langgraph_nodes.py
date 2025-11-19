@@ -13,12 +13,14 @@ from langgraph.graph import StateGraph, START, END
 from app.services.mistral import (
     transcribe_audio_with_voxtral,
     generate_llm_reply,
+    generate_llm_reply_with_context
 )
 from app.services.emotion import (
     analyze_emotion_audio,
     infer_text_emotion,
     trigger_phoenix_bg,
 )
+from app.services.emotional_guidance import get_guidance as get_emotional_guidance, format_guidance_block
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
@@ -188,22 +190,49 @@ class AudioIngestor:
         try:
             _maybe_cancel(state)
             # Transcribe using Voxtral + Phoenix emotion analysis
-            transcript = transcribe_audio_with_voxtral(
-                state["audio_bytes"],
-                cancel_check=state.get("cancel_check"),
+            transcript = transcribe_audio_with_voxtral(state["audio_bytes"], cancel_check=state.get("cancel_check"))
+            logger.debug(
+                "AudioIngestor: transcribe_audio_with_voxtral returned %s (len=%d)",
+                repr(transcript[:75] if isinstance(transcript, str) else transcript),
+                len(transcript) if isinstance(transcript, str) else -1,
             )
+
+            # Try Whisper immediately if Voxtral produced an empty transcript
+            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+                logger.warning(
+                    "AudioIngestor: Voxtral returned empty transcript, trying Whisper fallback"
+                )
+                state["fallback_used"]["stt"] = "voxtral_empty_whisper_fallback"
+                transcript = self._whisper_fallback(state, state["audio_bytes"])
+                whisper_preview = transcript[:50] if isinstance(transcript, str) else transcript
+                logger.info(
+                    "AudioIngestor: Whisper fallback returned %s (len=%d)",
+                    repr(whisper_preview),
+                    len(transcript) if isinstance(transcript, str) else -1,
+                )
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
 
             state["transcript"] = transcript
+            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+                logger.error(
+                    "❌ AudioIngestor produced EMPTY transcript for session %s after all fallbacks!",
+                    state["session_id"],
+                )
+                transcript_preview = "EMPTY"
+            else:
+                transcript_preview = transcript[:50] if isinstance(transcript, str) else transcript
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label, confidence=user_emotion.confidence
+                label=user_emotion.label,
+                confidence=user_emotion.confidence
             )
 
             logger.info(
-                f"AudioIngestor (legacy) completed: transcript='{transcript[:50]}...', "
-                f"emotion={user_emotion.label}({user_emotion.confidence:.2f})"
+                "AudioIngestor completed: transcript='%s...', emotion=%s(%.2f)",
+                transcript_preview,
+                user_emotion.label,
+                user_emotion.confidence,
             )
-
+            
         except Exception as e:
             logger.error(f"AudioIngestor failed: {e}")
             _raise_if_cancelled(e)
@@ -211,10 +240,21 @@ class AudioIngestor:
             state["fallback_used"]["stt"] = "whisper_fallback"
             _maybe_cancel(state)
             state["transcript"] = self._whisper_fallback(state, state["audio_bytes"])
+            logger.debug(
+                "AudioIngestor: whisper fallback returned %s (len=%d)",
+                repr(state["transcript"][:75] if isinstance(state["transcript"], str) else state["transcript"]),
+                len(state["transcript"]) if isinstance(state["transcript"], str) else -1,
+            )
+            if not state["transcript"]:
+                logger.warning(
+                    "AudioIngestor whisper fallback produced empty transcript for session %s",
+                    state["session_id"],
+                )
             # Still analyze emotion with Phoenix
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label, confidence=user_emotion.confidence
+                label=user_emotion.label,
+                confidence=user_emotion.confidence
             )
 
         return state
@@ -250,6 +290,16 @@ class IntentAnalyzer:
         logger.info(f"IntentAnalyzer processing session {state['session_id']}")
 
         transcript = state["transcript"]
+        logger.debug(
+            "IntentAnalyzer: received transcript %s (len=%d)",
+            repr(transcript[:75] if isinstance(transcript, str) else transcript),
+            len(transcript) if isinstance(transcript, str) else -1,
+        )
+        if not transcript:
+            logger.warning(
+                "IntentAnalyzer received empty transcript for session %s",
+                state["session_id"],
+            )
 
         # Simple rule-based intent classification
         intent = self._classify_intent(transcript)
@@ -259,36 +309,24 @@ class IntentAnalyzer:
         return state
 
     def _classify_intent(self, text: str) -> str:
-        """Simple intent classification"""
+        """Enhanced intent classification - prioritizes DeFi keywords over emotional cues"""
         text_lower = text.lower()
-
+        
+        # Expanded DeFi keywords for better detection
         defi_keywords = [
-            "defi",
-            "yield",
-            "staking",
-            "liquidity",
-            "farming",
-            "token",
-            "swap",
-            "protocol",
-            "apy",
-            "apr",
-            "pool",
-            "vault",
-            "ethereum",
+            "defi", "yield", "staking", "liquidity", "farming", "token", 
+            "swap", "protocol", "apy", "apr", "pool", "vault", "ethereum",
+            "crypto", "blockchain", "smart contract", "wallet", "gas", "fee",
+            "dex", "exchange", "collateral", "lending", "borrowing", "loan",
+            "impermanent loss", "slippage", "tvl", "flash loan", "governance",
+            "stablecoin", "usdc", "usdt", "dai", "mev", "risk", "audit"
         ]
-
-        emotional_keywords = [
-            "sad",
-            "worried",
-            "anxious",
-            "happy",
-            "excited",
-            "confused",
-            "frustrated",
-            "help me",
-        ]
-
+        
+        emotional_keywords = ["sad", "worried", "anxious", "happy", "excited", 
+                             "confused", "frustrated", "help me"]
+        
+        # CRITICAL: DeFi keywords take priority over emotional keywords
+        # This prevents "I'm confused about yield farming" from being classified as emotional_support
         if any(keyword in text_lower for keyword in defi_keywords):
             return "defi_question"
         elif any(keyword in text_lower for keyword in emotional_keywords):
@@ -979,17 +1017,28 @@ class TTSNode:
 
         try:
             # Synthesize with Inworld/Boson AI
-            tts_bytes = synthesize_inworld(
+            logger.info(f"TTSNode: Calling Inworld TTS for text: '{state['llm_response'][:50]}...'")
+            tts_bytes = tts_bytes = synthesize_inworld(
                 state["llm_response"],
                 cancel_check=state.get("cancel_check"),
             )
-
+            
+            logger.info(f"TTSNode: Received {len(tts_bytes)} bytes from Inworld")
+            
+            # Check for mock audio
+            is_mock = tts_bytes.startswith(b"ID3mock") or len(tts_bytes) < 100
+            if is_mock:
+                logger.warning("TTSNode: Received mock audio from Inworld (likely API key issue)")
+                raise Exception("Mock audio received - triggering fallback")
+            
             # Upload and get URL
-            file_name = f"sophia_{int(time.time() * 1000)}_{state['session_id']}.mp3"
-            audio_url = upload_audio_and_get_url(
-                file_bytes=tts_bytes, file_name=file_name
-            )
-
+            file_name = f"sophia_{int(time.time()*1000)}_{state['session_id']}.mp3"
+            logger.info(f"TTSNode: Uploading to Supabase as {file_name}")
+            
+            audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
+            
+            logger.info(f"TTSNode: Successfully uploaded to {audio_url}")
+            
             # Analyze Sophia's emotion from TTS output
             sophia_emotion = analyze_emotion_audio(tts_bytes)
 
@@ -1005,20 +1054,27 @@ class TTSNode:
             )
 
         except Exception as e:
-            logger.error(f"TTSNode Inworld failed: {e}")
+            logger.error(f"❌ TTSNode Inworld failed: {type(e).__name__}: {str(e)}")
             _raise_if_cancelled(e)
             _maybe_cancel(state)
-            # Fallback to Boson AI or other TTS service
-            state["fallback_used"]["tts"] = "boson_fallback"
+
+            # Log detailed error info
+            import traceback
+            logger.error(f"📋 TTSNode error traceback:\n{traceback.format_exc()}")
+            
+            # Fallback to OpenAI TTS
+            state["fallback_used"]["tts"] = "openai_fallback"
             try:
-                tts_bytes = self._boson_ai_fallback(
-                    state["llm_response"],
-                    cancel_check=state.get("cancel_check"),
-                )
-                file_name = f"sophia_fallback_{int(time.time() * 1000)}_{state['session_id']}.mp3"
-                audio_url = upload_audio_and_get_url(
-                    file_bytes=tts_bytes, file_name=file_name
-                )
+                logger.info("TTSNode: Attempting OpenAI TTS fallback")
+                tts_bytes = self._openai_tts_fallback(state["llm_response"], cancel_check=state.get("cancel_check"))
+                
+                if not tts_bytes or len(tts_bytes) < 100:
+                    raise Exception("OpenAI TTS returned no/invalid audio")
+                
+                file_name = f"sophia_fallback_{int(time.time()*1000)}_{state['session_id']}.mp3"
+                logger.info(f"TTSNode fallback: Uploading OpenAI audio as {file_name}")
+                
+                audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
                 sophia_emotion = analyze_emotion_audio(tts_bytes)
 
                 state["tts_bytes"] = tts_bytes
@@ -1026,39 +1082,47 @@ class TTSNode:
                 state["sophia_emotion"] = EmotionData(
                     label=sophia_emotion.label, confidence=sophia_emotion.confidence
                 )
+                logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
+                
             except Exception as fallback_error:
-                logger.error(f"TTS fallback also failed: {fallback_error}")
+                logger.error(f"❌ TTS fallback also failed: {type(fallback_error).__name__}: {str(fallback_error)}")
+                logger.error(f"📋 Fallback error traceback:\n{traceback.format_exc()}")
                 _raise_if_cancelled(fallback_error)
-                # Final fallback - empty audio
+                
+                # Final fallback - empty audio but continue
                 state["audio_url"] = ""
                 state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.5)
-
+                logger.warning("⚠️ TTSNode: Using empty audio URL as final fallback")
+        
         return state
-
-    def _boson_ai_fallback(
-        self,
-        text: str,
-        cancel_check: Optional[CancelCallback] = None,
-    ) -> bytes:
-        """Fallback TTS using Boson AI or OpenAI TTS"""
+    
+    def _openai_tts_fallback(self, text: str, cancel_check: Optional[CancelCallback] = None) -> bytes:
+        """Fallback TTS using OpenAI"""
         try:
+            import openai
+            settings = get_settings()
+
             if cancel_check:
                 cancel_check()
-            # Try OpenAI TTS as fallback
-            import openai
-
-            client = openai.OpenAI(api_key=get_settings().OPENAI_API_KEY)
-
+            
+            if not settings.OPENAI_API_KEY:
+                logger.error("OpenAI API key not configured")
+                return b""
+            
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
             response = client.audio.speech.create(
-                model="tts-1", voice="alloy", input=text, response_format="mp3"
+                model="tts-1",
+                voice="nova",  # Changed from "alloy" for better female voice
+                input=text,
+                response_format="mp3"
             )
             if cancel_check:
                 cancel_check()
             return response.content
 
         except Exception as e:
-            logger.error(f"Boson AI fallback failed: {e}")
-            # Return empty bytes as final fallback
+            logger.error(f"OpenAI TTS fallback failed: {e}")
             return b""
 
 
@@ -1384,7 +1448,7 @@ class SophiaLangGraph:
         return state
 
     def stream_llm_response(self, state: GraphState):
-        """Stream LLM response using appropriate pipeline"""
+        """Stream LLM response with context (emotion + memory + RAG)"""
         logger.info(f"Streaming LLM response for session {state['session_id']}")
         _maybe_cancel(state)
         cancel_check = state.get("cancel_check")
@@ -1443,8 +1507,7 @@ class SophiaLangGraph:
             prompt_parts.append(f"User question: {state.get('transcript', '')}")
 
             full_prompt = " | ".join(prompt_parts)
-
-            # Stream response using legacy pipeline
+            # Stream response using Mistral LLM
             from app.services.mistral import stream_generate_llm_reply
 
             for token in stream_generate_llm_reply(

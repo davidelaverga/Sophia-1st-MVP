@@ -1,7 +1,22 @@
 """Emotion classification utilities powered by Phoenix and fallback LLM heuristics."""
 
+# ========================================
+# CRITICAL: Apply nest_asyncio FIRST - before ANY other imports
+# ========================================
+try:
+    import nest_asyncio
+
+    nest_asyncio.apply()
+    _NEST_ASYNC_APPLIED = True
+except Exception:  # pragma: no cover - diagnostic only
+    _NEST_ASYNC_APPLIED = False
+
+# ========================================
+# NOW import everything else
+# ========================================
 import asyncio
 import logging
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -27,6 +42,12 @@ _DEEP_EMOTION_RAILS = [
     "hopeful",
     "lonely",
 ]
+
+# Log nest_asyncio status AFTER logger is ready
+if _NEST_ASYNC_APPLIED:
+    logger.info("✅ nest_asyncio applied successfully at module import")
+else:
+    logger.warning("⚠️ nest_asyncio not available - emotion analysis may fail")
 
 
 class Emotion(BaseModel):
@@ -521,7 +542,15 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
             )
         except Exception as e:
             logger.info(
-                f"Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: {e}"
+                "Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: %s",
+                e,
+            )
+            return Emotion(label="neutral", confidence=0.5)
+
+        settings = get_settings()
+        if not getattr(settings, "GOOGLE_API_KEY", None):
+            logger.warning(
+                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
             )
             return Emotion(label="neutral", confidence=0.5)
 
@@ -574,14 +603,17 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
 
         # 4) run classification with improved template
         results = llm_classify(
-            model=model,
             data=df,
+            model=model,
             template=emotion_template,
             rails=EMOTION_RAILS,
+            provide_explanation=False,
+            run_sync=True,
+            verbose=False,
         )
 
         # 5) extract single label
-        label = str(results.iloc[0, 0]).strip().lower()
+        label = str(results["label"].iloc[0]).strip().lower()
         valid = [r.lower() for r in EMOTION_RAILS]
         if label not in valid:
             label = "neutral"
@@ -605,9 +637,14 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         db_label = emotion_mapping.get(label, "neutral")
 
         # Confidence not provided by default template; set midpoint
-        return Emotion(
-            label=db_label, confidence=0.8
-        )  # Higher confidence with improved template
+        return Emotion(label=db_label, confidence=0.8)  # Higher confidence with improved template
+    except RuntimeError as e:
+        # Specifically catch event loop errors
+        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
+            logger.warning(f"Audio emotion classification failed due to event loop conflict: {e}. Returning neutral.")
+        else:
+            logger.warning(f"Audio emotion classification failed with RuntimeError: {e}")
+        return Emotion(label="neutral", confidence=0.5)
     except Exception as e:
         logger.warning(f"Audio emotion classification failed: {e}")
         return Emotion(label="neutral", confidence=0.5)
