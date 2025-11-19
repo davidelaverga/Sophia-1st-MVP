@@ -23,6 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from pydantic import BaseModel
+from app.helpers import extract_audio, sse_event, validate_audio_upload
+from app.audio_utils import avg_abs_pcm16, pcm16_to_wav, wav_header_pcm16
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
@@ -46,6 +48,7 @@ from app.services.emotional_guidance import (
     build_emotion_guided_prompt,
 )
 from app.services.memory import memory_manager, ConversationTurn
+from app import chat as chat_service
 from dotenv import load_dotenv
 
 from opentelemetry import trace
@@ -114,75 +117,15 @@ supabase_service.init_supabase(settings)
 app = FastAPI(title=settings.APP_NAME)
 
 
-def _looks_like_audio(payload: bytes) -> bool:
-    """Lightweight magic-byte sniffing to catch obvious non-audio uploads."""
-    if not payload or len(payload) < 4:
-        return False
-    head = payload[:4]
-    if head == b"RIFF":  # WAV/WEBP containers
-        return True
-    if head[:3] == b"ID3":  # MP3 ID3 tag
-        return True
-    if head == b"OggS":
-        return True
-    if head == b"fLaC":
-        return True
-    # MPEG frame sync (11 set bits) catches many MP3/MP2 streams
-    if payload[0] == 0xFF and (payload[1] & 0xE0) == 0xE0:
-        return True
-    # MP4/M4A files often start with an ftyp atom at offset 4
-    if len(payload) >= 12 and payload[4:8] == b"ftyp":
-        return True
-    # As a last resort, treat files with enough non-zero bytes as plausible audio
-    return any(b for b in payload[:512])
-
-
 # ==========================
 # Live Mode: WebSocket Voice
 # ==========================
-
-
-def _wav_header_pcm16(
-    num_samples: int, sample_rate: int = 16000, num_channels: int = 1
-) -> bytes:
-    import struct
-
-    byte_rate = sample_rate * num_channels * 2
-    block_align = num_channels * 2
-    data_size = num_samples * 2
-    riff_chunk_size = 36 + data_size
-    return b"".join(
-        [
-            b"RIFF",
-            struct.pack("<I", riff_chunk_size),
-            b"WAVE",
-            b"fmt ",
-            struct.pack(
-                "<IHHIIHH", 16, 1, num_channels, sample_rate, byte_rate, block_align, 16
-            ),
-            b"data",
-            struct.pack("<I", data_size),
-        ]
-    )
 
 
 async def _ws_send_json(ws: WebSocket, obj: dict) -> None:
     import json as _json
 
     await ws.send_text(_json.dumps(obj))
-
-
-def _avg_abs_pcm16(buf: bytes) -> float:
-    if not buf:
-        return 0.0
-    import array
-
-    a = array.array("h")
-    a.frombytes(buf[: len(buf) - (len(buf) % 2)])
-    if len(a) == 0:
-        return 0.0
-    s = sum(abs(x) for x in a)
-    return s / len(a)
 
 
 @app.websocket("/ws/voice")
@@ -242,32 +185,7 @@ async def ws_voice(websocket: WebSocket):
     if discord_id:
         metadata["discord_id"] = discord_id
 
-    def _pcm16_to_wav(
-        pcm_bytes: bytes, *, sample_rate: int = 48000, channels: int = 1
-    ) -> bytes:
-        """Wrap raw PCM16 bytes with a minimal WAV header so browsers can play each chunk."""
-        import struct
 
-        data_size = len(pcm_bytes)
-        byte_rate = sample_rate * channels * 2
-        block_align = channels * 2
-        header = struct.pack(
-            "<4sI4s4sIHHIIHH4sI",
-            b"RIFF",
-            36 + data_size,
-            b"WAVE",
-            b"fmt ",
-            16,
-            1,
-            channels,
-            sample_rate,
-            byte_rate,
-            block_align,
-            16,
-            b"data",
-            data_size,
-        )
-        return header + pcm_bytes
 
     async def send_audio_callback(segment: AudioSegment):
         import base64 as _b64
@@ -283,7 +201,7 @@ async def ws_voice(websocket: WebSocket):
                 mime = "audio/wav"
             elif mime in {"audio/pcm", "audio/x-raw"}:
                 sample_rate = int(segment.metadata.get("sample_rate", 48000))
-                payload_bytes = _pcm16_to_wav(payload_bytes, sample_rate=sample_rate)
+                payload_bytes = pcm16_to_wav(payload_bytes, sample_rate=sample_rate)
                 mime = "audio/wav"
 
         b64_data = (
@@ -317,7 +235,7 @@ async def ws_voice(websocket: WebSocket):
                     if len(pcm_buffer) > SILENCE_BYTES
                     else pcm_buffer
                 )
-                amp = _avg_abs_pcm16(recent)
+                amp = avg_abs_pcm16(recent)
                 if amp > SILENCE_THRESHOLD:
                     if not in_speech:
                         in_speech = True
@@ -352,7 +270,7 @@ async def ws_voice(websocket: WebSocket):
 
                 if in_speech and (now - last_voice_activity) * 1000.0 >= SILENCE_MS:
                     utter_bytes = bytes(pcm_buffer[utter_start_pos:])
-                    wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
+                    wav_utter = wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                     logger.info(
                         f"WS: endpoint detected; utterance bytes={len(utter_bytes)}"
                     )
@@ -780,44 +698,13 @@ async def transcribe(
     file: UploadFile = File(...),
     supabase_token: str = Depends(verify_api_key),
 ):
-    # Accept common audio formats (extension and content type)
-    allowed_extensions = [
-        '.wav',
-        '.webm',
-        '.mp4',
-        '.ogg',
-        '.flac',
-        '.m4a',
-        '.aac',
-    ]
-    allowed_content_types = {
-        'audio/wav',
-        'audio/x-wav',
-        'audio/webm',
-        'audio/ogg',
-        'audio/flac',
-        'audio/mp4',
-        'audio/aac',
-    }
-    filename = (file.filename or '').lower()
-    content_type = (file.content_type or '').lower()
-    if not any(filename.endswith(ext) for ext in allowed_extensions) or content_type not in allowed_content_types:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "File must be a supported audio format."
-                " Supported formats: wav, webm, mp4, ogg, flac, m4a, aac"
-            ),
-        )
+    validate_audio_upload(file)
+    wav_bytes = await extract_audio(file)
 
     session_id = uuid.uuid4()
 
     try:
-        wav_bytes = await file.read()
-        if not _looks_like_audio(wav_bytes):
-            raise HTTPException(
-                status_code=400, detail="File must contain recognizable audio data"
-            )
+        
         text = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
     except HTTPException:
         raise
@@ -936,37 +823,11 @@ async def chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
+    validate_audio_upload(file)
+    wav_bytes = await extract_audio(file)
+
     supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     manager = shared_services.get_session_turn_manager()
-    # Accept common audio formats (extension and content type)
-    allowed_extensions = [
-        '.wav',
-        '.webm',
-        '.mp4',
-        '.ogg',
-        '.flac',
-        '.m4a',
-        '.aac',
-    ]
-    allowed_content_types = {
-        'audio/wav',
-        'audio/x-wav',
-        'audio/webm',
-        'audio/ogg',
-        'audio/flac',
-        'audio/mp4',
-        'audio/aac',
-    }
-    filename = (file.filename or '').lower()
-    content_type = (file.content_type or '').lower()
-    if not any(filename.endswith(ext) for ext in allowed_extensions) or content_type not in allowed_content_types:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "File must be a supported audio format."
-                " Supported formats: wav, webm, mp4, ogg, flac, m4a, aac"
-            ),
-        )
 
     session_uuid = uuid.uuid4()
     session_id_str = str(session_uuid)
@@ -982,22 +843,14 @@ async def chat(
         with tracer.start_as_current_span("chat") as chat_span:
             chat_span.set_attribute("session.id", session_id_str)
             t0 = time.time()
-            try:
-                wav_bytes = await file.read()
-                with tracer.start_as_current_span("stt_transcription") as stt_span:
-                    transcript = mistral_service.transcribe_audio_with_voxtral(
-                        wav_bytes,
-                        cancel_check=cancel_check,
-                    )
-                    stt_span.set_attribute("transcript.length", len(transcript))
-            except Exception:
-                logger.exception("Transcription failed in chat")
-                raise HTTPException(status_code=500, detail="Transcription failed")
+            with tracer.start_as_current_span("stt_transcription") as stt_span:
+                transcript = chat_service.transcript_audio(wav_bytes, cancel_check)
+                stt_span.set_attribute("transcript.length", len(transcript))
 
             cancel_check()
 
             with tracer.start_as_current_span("emotion_analysis_user") as emotion_span:
-                user_emotion = analyze_emotion_audio(wav_bytes)
+                user_emotion, _ = chat_service.analyze_emotion_by_audio(wav_bytes, cancel_check)
                 emotion_span.set_attribute(
                     "phoenix_user_emotion.label", user_emotion.label
                 )
@@ -1012,41 +865,24 @@ async def chat(
                 "phoenix_user_emotion.confidence", float(user_emotion.confidence)
             )
 
-            try:
-                turn_state.set_status("streaming")
-                cancel_check()
-                with tracer.start_as_current_span("llm_generation") as llm_span:
-                    reply = mistral_service.generate_llm_reply(
-                        transcript,
-                        cancel_check=cancel_check,
-                    )
-                    llm_span.set_attribute("reply.length", len(reply))
-            except Exception:
-                logger.exception("LLM generation failed in chat")
-                raise HTTPException(
-                    status_code=500, detail="Response generation failed"
-                )
+            turn_state.set_status("streaming")
+            cancel_check()
 
-            try:
-                turn_state.set_status("synthesizing")
-                cancel_check()
-                with tracer.start_as_current_span("tts_synthesis_upload"):
-                    audio_bytes = synthesize_inworld(
-                        reply,
-                        cancel_check=cancel_check,
-                    )
-                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(
-                        audio_bytes, file_name
-                    )
-            except Exception:
-                logger.exception("Synthesis or upload failed in chat")
-                raise HTTPException(status_code=500, detail="Synthesis failed")
+            with tracer.start_as_current_span("llm_generation") as llm_span:
+                reply = chat_service.generate_llm_reply(transcript, cancel_check)
+                llm_span.set_attribute("reply.length", len(reply))
+
+            turn_state.set_status("synthesizing")
+            cancel_check()
+
+            with tracer.start_as_current_span("tts_synthesis_upload"):
+                reply_audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
+
 
             with tracer.start_as_current_span(
                 "emotion_analysis_sophia"
             ) as sophia_emotion_span:
-                sophia_emotion = analyze_emotion_audio(audio_bytes)
+                sophia_emotion, _ = chat_service.analyze_emotion_by_audio(reply_audio_bytes, cancel_check)
                 sophia_emotion_span.set_attribute(
                     "phoenix_sophia_emotion.label", sophia_emotion.label
                 )
@@ -1067,43 +903,16 @@ async def chat(
             total_ms = int((time.time() - t0) * 1000)
             chat_span.set_attribute("total_roundtrip_time.ms", total_ms)
 
-        try:
-            supabase_service.insert_conversation_session(
-                {
-                    "id": session_id_str,
-                    "transcript": transcript,
-                    "reply": reply,
-                    "user_emotion_label": user_emotion.label,
-                    "user_emotion_confidence": user_emotion.confidence,
-                    "sophia_emotion_label": sophia_emotion.label,
-                    "sophia_emotion_confidence": sophia_emotion.confidence,
-                    "audio_url": audio_url or None,
-                    "user_id": supabase_user_id,
-                },
-                access_token=supabase_token,
-            )
-            try:
-                supabase_service.insert_emotion_score(
-                    session_uuid,
-                    role="user",
-                    emotion=user_emotion,
-                    user_id=supabase_user_id,
-                    access_token=supabase_token,
-                )
-            except Exception:
-                logger.warning("Persist user emotion failed; continuing")
-            try:
-                supabase_service.insert_emotion_score(
-                    session_uuid,
-                    role="sophia",
-                    emotion=sophia_emotion,
-                    user_id=supabase_user_id,
-                    access_token=supabase_token,
-                )
-            except Exception:
-                logger.warning("Persist sophia emotion failed; continuing")
-        except Exception:
-            logger.warning("Persist conversation session failed; continuing")
+        chat_service.persist_conversation_session(
+            session_id=session_uuid,
+            transcript=transcript,
+            reply=reply,
+            user_emotion=user_emotion,
+            sophia_emotion=sophia_emotion,
+            reply_audio_url=audio_url,
+            user_id=supabase_user_id,
+            supabase_token=supabase_token
+        )
 
         turn_state.set_status("completed")
         return ChatResponse(
@@ -1124,22 +933,10 @@ async def defi_chat(
     supabase_token: str = Depends(verify_api_key),
     consent_ok: None = Depends(require_consent),
 ):
+    validate_audio_upload(file)
+    wav_bytes = await extract_audio(file)
+
     user_id, discord_id = extract_identity_from_token(supabase_token)
-    allowed_extensions = [
-        ".wav",
-        ".webm",
-        ".mp3",
-        ".mp4",
-        ".ogg",
-        ".flac",
-        ".m4a",
-        ".aac",
-    ]
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(
-            status_code=400,
-            detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}",
-        )
 
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat"}
@@ -1155,7 +952,6 @@ async def defi_chat(
             manager.raise_if_cancelled(turn_state.turn_id)
 
         try:
-            wav_bytes = await file.read()
             cancel_check()
 
             turn_state.set_status("streaming")
@@ -1170,49 +966,25 @@ async def defi_chat(
 
             turn_state.set_status("synthesizing")
             cancel_check()
-            try:
-                supabase_service.insert_conversation_session(
-                    {
-                        "id": result["session_id"],
-                        "transcript": result["transcript"],
-                        "reply": result["reply"],
-                        "user_emotion_label": result["user_emotion"]["label"],
-                        "user_emotion_confidence": result["user_emotion"]["confidence"],
-                        "sophia_emotion_label": result["sophia_emotion"]["label"],
-                        "sophia_emotion_confidence": result["sophia_emotion"][
-                            "confidence"
-                        ],
-                        "audio_url": result["audio_url"] or None,
-                        "intent": result["intent"],
-                        "context_memory": str(result["context_memory"]),
-                        "user_id": user_id,
-                    },
-                    access_token=supabase_token,
-                )
-                try:
-                    cancel_check()
-                    supabase_service.insert_emotion_score(
-                        result["session_id"],
-                        role="user",
-                        emotion=type("E", (), result["user_emotion"])(),
-                        user_id=user_id,
-                        access_token=supabase_token,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to persist user emotion: {e}")
-                try:
-                    cancel_check()
-                    supabase_service.insert_emotion_score(
-                        result["session_id"],
-                        role="sophia",
-                        emotion=type("E", (), result["sophia_emotion"])(),
-                        user_id=user_id,
-                        access_token=supabase_token,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to persist sophia emotion: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to persist conversation session: {e}")
+
+            chat_service.persist_conversation_session(
+                supabase_token=supabase_token,
+                user_id=user_id,
+                session_id=result['session_id'],
+                transcript=result['transcript'],
+                reply=result['reply'],
+                user_emotion=Emotion(
+                    label=result['user_emotion']['label'],
+                    confidence=result['user_emotion']['confidence']
+                ),
+                sophia_emotion=Emotion(
+                    label=result['sophia_emotion']['label'],
+                    confidence=result['sophia_emotion']['confidence']
+                ),
+                reply_audio_url=result.get('audio_url'),
+                intent=result['intent'],
+                context_memory=str(result['context_memory'])
+            )
 
             turn_state.set_status("completed")
             return DefiChatResponse(**result)
@@ -1244,6 +1016,9 @@ async def defi_chat_stream(
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
     """
+    validate_audio_upload(file)
+    wav_bytes = await extract_audio(file)
+
     user_id, discord_id = extract_identity_from_token(supabase_token)
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat/stream"}
@@ -1256,7 +1031,6 @@ async def defi_chat_stream(
     # Starlette may close the underlying SpooledTemporaryFile once the coroutine
     # returns control, which would make subsequent reads fail within the
     # generator with "I/O operation on closed file".
-    wav_bytes = await file.read()
 
     async def event_generator():
         nonlocal session_id
@@ -1271,16 +1045,14 @@ async def defi_chat_stream(
 
             try:
                 cancel_check()
-                transcript = mistral_service.transcribe_audio_with_voxtral(
-                    wav_bytes,
-                    cancel_check=cancel_check,
-                )
+                transcript = chat_service.transcript_audio(wav_bytes, cancel_check)
                 cancel_check()
-                user_emotion = analyze_emotion_audio(wav_bytes)
+                user_emotion, _ = chat_service.analyze_emotion_by_audio(wav_bytes, cancel_check)
 
-                import json as _json
-
-                yield f"event: transcript\ndata: {_json.dumps({'transcript': transcript, 'user_emotion': user_emotion.model_dump(), 'session_id': session_id_local})}\n\n"
+                yield sse_event(
+                    'transcript',
+                    {'transcript': transcript, 'user_emotion': user_emotion.model_dump(), 'session_id': session_id_local}
+                )
 
                 turn_state.set_status("streaming")
                 reply_accum = []
@@ -1293,94 +1065,30 @@ async def defi_chat_stream(
                         continue
                     reply_accum.append(chunk)
                     safe_chunk = chunk.replace("\n", " ")
-                    yield f"event: token\ndata: {safe_chunk}\n\n"
+                    yield sse_event('token', safe_chunk)
 
                 reply = "".join(reply_accum).strip()
-                yield f"event: reply_done\ndata: {_json.dumps({'reply': reply})}\n\n"
+                yield sse_event('reply_done', { 'reply': reply })
 
                 turn_state.set_status("synthesizing")
                 cancel_check()
-                try:
-                    audio_bytes = synthesize_inworld(
-                        reply,
-                        cancel_check=cancel_check,
-                    )
-                    cancel_check()
-                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(
-                        audio_bytes, file_name
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Synthesis or upload failed in defi_chat_stream")
-                    audio_url = None
 
-                sophia_emotion = None
-                mock_audio = False
-                try:
-                    if audio_url:
-                        try:
-                            mock_audio = (
-                                audio_bytes.startswith(b"ID3mock")
-                                or len(audio_bytes) < 2048
-                            )
-                        except Exception:
-                            mock_audio = False
-                        cancel_check()
-                        sophia_emotion = analyze_emotion_audio(audio_bytes)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.warning("Sophia emotion analysis failed; continuing")
+                audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
 
-                try:
-                    cancel_check()
-                    supabase_service.insert_conversation_session(
-                        {
-                            "id": session_id_local,
-                            "transcript": transcript,
-                            "reply": reply,
-                            "user_emotion_label": user_emotion.label,
-                            "user_emotion_confidence": user_emotion.confidence,
-                            "sophia_emotion_label": (
-                                sophia_emotion.label if sophia_emotion else None
-                            ),
-                            "sophia_emotion_confidence": (
-                                sophia_emotion.confidence if sophia_emotion else None
-                            ),
-                            "audio_url": audio_url or None,
-                            "user_id": user_id,
-                        },
-                        access_token=supabase_token,
-                    )
-                    try:
-                        cancel_check()
-                        supabase_service.insert_emotion_score(
-                            session_id_local,
-                            role="user",
-                            emotion=user_emotion,
-                            user_id=user_id,
-                            access_token=supabase_token,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to persist user emotion: {e}")
-                    try:
-                        if sophia_emotion:
-                            cancel_check()
-                            supabase_service.insert_emotion_score(
-                                session_id_local,
-                                role="sophia",
-                                emotion=sophia_emotion,
-                                user_id=user_id,
-                                access_token=supabase_token,
-                            )
-                    except Exception as e:
-                        logger.warning(f"Failed to persist sophia emotion: {e}")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to persist conversation session (stream): {e}"
-                    )
+                cancel_check()
+                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(audio_bytes, cancel_check)
+
+                cancel_check()
+                chat_service.persist_conversation_session(
+                    session_id=session_id,
+                    transcript=transcript,
+                    reply=reply,
+                    user_emotion=user_emotion,
+                    sophia_emotion=sophia_emotion,
+                    reply_audio_url=audio_url,
+                    user_id=user_id,
+                    supabase_token=supabase_token
+                )
 
                 turn_state.set_status("completed")
 
@@ -1391,17 +1099,14 @@ async def defi_chat_stream(
                     ),
                     "mock_audio": mock_audio,
                 }
-                yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
+                yield sse_event('audio_url', payload)
 
             except asyncio.CancelledError:
                 logger.info("Streaming DeFi chat turn %s cancelled", turn_state.turn_id)
                 raise
             except Exception as e:
                 logger.exception("Streaming DeFi chat failed")
-                import json as _json
-
-                error_payload = _json.dumps({"detail": str(e)})
-                yield f"event: error\ndata: {error_payload}\n\n"
+                yield sse_event('error', {"detail": str(e)})
 
     return StreamingResponse(
         event_generator(),
@@ -1412,253 +1117,6 @@ async def defi_chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
-# ==========================
-# Live Mode: WebSocket Voice
-# ==========================
-
-def _wav_header_pcm16(num_samples: int, sample_rate: int = 16000, num_channels: int = 1) -> bytes:
-    import struct
-    byte_rate = sample_rate * num_channels * 2
-    block_align = num_channels * 2
-    data_size = num_samples * 2
-    riff_chunk_size = 36 + data_size
-    return b"".join([
-        b"RIFF",
-        struct.pack("<I", riff_chunk_size),
-        b"WAVE",
-        b"fmt ",
-        struct.pack("<IHHIIHH", 16, 1, num_channels, sample_rate, byte_rate, block_align, 16),
-        b"data",
-        struct.pack("<I", data_size),
-    ])
-
-async def _ws_send_json(ws: WebSocket, obj: dict):
-    import json as _json
-    await ws.send_text(_json.dumps(obj))
-
-def _avg_abs_pcm16(buf: bytes) -> float:
-    if not buf:
-        return 0.0
-    import array
-    a = array.array('h')
-    a.frombytes(buf[: len(buf) - (len(buf) % 2)])
-    if len(a) == 0:
-        return 0.0
-    s = sum(abs(x) for x in a)
-    return s / len(a)
-
-@app.websocket("/ws/voice_old")
-async def ws_voice_old(websocket: WebSocket):
-    # In production, protect with auth (API key/session) via headers or query.
-    await websocket.accept()
-    session_id = str(uuid.uuid4())
-    log_prefix = f"[ws_voice:{session_id}]"
-    logger.info(f"{log_prefix} connection accepted")
-    SAMPLE_RATE = 16000
-    BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
-    CHUNK_MS = 200
-    SILENCE_THRESHOLD = 300  # avg abs amplitude heuristic (lower => more responsive)
-    SILENCE_MS = 600  # shorter endpointing delay for faster replies
-    SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
-
-    pcm_buffer = bytearray()
-    partial_transcript = ""
-    last_partial_emit = 0.0
-    last_voice_activity = time.time()
-    in_speech = False
-    utter_start_pos = 0
-    # Live-mode summary state for end-of-call persistence
-    last_final_text = ""
-    last_reply_text = ""
-    last_audio_url: Optional[str] = None
-
-    first_chunk_logged = False
-    turn_index = 0
-
-    try:
-        while True:
-            msg = await websocket.receive()
-            if "bytes" in msg and msg["bytes"] is not None:
-                chunk: bytes = msg["bytes"]
-                if not chunk:
-                    continue
-                pcm_buffer.extend(chunk)
-                if not first_chunk_logged:
-                    logger.debug(f"{log_prefix} first audio chunk received len={len(chunk)}")
-                    first_chunk_logged = True
-
-                # Skip partial transcripts for faster experience - go directly to Voxtral
-                # User doesn't need to see transcription, just fast response
-
-                # Simple amplitude-based VAD
-                now = time.time()
-                recent = pcm_buffer[-SILENCE_BYTES:] if len(pcm_buffer) > SILENCE_BYTES else pcm_buffer
-                amp = _avg_abs_pcm16(recent)
-                if amp > SILENCE_THRESHOLD:
-                    if not in_speech:
-                        in_speech = True
-                        utter_start_pos = max(0, len(pcm_buffer) - len(recent))
-                        logger.info(f"{log_prefix} speech started at {utter_start_pos} bytes (amp={amp:.1f})")
-                    last_voice_activity = now
-
-                # Endpoint: long enough silence after speech - no transcription needed
-                if in_speech and (now - last_voice_activity) * 1000.0 >= SILENCE_MS:
-                    # Extract utterance audio segment for direct Voxtral processing
-                    utter_bytes = bytes(pcm_buffer[utter_start_pos:])
-                    wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
-                    logger.info(f"{log_prefix} endpoint detected; utterance bytes={len(utter_bytes)}")
-
-                    # Process audio through LangGraph pipeline (non-streaming for reliability)
-                    reply_tokens = []
-                    tokens_sent = 0
-                    turn_index += 1
-                    logger.debug(f"{log_prefix} turn {turn_index} processing via LangGraph")
-                    try:
-                        result = langgraph_service.process_conversation(
-                            audio_bytes=wav_utter,
-                            session_id=session_id,
-                            collect_evaluation_data=True,
-                        )
-                        # Align local session identifier with whatever LangGraph persisted
-                        langgraph_session_id = result.get("session_id")
-                        if langgraph_session_id and langgraph_session_id != session_id:
-                            logger.debug(
-                                f"{log_prefix} adopting LangGraph session_id {langgraph_session_id}"
-                            )
-                            session_id = langgraph_session_id
-                            log_prefix = f"[ws_voice:{session_id}]"
-                        reply_full = (result.get("reply") or "").strip()
-                        if not reply_full:
-                            reply_full = "I'm having trouble processing that. Could you try again?"
-                        logger.debug(f"{log_prefix} turn {turn_index} LangGraph reply received len={len(reply_full)}")
-                        # Simulate streaming by chunking
-                        chunk_size = 12
-                        for i in range(0, len(reply_full), chunk_size):
-                            chunk = reply_full[i:i+chunk_size]
-                            reply_tokens.append(chunk)
-                            await _ws_send_json(websocket, {"type": "token", "text": chunk})
-                            tokens_sent += 1
-                        logger.info(f"{log_prefix} LangGraph processed successfully, reply_len={len(reply_full)}")
-                    except Exception as e:
-                        logger.exception(f"{log_prefix} LangGraph processing failed: {e}")
-                        reply_full = "I'm having trouble right now. Please try again."
-                        await _ws_send_json(websocket, {"type": "token", "text": reply_full})
-                        reply_tokens.append(reply_full)
-                        tokens_sent += 1
-
-                    # Final fallback: synthetic chunking
-                    if tokens_sent == 0:
-                        try:
-                            logger.info(f"{log_prefix} no tokens streamed; using minimal fallback")
-                            full = "Okay."
-                        except Exception as e:
-                            logger.warning(f"{log_prefix} generate_llm_reply fallback failed: {e}")
-                            full = "Okay."
-                        chunk_size = 16
-                        for i in range(0, len(full), chunk_size):
-                            await _ws_send_json(websocket, {"type": "token", "text": full[i:i+chunk_size]})
-                            tokens_sent += 1
-                        reply_full = full.strip() or "Okay."
-                    else:
-                        reply_full = "".join(reply_tokens).strip() or "Okay."
-                    logger.debug(f"{log_prefix} turn {turn_index} tokens streamed={tokens_sent}")
-                    logger.info(f"{log_prefix} token streaming complete; tokens_sent={tokens_sent}, reply_len={len(reply_full)}")
-                    await _ws_send_json(websocket, {"type": "reply_done", "text": reply_full})
-                    logger.debug(f"{log_prefix} turn {turn_index} reply_done event sent")
-
-                    # Streaming TTS: split reply into short sentences; for each sentence synthesize once
-                    # and emit base64 audio chunks immediately. Also keep URL events for backward compat.
-                    import re
-                    sentences = [s.strip() for s in re.split(r"(?<=[\.!?])\s+", reply_full) if s.strip()]
-                    audio_url_last = None
-                    for i, sent in enumerate(sentences):
-                        try:
-                            logger.debug(f"{log_prefix} TTS streaming sentence {i+1}/{len(sentences)} len={len(sent)}")
-                            import base64 as _b64
-                            streamed_any = False
-                            try:
-                                # Stream each sentence as individual audio chunks
-                                for pcm_chunk in synthesize_inworld_stream(sent, sample_rate_hz=48000) or []:
-                                    streamed_any = True
-                                    b64 = _b64.b64encode(pcm_chunk).decode('ascii')
-                                    # audio/wav because first chunk includes WAV header, subsequent are PCM
-                                    await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": b64, "eos": False})
-                                    logger.debug(f"{log_prefix} streamed audio chunk sentence={i+1}")
-                            except Exception:
-                                logger.exception(f"{log_prefix} inworld streaming failed; falling back to non-streaming TTS for this sentence")
-
-                            if not streamed_any:
-                                # Fallback: synthesize whole sentence as complete audio
-                                try:
-                                    audio_bytes = synthesize_inworld(sent)
-                                    mock_check = str(audio_bytes).startswith("b'ID3mock")
-                                    logger.info(f"{log_prefix} fallback TTS bytes={len(audio_bytes)} (mock={mock_check})")
-
-                                    # Send complete sentence audio as single chunk for immediate playback
-                                    b64 = _b64.b64encode(audio_bytes).decode('ascii')
-                                    await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/mpeg", "b64": b64, "eos": False})
-
-                                    # Also upload the full sentence MP3 to storage (optional/back-compat)
-                                    try:
-                                        file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                                        audio_url_chunk = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
-                                        audio_url_last = audio_url_chunk
-                                        logger.info(f"{log_prefix} uploaded audio chunk -> {audio_url_chunk}")
-                                        await _ws_send_json(websocket, {"type": "audio_url_chunk", "audio_url": audio_url_chunk})
-                                    except Exception:
-                                        logger.warning(f"{log_prefix} upload of TTS sentence failed; continuing with streamed chunks only")
-                                except Exception as e:
-                                    logger.error(f"{log_prefix} fallback TTS synthesis failed for sentence: {e}")
-                        except Exception:
-                            logger.exception(f"{log_prefix} TTS or upload chunk failed")
-                            continue
-
-                    # Signal end-of-stream for this reply's audio
-                    await _ws_send_json(websocket, {"type": "audio_chunk", "mime": "audio/wav", "b64": "", "eos": True})
-                    logger.debug(f"{log_prefix} turn {turn_index} audio eos sent")
-                    # Also send final audio_url for compatibility
-                    await _ws_send_json(websocket, {"type": "audio_url", "audio_url": audio_url_last})
-                    logger.debug(f"{log_prefix} turn {turn_index} final audio_url event sent {audio_url_last}")
-
-                    # Update summary for end-of-call persistence
-                    # Note: WebSocket uses direct audio processing, no explicit transcript
-                    last_final_text = f"[Audio processed: {len(utter_bytes)} bytes]"
-                    last_reply_text = reply_full
-                    last_audio_url = audio_url_last
-
-                    # Reset for next utterance
-                    partial_transcript = ""
-                    in_speech = False
-                    last_partial_emit = now
-                    last_voice_activity = now
-            elif msg.get("type") == "websocket.disconnect":
-                logger.info(f"{log_prefix} disconnect frame received from client")
-                break
-    except WebSocketDisconnect as exc:
-        logger.info(f"{log_prefix} client disconnected code={getattr(exc, 'code', None)} reason={getattr(exc, 'reason', None)}")
-    except Exception as e:
-        logger.exception(f"{log_prefix} unexpected error: {e}")
-        await _ws_send_json(websocket, {"type": "error", "detail": str(e)})
-        try:
-            await websocket.close()
-        except Exception:
-            logger.debug(f"{log_prefix} websocket close during error handling failed")
-    finally:
-        logger.info(f"{log_prefix} closing session")
-        # Persist a single conversation summary at hangup (best-effort, no emotions to keep it fast)
-        try:
-            if last_final_text or last_reply_text:
-                supabase_service.insert_conversation_session({
-                    "id": session_id,
-                    "transcript": last_final_text,
-                    "reply": last_reply_text,
-                    "audio_url": last_audio_url or None,
-                })
-                logger.debug(f"{log_prefix} persisted conversation summary")
-        except Exception as persist_exc:
-            logger.warning(f"{log_prefix} failed to persist conversation summary: {persist_exc}")
-
 
 @app.post("/text-chat", response_model=DefiChatResponse)
 @limiter.limit(settings.API_RATE_LIMIT)
@@ -1698,43 +1156,25 @@ async def text_chat(
 
             turn_state.set_status("synthesizing")
             cancel_check()
-            try:
-                supabase_service.insert_conversation_session(
-                    {
-                        "id": result["session_id"],
-                        "transcript": result["transcript"],
-                        "reply": result["reply"],
-                        "audio_url": result.get("audio_url") or None,
-                        "intent": result.get("intent"),
-                        "context_memory": str(result.get("context_memory")),
-                        "user_id": user_id,
-                    },
-                    access_token=supabase_token,
-                )
-                try:
-                    cancel_check()
-                    supabase_service.insert_emotion_score(
-                        result["session_id"],
-                        role="user",
-                        emotion=type("E", (), result["user_emotion"])(),
-                        user_id=user_id,
-                        access_token=supabase_token,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to persist user emotion: {e}")
-                try:
-                    cancel_check()
-                    supabase_service.insert_emotion_score(
-                        result["session_id"],
-                        role="sophia",
-                        emotion=type("E", (), result["sophia_emotion"])(),
-                        user_id=user_id,
-                        access_token=supabase_token,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to persist sophia emotion: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to persist text conversation session: {e}")
+
+            chat_service.persist_conversation_session(
+                supabase_token=supabase_token,
+                user_id=user_id,
+                session_id=result['session_id'],
+                transcript=result['transcript'],
+                reply=result['reply'],
+                user_emotion=Emotion(
+                    label=result['user_emotion']['label'],
+                    confidence=result['user_emotion']['confidence']
+                ),
+                sophia_emotion=Emotion(
+                    label=result['sophia_emotion']['label'],
+                    confidence=result['sophia_emotion']['confidence']
+                ),
+                reply_audio_url=result.get('audio_url'),
+                intent=result['intent'],
+                context_memory=str(result['context_memory'])
+            )
 
             turn_state.set_status("completed")
             return DefiChatResponse(**result)
@@ -1841,42 +1281,18 @@ async def text_chat_stream(
                 manager.raise_if_cancelled(turn_state.turn_id)
 
             try:
-                import json as _json
 
-                emotion_label = "neutral"
-                emotion_conf = 0.7
-                user_emotion_payload: Dict[str, Any] = {
-                    "label": emotion_label,
-                    "confidence": emotion_conf,
-                }
+                user_emotion: Emotion = chat_service.analyze_emotion_by_text(body.message)
 
-                try:
-                    user_emotion = infer_text_emotion(body.message)
-                    user_emotion_payload = user_emotion.model_dump()
-                    emotion_label = user_emotion.label
-                    emotion_conf = float(user_emotion.confidence)
-                except Exception as emotion_error:
-                    logger.warning(
-                        "Text chat stream emotion detection failed: %s", emotion_error
+                emotion_guidance: Sequence[str] = chat_service.get_emotional_guidance(user_emotion)
+                if emotion_guidance:
+                    preview = "; ".join(emotion_guidance[:2])
+                    logger.info(
+                        "Text chat stream guidance for %s: %s%s",
+                        user_emotion.label,
+                        preview,
+                        "..." if len(emotion_guidance) > 2 else "",
                     )
-
-                emotion_guidance: Sequence[str] = []
-
-                try:
-                    emotion_guidance = get_emotional_guidance(emotion_label)
-                    if emotion_guidance:
-                        preview = "; ".join(emotion_guidance[:2])
-                        logger.info(
-                            "Text chat stream guidance for %s: %s%s",
-                            emotion_label,
-                            preview,
-                            "..." if len(emotion_guidance) > 2 else "",
-                        )
-                except Exception as guidance_error:
-                    logger.warning(
-                        "Text chat stream guidance lookup failed: %s", guidance_error
-                    )
-                    emotion_guidance = []
 
                 memory_context_text = ""
                 try:
@@ -1894,8 +1310,8 @@ async def text_chat_stream(
 
                 guided_prompt = build_emotion_guided_prompt(
                     body.message,
-                    emotion_label,
-                    emotion_conf,
+                    user_emotion.label,
+                    float(user_emotion.confidence),
                     emotion_guidance,
                     conversation_context=memory_context_text,
                 )
@@ -1911,40 +1327,18 @@ async def text_chat_stream(
                         continue
                     reply_accum.append(chunk)
                     safe_chunk = chunk.replace("\n", " ")
-                    yield f"event: token\ndata: {safe_chunk}\n\n"
+                    yield sse_event('token', safe_chunk)
 
                 reply = "".join(reply_accum).strip()
-                reply_payload = {"reply": reply, "user_emotion": user_emotion_payload}
-                yield f"event: reply_done\ndata: {_json.dumps(reply_payload)}\n\n"
+                reply_payload = {"reply": reply, "user_emotion": user_emotion.model_dump()}
+                yield sse_event('reply_done', reply_payload)
 
                 turn_state.set_status("synthesizing")
                 cancel_check()
-                audio_url = ""
-                sophia_emotion = None
-                mock_audio = False
-                try:
-                    audio_bytes = synthesize_inworld(
-                        reply,
-                        cancel_check=cancel_check,
-                    )
-                    cancel_check()
-                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(
-                        audio_bytes, file_name
-                    )
-                    try:
-                        mock_audio = (
-                            audio_bytes.startswith(b"ID3mock")
-                            or len(audio_bytes) < 2048
-                        )
-                    except Exception:
-                        mock_audio = False
-                    cancel_check()
-                    sophia_emotion = analyze_emotion_audio(audio_bytes)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Synthesis or upload failed in text_chat_stream")
+
+                audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
+                cancel_check()
+                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(audio_bytes, cancel_check)
 
                 payload = {
                     "audio_url": audio_url,
@@ -1952,29 +1346,26 @@ async def text_chat_stream(
                         sophia_emotion.model_dump() if sophia_emotion else None
                     ),
                     "mock_audio": mock_audio,
-                    "user_emotion": user_emotion_payload,
+                    "user_emotion": user_emotion.model_dump(),
                 }
 
                 _record_text_stream_turn(
                     session_identifier,
                     body.message,
                     reply,
-                    user_emotion_payload,
+                    user_emotion.model_dump(),
                     sophia_emotion,
                     supabase_token,
                 )
                 turn_state.set_status("completed")
-                yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
+                yield sse_event('audio_url', payload)
 
             except asyncio.CancelledError:
                 logger.info("Streaming text chat turn %s cancelled", turn_state.turn_id)
                 raise
             except Exception as e:
                 logger.exception("Streaming text chat failed")
-                import json as _json
-
-                error_payload = _json.dumps({"detail": str(e)})
-                yield f"event: error\ndata: {error_payload}\n\n"
+                yield sse_event('error', {"detail": str(e)})
 
     return StreamingResponse(
         event_generator(),
@@ -1987,8 +1378,8 @@ async def text_chat_stream(
     )
 
 
-@app.get("/health")
-def health_check():
+@app.get("/status")
+def status_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": int(time.time())}
 
