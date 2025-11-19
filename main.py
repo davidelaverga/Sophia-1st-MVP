@@ -1652,7 +1652,7 @@ async def ws_voice_old(websocket: WebSocket):
                 supabase_service.insert_conversation_session({
                     "id": session_id,
                     "transcript": last_final_text,
-                    "response": last_reply_text,
+                    "reply": last_reply_text,
                     "audio_url": last_audio_url or None,
                 })
                 logger.debug(f"{log_prefix} persisted conversation summary")

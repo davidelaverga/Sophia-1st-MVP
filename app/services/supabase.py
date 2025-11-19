@@ -245,7 +245,7 @@ def insert_conversation_session(
         data["id"] = str(uuid.uuid4())
     # Default optional fields to None if absent
     data.setdefault("transcript", None)
-    data.setdefault("response", None)  # Changed from "reply"
+    data.setdefault("reply", None)
     data.setdefault("user_emotion_label", None)
     data.setdefault("user_emotion_confidence", None)
     data.setdefault("sophia_emotion_label", None)
