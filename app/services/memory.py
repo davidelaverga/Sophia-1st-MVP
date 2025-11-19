@@ -372,7 +372,7 @@ class MemoryManager:
         # This is a simplified version - in practice you'd need more sophisticated parsing
         # Support both 'response' (new) and 'reply' (old) for backward compatibility
         response_text = session_data.get("response") or session_data.get("reply", "")
-        
+
         turn = ConversationTurn(
             query=session_data.get("transcript", ""),
             response=response_text,
