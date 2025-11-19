@@ -20,7 +20,9 @@ from app.services import tts as tts_service
 from app.services.langgraph_service import langgraph_service
 from dotenv import load_dotenv
 load_dotenv()
-
+from app.routers import text_chat as text_chat_router
+from app.routers import reflections as reflections_router
+from app.routers import community as community_router
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -114,7 +116,18 @@ else:
         "Frontend directory not found - running in backend-only mode (frontend served by Vercel)"
     )
 
+    
+   
+
+
+    
+
 # Simple health endpoint for Fly.io checks and container orchestration
+app.include_router(text_chat_router.router, prefix="/text-chat", tags=["text-chat"])
+app.include_router(reflections_router.router, tags=["reflections"])
+app.include_router(community_router.router, tags=["community"])
+
+logger.info("✅ New routers mounted: /text-chat, /api/reflections, /api/community")
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -908,67 +921,67 @@ async def text_chat(
         raise HTTPException(status_code=500, detail=f"Text chat processing failed: {str(e)}")
 
 
-@app.post("/text-chat/stream")
-@limiter.limit(settings.API_RATE_LIMIT)
-async def text_chat_stream(
-    request: Request,
-    body: TextChatRequest,
-    api_key_ok: None = Depends(verify_api_key),
-):
-    """Streaming variant for text-only chat.
+# @app.post("/text-chat/stream")
+# @limiter.limit(settings.API_RATE_LIMIT)
+# async def text_chat_stream(
+#     request: Request,
+#     body: TextChatRequest,
+#     api_key_ok: None = Depends(verify_api_key),
+# ):
+#     """Streaming variant for text-only chat.
 
-    Server-Sent Events (SSE) with:
-    - event: token, data: <text chunk>
-    - event: reply_done, data: { reply }
-    - event: audio_url, data: { audio_url, sophia_emotion }
-    """
-    async def event_generator():
-        try:
-            import json as _json
-            # Stream LLM tokens
-            reply_accum = []
-            for chunk in mistral_service.stream_generate_llm_reply(body.message):
-                if not chunk:
-                    continue
-                reply_accum.append(chunk)
-                safe_chunk = chunk.replace("\n", " ")
-                yield f"event: token\ndata: {safe_chunk}\n\n"
+#     Server-Sent Events (SSE) with:
+#     - event: token, data: <text chunk>
+#     - event: reply_done, data: { reply }
+#     - event: audio_url, data: { audio_url, sophia_emotion }
+#     """
+#     async def event_generator():
+#         try:
+#             import json as _json
+#             # Stream LLM tokens
+#             reply_accum = []
+#             for chunk in mistral_service.stream_generate_llm_reply(body.message):
+#                 if not chunk:
+#                     continue
+#                 reply_accum.append(chunk)
+#                 safe_chunk = chunk.replace("\n", " ")
+#                 yield f"event: token\ndata: {safe_chunk}\n\n"
 
-            reply = "".join(reply_accum).strip()
-            yield f"event: reply_done\ndata: {{\"reply\": { _json.dumps(reply) }}}\n\n"
+#             reply = "".join(reply_accum).strip()
+#             yield f"event: reply_done\ndata: {{\"reply\": { _json.dumps(reply) }}}\n\n"
 
-            # Optional TTS synthesis and audio URL
-            audio_url = ""
-            sophia_emotion = None
-            mock_audio = False
-            try:
-                audio_bytes = tts_service.synthesize_inworld(reply)
-                file_name = f"sophia_{int(time.time()*1000)}.mp3"
-                audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
-                try:
-                    mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
-                except Exception:
-                    mock_audio = False
-                sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
-            except Exception:
-                logger.exception("Synthesis or upload failed in text_chat_stream")
+#             # Optional TTS synthesis and audio URL
+#             audio_url = ""
+#             sophia_emotion = None
+#             mock_audio = False
+#             try:
+#                 audio_bytes = tts_service.synthesize_inworld(reply)
+#                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
+#                 audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+#                 try:
+#                     mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+#                 except Exception:
+#                     mock_audio = False
+#                 sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
+#             except Exception:
+#                 logger.exception("Synthesis or upload failed in text_chat_stream")
 
-            payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
-            yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
+#             payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
+#             yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
 
-        except Exception as e:
-            logger.exception("Streaming text chat failed")
-            yield f"event: error\ndata: {{\"detail\": \"{str(e)}\"}}\n\n"
+#         except Exception as e:
+#             logger.exception("Streaming text chat failed")
+#             yield f"event: error\ndata: {{\"detail\": \"{str(e)}\"}}\n\n"
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+#     return StreamingResponse(
+#         event_generator(),
+#         media_type="text/event-stream",
+#         headers={
+#             "Cache-Control": "no-cache",
+#             "Connection": "keep-alive",
+#             "X-Accel-Buffering": "no",
+#         },
+#     )
 @app.get("/health")
 def health_check():
     """Health check endpoint"""

@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any
 from app.langgraph_nodes import SophiaLangGraph
 from app.services.evaluations import evaluation_manager
+from app.services.supabase import insert_conversation_session, insert_emotion_score
 import threading
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,33 @@ class LangGraphService:
         try:
             # Run through LangGraph
             final_state = self.sophia_graph.process_conversation(audio_bytes, session_id)
+            
+            # SAVE TO SUPABASE
+            try:
+                session_data = {
+                    "id": final_state["session_id"],
+                    "user_id": "00000000-0000-0000-0000-000000000000",
+                    "transcript": final_state["transcript"],
+                    "response": final_state["llm_response"],
+                    "audio_url": final_state.get("audio_url", ""),
+                    "user_emotion": {
+                        "label": final_state["user_emotion"].label,
+                        "confidence": final_state["user_emotion"].confidence
+                    },
+                    "sophia_emotion": {
+                        "label": final_state["sophia_emotion"].label,
+                        "confidence": final_state["sophia_emotion"].confidence
+                    },
+                    "source": "web"
+                }
+                insert_conversation_session(session_data)
+                
+                # Save emotion scores
+                insert_emotion_score(final_state["session_id"], "user", final_state["user_emotion"])
+                insert_emotion_score(final_state["session_id"], "sophia", final_state["sophia_emotion"])
+                
+            except Exception as e:
+                logger.error(f"Failed to save conversation to Supabase: {e}")
             
             # Collect evaluation data if requested (instead of running full evaluation)
             if collect_evaluation_data:
@@ -85,6 +113,33 @@ class LangGraphService:
         try:
             # Run through LangGraph with text input
             final_state = self.sophia_graph.process_text_conversation(message, session_id)
+            
+            # SAVE TO SUPABASE
+            try:
+                session_data = {
+                    "id": final_state["session_id"],
+                    "user_id": "00000000-0000-0000-0000-000000000000",
+                    "transcript": final_state["transcript"],
+                    "response": final_state["llm_response"],
+                    "audio_url": final_state.get("audio_url", ""),
+                    "user_emotion": {
+                        "label": final_state["user_emotion"].label,
+                        "confidence": final_state["user_emotion"].confidence
+                    },
+                    "sophia_emotion": {
+                        "label": final_state["sophia_emotion"].label,
+                        "confidence": final_state["sophia_emotion"].confidence
+                    },
+                    "source": "web"
+                }
+                insert_conversation_session(session_data)
+                
+                # Save emotion scores
+                insert_emotion_score(final_state["session_id"], "user", final_state["user_emotion"])
+                insert_emotion_score(final_state["session_id"], "sophia", final_state["sophia_emotion"])
+                
+            except Exception as e:
+                logger.error(f"Failed to save conversation to Supabase: {e}")
             
             # Collect evaluation data if requested
             if collect_evaluation_data:
