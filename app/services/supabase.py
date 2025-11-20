@@ -218,6 +218,63 @@ def insert_conversation_session(data: Dict[str, Any]) -> None:
         # Don't raise the exception, just log it and continue
 
 
+def insert_conversation_message(data: Dict[str, Any]) -> None:
+    """Insert an individual message in a conversation (for multi-turn support).
+    
+    Database schema:
+    - id (uuid, auto-generated)
+    - session_id (uuid) - foreign key to conversation_sessions
+    - role (text) - 'user' or 'sophia'
+    - content (text) - message content
+    - audio_url (text) - optional audio URL
+    - emotion (jsonb) - {label, confidence}
+    - timestamp (timestamptz, auto)
+    - created_at (timestamptz, auto)
+    """
+    
+    # Validate required fields
+    if "session_id" not in data or not data["session_id"]:
+        logger.error("Missing session_id for conversation message")
+        return
+    
+    if "role" not in data or data["role"] not in ["user", "sophia"]:
+        logger.error(f"Invalid role for conversation message: {data.get('role')}")
+        return
+    
+    if "content" not in data or not data["content"]:
+        logger.error("Missing content for conversation message")
+        return
+    
+    # Build payload
+    payload = {
+        "session_id": data["session_id"],
+        "role": data["role"],
+        "content": data["content"],
+        "audio_url": data.get("audio_url"),
+    }
+    
+    # Handle emotion (should be JSONB)
+    if "emotion" in data and isinstance(data["emotion"], dict):
+        payload["emotion"] = data["emotion"]
+    elif "emotion_label" in data and "emotion_confidence" in data:
+        payload["emotion"] = {
+            "label": data["emotion_label"],
+            "confidence": data["emotion_confidence"]
+        }
+    
+    # Remove None values
+    payload = {k: v for k, v in payload.items() if v is not None}
+    
+    # Insert via REST API
+    try:
+        result = supabase.table("conversation_messages").insert(payload).execute()
+        logger.info(f"✅ Message inserted: session={payload['session_id']}, role={payload['role']}")
+    except Exception as e:
+        logger.error(f"❌ conversation_messages insert failed: {e}")
+        logger.error(f"   Payload attempted: {payload}")
+        # Don't raise - continue anyway
+
+
 def has_user_consent(discord_id: str) -> bool:
     """Check if a given Discord user has a consent record in Supabase.
     

@@ -56,45 +56,145 @@ class ReflectionListResponse(BaseModel):
     reflections: List[ReflectionCard]
 
 
+def _extract_topics_from_text(transcript: str, response: str) -> List[str]:
+    """Extract topics from conversation using keyword analysis"""
+    
+    # DeFi-related keywords
+    defi_keywords = {
+        "staking": ["staking", "stake", "staked"],
+        "yield_farming": ["yield farming", "yield", "farming", "liquidity mining"],
+        "liquidity_pools": ["liquidity pool", "liquidity", "pool", "LP"],
+        "defi": ["defi", "decentralized finance"],
+        "smart_contracts": ["smart contract", "contract"],
+        "dao": ["dao", "governance"],
+        "nft": ["nft", "non-fungible"],
+        "lending": ["lending", "borrow", "loan"],
+        "dex": ["dex", "decentralized exchange", "uniswap", "sushiswap"],
+        "wallet": ["wallet", "metamask"],
+        "gas_fees": ["gas", "fee", "transaction cost"],
+        "impermanent_loss": ["impermanent loss", "IL"],
+        "apy": ["apy", "apr", "yield", "return"],
+    }
+    
+    # AI companion keywords
+    ai_keywords = {
+        "ai_companion": ["ai companion", "companion", "chatbot", "AI assistant"],
+        "emotional_support": ["emotional support", "mental health", "wellness"],
+        "empathy": ["empathy", "empathetic", "understanding"],
+        "therapy": ["therapy", "therapist", "counseling"],
+        "conversation": ["conversation", "chat", "talk", "dialogue"],
+        "relationships": ["relationship", "connection", "bond"],
+    }
+    
+    all_keywords = {**defi_keywords, **ai_keywords}
+    
+    # Combine text for analysis
+    combined_text = (transcript + " " + response).lower()
+    
+    # Find matching topics
+    topics = []
+    for topic, keywords in all_keywords.items():
+        for keyword in keywords:
+            if keyword in combined_text:
+                topics.append(topic)
+                break  # Only add topic once
+    
+    return topics[:5] if topics else []
+
+
+def _generate_summary(transcript: str, response: str, topics: List[str]) -> str:
+    """Generate a meaningful summary of the conversation"""
+    
+    # Template-based summary for MVP
+    # TODO: Replace with LLM-generated summary for better quality
+    
+    if not topics:
+        # Fallback: use actual conversation content
+        question_preview = transcript[:80] if len(transcript) > 80 else transcript
+        answer_preview = response.split(".")[0] if "." in response else response[:100]
+        return f'User asked: "{question_preview}..." Sophia explained: {answer_preview}.'
+    
+    # Create summary based on topics
+    topic_str = ", ".join([t.replace("_", " ") for t in topics[:3]])
+    
+    # Get key insight from response (first sentence)
+    first_sentence = response.split(".")[0] if "." in response else response[:150]
+    
+    summary = f"We explored {topic_str}. Key insight: {first_sentence}."
+    
+    return summary[:400]  # Limit length
+
+
 def _generate_reflection_helper(conversation_id: str) -> Dict[str, Any]:
     """
-    Generate reflection using M3 Reflection Helper (placeholder).
+    Generate reflection using conversation data from Supabase.
     
-    TODO: Replace with actual M3 Reflection Helper when available.
-    For now, generates based on memory context.
+    Flow:
+    1. Get conversation from Supabase (source of truth)
+    2. Extract topics from transcript/response using keyword analysis
+    3. Use stored emotions from conversation
+    4. Generate meaningful title and summary
     """
     
-    # Get conversation context from memory
-    context = memory_manager.get_session_memory(conversation_id)
+    # Get conversation from Supabase (primary source)
+    supabase = get_supabase()
     
-    if not context or not context.turns:
+    try:
+        result = supabase.table("conversation_sessions").select("*").eq(
+            "id", conversation_id
+        ).execute()
+        
+        if not result.data:
+            raise ValueError("No conversation data found for reflection")
+        
+        conversation = result.data[0]
+        
+    except Exception as e:
+        logger.error(f"Failed to retrieve conversation from Supabase: {e}")
         raise ValueError("No conversation data found for reflection")
     
-    # Extract meaningful moments (simple heuristic for MVP)
-    topics = context.topics if context.topics else ["general conversation"]
-    last_emotions = {
-        "user": context.user_tone_history[-1] if context.user_tone_history else "neutral",
-        "sophia": context.sophia_tone_history[-1] if context.sophia_tone_history else "neutral"
-    }
+    # Extract data from conversation
+    transcript = conversation.get("transcript", "")
+    response = conversation.get("response", "")
+    user_emotion_data = conversation.get("user_emotion", {})
+    sophia_emotion_data = conversation.get("sophia_emotion", {})
     
-    # Generate title and summary (placeholder logic)
-    title = f"Reflection on {', '.join(topics[:2])}"
-    summary = f"We explored {', '.join(topics)}. The conversation felt {last_emotions['user']}."
+    if not transcript or not response:
+        raise ValueError("Conversation has no transcript or response")
+    
+    # Extract topics using keyword analysis
+    topics = _extract_topics_from_text(transcript, response)
+    
+    # Generate meaningful title
+    if topics:
+        # Use first topic and make it readable
+        main_topic = topics[0].replace("_", " ").title()
+        title = f"Exploring {main_topic}"
+    else:
+        # Fallback: use first few words of question
+        first_words = " ".join(transcript.split()[:6])
+        title = f"Discussion: {first_words}"
+        if len(title) > 60:
+            title = title[:57] + "..."
+    
+    # Generate meaningful summary
+    summary = _generate_summary(transcript, response, topics)
     
     # Extract insight tags
-    insight_tags = topics[:3] if topics else ["conversation"]
+    insight_tags = topics if topics else ["conversation"]
     
-    # Sophia emotion from last turn
+    # Emotions from stored data
     sophia_emotion = {
-        "label": last_emotions["sophia"],
-        "confidence": 0.85
+        "label": sophia_emotion_data.get("label", "neutral") if isinstance(sophia_emotion_data, dict) else "neutral",
+        "confidence": sophia_emotion_data.get("confidence", 0.85) if isinstance(sophia_emotion_data, dict) else 0.85
     }
     
-    # User emotion from last turn
     user_emotion = {
-        "label": last_emotions["user"],
-        "confidence": 0.75
+        "label": user_emotion_data.get("label", "neutral") if isinstance(user_emotion_data, dict) else "neutral",
+        "confidence": user_emotion_data.get("confidence", 0.75) if isinstance(user_emotion_data, dict) else 0.75
     }
+    
+    logger.info(f"Generated reflection: title='{title}', topics={topics}, summary_len={len(summary)}")
     
     return {
         "title": title,
@@ -165,8 +265,8 @@ async def create_reflection(
     Generate and store a Reflection Card for a conversation.
     
     Flow:
-    1. Retrieve conversation context from memory
-    2. Call M3 Reflection Helper to generate reflection
+    1. Retrieve conversation from Supabase
+    2. Extract topics and generate reflection
     3. Store in reflection_cards table
     4. Optionally post to Discord
     """
@@ -174,7 +274,7 @@ async def create_reflection(
     try:
         logger.info(f"[Reflection] Generating for conversation {body.conversation_id}")
         
-        # Generate reflection
+        # Generate reflection using Supabase data
         reflection_data = _generate_reflection_helper(body.conversation_id)
         
         # Create reflection record
@@ -216,7 +316,7 @@ async def create_reflection(
                 "discord_message_id": card["discord_message_id"]
             }).execute()
             
-            logger.info(f"[Reflection] Created card {reflection_id}")
+            logger.info(f"[Reflection] Created card {reflection_id} - '{card['title']}'")
         except Exception as e:
             logger.error(f"[Reflection] Failed to store in Supabase: {e}")
             # Continue anyway - return the card even if storage fails

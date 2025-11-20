@@ -80,6 +80,9 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
     7. meta (stage: resting) - Done
     """
     
+    # Store original session_id to check if it's a follow-up
+    original_session_id = session_id
+    
     # Generate session_id if not provided
     if not session_id:
         session_id = str(uuid.uuid4())
@@ -178,6 +181,7 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
         # Generate TTS audio
         audio_url = ""
         sophia_emotion = EmotionData(label="neutral", confidence=0.5)
+        tts_bytes = b""
         
         try:
             tts_bytes = synthesize_inworld(accumulated_response.strip())
@@ -217,24 +221,85 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
             })
             yield f"event: audio_url\ndata: {audio_data}\n\n"
         
-        # Save to database
+        # Save to database (with session validation like normal endpoint)
         try:
-            session_data = {
-                "id": session_id,
-                "user_id": user_id or "00000000-0000-0000-0000-000000000000",
-                "transcript": message,
-                "response": accumulated_response.strip(),
-                "user_emotion_label": "neutral",
-                "user_emotion_confidence": 0.7,
-                "sophia_emotion_label": sophia_emotion.label,
-                "sophia_emotion_confidence": sophia_emotion.confidence,
-                "audio_url": audio_url
-            }
-            insert_conversation_session(session_data)
-            insert_emotion_score(session_id, "user", EmotionData(label="neutral", confidence=0.7), user_id)
-            insert_emotion_score(session_id, "sophia", sophia_emotion, user_id)
+            # Check if session already exists in database
+            from app.services.supabase import get_supabase, insert_conversation_message
+            supabase = get_supabase()
+            session_exists = False
+            
+            if original_session_id:  # User provided a session_id
+                try:
+                    result = supabase.table("conversation_sessions").select("id").eq("id", session_id).execute()
+                    session_exists = bool(result.data)
+                except Exception:
+                    session_exists = False
+            
+            # Insert session ONLY if it's new
+            if not session_exists:
+                try:
+                    session_data = {
+                        "id": session_id,
+                        "user_id": user_id or "00000000-0000-0000-0000-000000000000",
+                        "transcript": message,
+                        "response": accumulated_response.strip(),
+                        "user_emotion": {
+                            "label": "neutral",
+                            "confidence": 0.7
+                        },
+                        "sophia_emotion": {
+                            "label": sophia_emotion.label,
+                            "confidence": sophia_emotion.confidence
+                        },
+                        "audio_url": audio_url,
+                        "source": "web"
+                    }
+                    insert_conversation_session(session_data)
+                    logger.info(f"[Text Chat Stream] ✅ New session created: {session_id}")
+                except Exception as session_error:
+                    logger.warning(f"[Text Chat Stream] ⚠️ Session insert failed (may already exist): {session_error}")
+            else:
+                logger.info(f"[Text Chat Stream] ✅ Continuing existing session: {session_id}")
+            
+            # ALWAYS insert messages (for multi-turn support)
+            try:
+                insert_conversation_message({
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": message,
+                    "emotion": {
+                        "label": "neutral",
+                        "confidence": 0.7
+                    }
+                })
+                logger.info(f"[Text Chat Stream] ✅ User message saved to conversation_messages")
+            except Exception as msg_error:
+                logger.error(f"[Text Chat Stream] ❌ Failed to save user message: {msg_error}")
+            
+            try:
+                insert_conversation_message({
+                    "session_id": session_id,
+                    "role": "sophia",
+                    "content": accumulated_response.strip(),
+                    "audio_url": audio_url,
+                    "emotion": {
+                        "label": sophia_emotion.label,
+                        "confidence": sophia_emotion.confidence
+                    }
+                })
+                logger.info(f"[Text Chat Stream] ✅ Sophia message saved to conversation_messages")
+            except Exception as msg_error:
+                logger.error(f"[Text Chat Stream] ❌ Failed to save sophia message: {msg_error}")
+            
+            # Insert emotion scores
+            try:
+                insert_emotion_score(session_id, "user", EmotionData(label="neutral", confidence=0.7), user_id)
+                insert_emotion_score(session_id, "sophia", sophia_emotion, user_id)
+            except Exception as emotion_error:
+                logger.warning(f"[Text Chat Stream] ⚠️ Failed to save emotion scores: {emotion_error}")
+                
         except Exception as e:
-            logger.error(f"[Text Chat Stream] Failed to save conversation: {e}")
+            logger.error(f"[Text Chat Stream] ❌ Failed to save conversation: {e}")
         
         # Update memory
         conversation_turn = ConversationTurn(
@@ -271,7 +336,6 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
         error_data = json.dumps({"detail": f"Internal server error: {str(e)}"})
         yield f"event: error\ndata: {error_data}\n\n"
         _clear_cancel_flag(session_id)
-
 
 @router.post("/stream")
 @limiter.limit(settings.API_RATE_LIMIT)
