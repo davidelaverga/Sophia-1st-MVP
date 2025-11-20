@@ -1,42 +1,61 @@
 import logging
 import time
-from typing import Callable
 import uuid
+from typing import Callable, Optional
 
 from fastapi import HTTPException
+from opentelemetry import trace
+
 from app.services import mistral, supabase
 from app.services.emotion import Emotion, analyze_emotion_audio, infer_text_emotion
 from app.services.emotional_guidance import get_guidance
-from app.services.tts import synthesize_inworld
+from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("sophia.chat")
 
-def transcript_audio(wav_bytes: bytes, cancel_check: Callable):
+def transcript_audio(wav_bytes: bytes, cancel_check: Optional[Callable] = None):
     try:
-    
-        transcript = mistral.transcribe_audio_with_voxtral(
-            wav_bytes,
-            cancel_check=cancel_check,
-        )
+        with tracer.start_as_current_span("stt_transcription") as stt_span:
+            transcript = mistral.transcribe_audio_with_voxtral(
+                wav_bytes,
+                cancel_check=cancel_check,
+            )
+            stt_span.set_attribute("transcript.length", len(transcript))
         return transcript
     except Exception:
         logger.exception("Transcription failed in chat")
         raise HTTPException(status_code=500, detail="Transcription failed")
     
-def analyze_emotion_by_audio(wav_bytes: bytes, cancel_check: Callable):
+def analyze_emotion_by_audio(
+    wav_bytes: bytes,
+    cancel_check: Optional[Callable] = None,
+    role: str = "user",
+):
     is_mock_audio = False
     try:
         is_mock_audio = (wav_bytes.startswith(b'ID3mock') or len(wav_bytes) < 2048)
-    except:
+    except Exception:
         is_mock_audio = False
     try:
-        user_emotion = analyze_emotion_audio(wav_bytes)
+        span_name = f"emotion_analysis_{role or 'unknown'}"
+        with tracer.start_as_current_span(span_name) as emotion_span:
+            user_emotion = analyze_emotion_audio(wav_bytes)
+            emotion_span.set_attribute(
+                f"phoenix_{role}_emotion.label", getattr(user_emotion, "label", "unknown")
+            )
+            emotion_span.set_attribute(
+                f"phoenix_{role}_emotion.confidence",
+                float(getattr(user_emotion, "confidence", 0.0)),
+            )
+            emotion_span.set_attribute("emotion.type", role or "unknown")
+            emotion_span.set_attribute("emotion.source", "audio")
         return user_emotion, is_mock_audio
     except Exception:
         logger.exception("Emotion analysis failed in chat")
         raise HTTPException(status_code=500, detail="Emotion analysis failed")
 
-def analyze_emotion_by_text(text: str, cancel_check):
+def analyze_emotion_by_text(text: str, cancel_check=None):
     return infer_text_emotion(text)
         
 
@@ -51,32 +70,63 @@ def get_emotional_guidance(emotion: Emotion):
     finally:
         return emotional_guidance
 
-def generate_llm_reply(transcript: str, cancel_check: Callable):
+def generate_llm_reply(transcript: str, cancel_check: Optional[Callable] = None):
+    cancel = cancel_check or (lambda: None)
     try:
-        reply = mistral.generate_llm_reply(
-            transcript,
-            cancel_check=cancel_check,
-        )
+        with tracer.start_as_current_span("llm_generation") as llm_span:
+            reply = mistral.generate_llm_reply(
+                transcript,
+                cancel_check=cancel,
+            )
+            llm_span.set_attribute("reply.length", len(reply))
         return reply
     except Exception:
         logger.exception("LLM generation failed in chat")
-        raise HTTPException(
-            status_code=500, detail="Response generation failed"
-        )
-    
-def synthesize_reply(reply: str, cancel_check: Callable):
+        raise HTTPException(status_code=500, detail="Response generation failed")
+
+def generate_streamed_llm_reply(prompt: str, cancel_check: Optional[Callable] = None):
     try:
-        audio_bytes = synthesize_inworld(
-            reply,
-            cancel_check=cancel_check,
-        )
-        file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-        audio_url = supabase.upload_audio_and_get_url(
-            audio_bytes, file_name
-        )
+        streamed = mistral.stream_generate_llm_reply(prompt, cancel_check=cancel_check)
+        token_count = 0
+        with tracer.start_as_current_span("llm_stream_generation") as stream_span:
+            for chunk in streamed:
+                if cancel_check:
+                    cancel_check()
+                if not chunk:
+                    continue
+                token_count += 1
+                yield chunk
+            stream_span.set_attribute("reply.tokens_streamed", token_count)
+    except Exception:
+        logger.exception("Streamed LLM generation failed in chat")
+        raise HTTPException(status_code=500, detail="Response generation failed")
+
+def synthesize_reply(reply: str, cancel_check: Optional[Callable] = None):
+    try:
+        with tracer.start_as_current_span("tts_synthesis_upload") as tts_span:
+            audio_bytes = synthesize_inworld(
+                reply,
+                cancel_check=cancel_check,
+            )
+            file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+            audio_url = supabase.upload_audio_and_get_url(
+                audio_bytes, file_name
+            )
+            tts_span.set_attribute("tts.audio_url", audio_url)
+            tts_span.set_attribute("tts.audio_bytes", len(audio_bytes or b""))
         return audio_bytes, audio_url
     except Exception:
         logger.exception("Synthesis or upload failed in chat")
+        raise HTTPException(status_code=500, detail="Synthesis failed")
+
+def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional[Callable] = None):
+    try:
+        for pcm_chunk in synthesize_inworld_stream(text, sample_rate_hz=samplerate, cancel_check=cancel_check):
+            if cancel_check:
+                cancel_check()
+            yield pcm_chunk
+    except Exception:
+        logger.exception("Streamed synthesis failed in chat")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
 def persist_conversation_session(

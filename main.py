@@ -36,27 +36,16 @@ from app.deps import (
     require_consent,
     extract_identity_from_token,
 )
-from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
-from app.services.emotion import analyze_emotion_audio, infer_text_emotion
-from app.services.tts import synthesize_inworld, synthesize_inworld_stream
+from app.services.tts import synthesize_inworld_stream
 from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.shared_services import shared_services
-from app.services.emotional_guidance import (
-    get_guidance as get_emotional_guidance,
-    build_emotion_guided_prompt,
-)
+from app.services.emotional_guidance import build_emotion_guided_prompt
 from app.services.memory import memory_manager, ConversationTurn
-from app import chat as chat_service
+from app.tracing import setup_tracer
 from dotenv import load_dotenv
-
 from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 load_dotenv()
 
@@ -112,10 +101,13 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
 settings = get_settings()
 validate_settings(settings)
-supabase_service.init_supabase(settings)
 
 app = FastAPI(title=settings.APP_NAME)
 
+setup_tracer(app, settings)
+supabase_service.init_supabase(settings)
+
+from app import chat as chat_service
 
 # ==========================
 # Live Mode: WebSocket Voice
@@ -353,13 +345,7 @@ async def ws_voice(websocket: WebSocket):
                         for idx, sent in enumerate(sentences):
                             streamed_any = False
                             try:
-                                for pcm_chunk in (
-                                    synthesize_inworld_stream(
-                                        sent, sample_rate_hz=48000
-                                    )
-                                    or []
-                                ):
-                                    cancel_check()
+                                for pcm_chunk in chat_service.synthesize_streamed_reply(sent, 48000, cancel_check):
                                     streamed_any = True
                                     await audio_queue.enqueue(
                                         session_id=session_id,
@@ -380,7 +366,9 @@ async def ws_voice(websocket: WebSocket):
 
                             if not streamed_any:
                                 try:
-                                    audio_bytes = synthesize_inworld(sent)
+                                    audio_bytes, audio_url_last = chat_service.synthesize_reply(
+                                        sent, cancel_check
+                                    )
                                     cancel_check()
                                     await audio_queue.enqueue(
                                         session_id=session_id,
@@ -393,27 +381,14 @@ async def ws_voice(websocket: WebSocket):
                                             "eos": False,
                                         },
                                     )
-                                    try:
-                                        file_name = (
-                                            f"sophia_{int(time.time() * 1000)}.mp3"
-                                        )
-                                        audio_url_last = (
-                                            supabase_service.upload_audio_and_get_url(
-                                                audio_bytes, file_name
-                                            )
-                                        )
-                                        await _ws_send_json(
-                                            websocket,
-                                            {
-                                                "type": "audio_url_chunk",
-                                                "audio_url": audio_url_last,
-                                                "turn_id": turn_state.turn_id,
-                                            },
-                                        )
-                                    except Exception:
-                                        logger.warning(
-                                            "WS: failed uploading fallback sentence audio"
-                                        )
+                                    await _ws_send_json(
+                                        websocket,
+                                        {
+                                            "type": "audio_url_chunk",
+                                            "audio_url": audio_url_last,
+                                            "turn_id": turn_state.turn_id,
+                                        },
+                                    )
                                 except Exception:
                                     logger.exception(
                                         "WS: fallback TTS synthesis failed"
@@ -432,15 +407,8 @@ async def ws_voice(websocket: WebSocket):
                         if audio_url_last is None:
                             try:
                                 cancel_check()
-                                storage_audio = synthesize_inworld(
-                                    reply_full,
-                                    cancel_check=cancel_check,
-                                )
-                                file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                                audio_url_last = (
-                                    supabase_service.upload_audio_and_get_url(
-                                        storage_audio, file_name
-                                    )
+                                audio_bytes, audio_url_last = chat_service.synthesize_reply(
+                                    reply_full, cancel_check=cancel_check
                                 )
                             except asyncio.CancelledError:
                                 raise
@@ -524,51 +492,6 @@ async def manage_session_turn(
         if manager.get_turn(state.turn_id) is not None:
             await manager.fail_turn(state.turn_id, exc)
         raise
-
-
-# OpenTelemetry setup
-resource = Resource.create(
-    {
-        "service.name": "sophia-backend",
-        "service.version": "1.0.0",
-        "deployment.environment": "staging",
-    }
-)
-
-
-def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
-    if not ep:
-        return None
-    ep = ep.rstrip("/")
-    # If caller passed base gateway (e.g., https://otlp-gateway.grafana.net/otlp),
-    # add the traces path expected by the HTTP exporter.
-    if not ep.endswith("/v1/traces"):
-        # Common Grafana endpoints end in "/otlp". Either way, append the traces path cleanly.
-        return f"{ep}/v1/traces"
-    return ep
-
-
-def _parse_otlp_headers(hdrs: Optional[str]) -> Optional[dict[str, str]]:
-    if not hdrs:
-        return None
-    # Support comma-separated key=value pairs, e.g. "Authorization=Bearer abc, X-Org=123"
-    out: dict[str, str] = {}
-    for part in hdrs.split(","):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            out[k.strip()] = v.strip()
-    return out or None
-
-
-provider = TracerProvider(resource=resource)
-otlp_endpoint = _normalize_otlp_endpoint(settings.OTEL_EXPORTER_OTLP_ENDPOINT)
-otlp_headers = _parse_otlp_headers(settings.OTEL_EXPORTER_OTLP_HEADERS)
-if otlp_endpoint:
-    otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, headers=otlp_headers)
-    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-trace.set_tracer_provider(provider)
-tracer = trace.get_tracer("sophia")
-FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(APIKeyMiddleware, public_paths=settings.API_PUBLIC_PATHS)
 
@@ -703,16 +626,8 @@ async def transcribe(
 
     session_id = uuid.uuid4()
 
-    try:
-        
-        text = mistral_service.transcribe_audio_with_voxtral(wav_bytes)
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Transcription failed")
-        raise HTTPException(status_code=500, detail="Transcription failed")
-
-    user_emotion = analyze_emotion_audio(wav_bytes)
+    text = chat_service.transcript_audio(wav_bytes)
+    user_emotion, _ = chat_service.analyze_emotion_by_audio(wav_bytes, role="user")
     supabase_user_id, _ = extract_identity_from_token(supabase_token)
 
     try:
@@ -740,12 +655,7 @@ async def generate_response(
     body: GenerateRequest,
     supabase_token: str = Depends(verify_api_key),
 ):
-    try:
-        reply = mistral_service.generate_llm_reply(body.text)
-    except Exception:
-        logger.exception("LLM response generation failed")
-        raise HTTPException(status_code=500, detail="Response generation failed")
-
+    reply = chat_service.generate_llm_reply(body.text)
     return GenerateResponse(reply=reply, tone="encouraging")
 
 
@@ -763,7 +673,7 @@ async def generate_response_stream(
     first token and incremental updates.
     """
     try:
-        generator = mistral_service.stream_generate_llm_reply(body.text)
+        generator = chat_service.generate_streamed_llm_reply(body.text)
         return StreamingResponse(generator, media_type="text/plain")
     except Exception:
         logger.exception("Streaming response generation failed")
@@ -782,23 +692,13 @@ async def synthesize(
     request: Request,
     body: SynthesizeRequest,
     supabase_token: str = Depends(verify_api_key),
-):
+    ):
     supabase_user_id, _ = extract_identity_from_token(supabase_token)
-    try:
-        audio_bytes = synthesize_inworld(body.text)
-    except Exception:
-        logger.exception("TTS synthesis failed")
-        raise HTTPException(status_code=500, detail="Synthesis failed")
 
-    try:
-        file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-        # Fix argument order: first bytes, then optional file_name
-        audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
-    except Exception:
-        logger.exception("Audio upload failed")
-        raise HTTPException(status_code=500, detail="Audio upload failed")
-
-    sophia_emotion = analyze_emotion_audio(audio_bytes)
+    audio_bytes, audio_url = chat_service.synthesize_reply(body.text)
+    sophia_emotion, _ = chat_service.analyze_emotion_by_audio(
+        audio_bytes, role="sophia"
+    )
 
     try:
         session_id = uuid.uuid4()
@@ -840,68 +740,44 @@ async def chat(
         def cancel_check():
             manager.raise_if_cancelled(turn_state.turn_id)
 
-        with tracer.start_as_current_span("chat") as chat_span:
-            chat_span.set_attribute("session.id", session_id_str)
-            t0 = time.time()
-            with tracer.start_as_current_span("stt_transcription") as stt_span:
-                transcript = chat_service.transcript_audio(wav_bytes, cancel_check)
-                stt_span.set_attribute("transcript.length", len(transcript))
+        current_span = trace.get_current_span()
+        current_span.set_attribute("session.id", session_id_str)
+        t0 = time.time()
 
-            cancel_check()
+        transcript = chat_service.transcript_audio(wav_bytes, cancel_check)
 
-            with tracer.start_as_current_span("emotion_analysis_user") as emotion_span:
-                user_emotion, _ = chat_service.analyze_emotion_by_audio(wav_bytes, cancel_check)
-                emotion_span.set_attribute(
-                    "phoenix_user_emotion.label", user_emotion.label
-                )
-                emotion_span.set_attribute(
-                    "phoenix_user_emotion.confidence", float(user_emotion.confidence)
-                )
-                emotion_span.set_attribute("emotion.type", "user")
-                emotion_span.set_attribute("emotion.source", "audio")
+        cancel_check()
 
-            chat_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
-            chat_span.set_attribute(
-                "phoenix_user_emotion.confidence", float(user_emotion.confidence)
-            )
+        user_emotion, _ = chat_service.analyze_emotion_by_audio(
+            wav_bytes, cancel_check, role="user"
+        )
 
-            turn_state.set_status("streaming")
-            cancel_check()
+        turn_state.set_status("streaming")
+        cancel_check()
 
-            with tracer.start_as_current_span("llm_generation") as llm_span:
-                reply = chat_service.generate_llm_reply(transcript, cancel_check)
-                llm_span.set_attribute("reply.length", len(reply))
+        reply = chat_service.generate_llm_reply(transcript, cancel_check)
 
-            turn_state.set_status("synthesizing")
-            cancel_check()
+        turn_state.set_status("synthesizing")
+        cancel_check()
 
-            with tracer.start_as_current_span("tts_synthesis_upload"):
-                reply_audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
+        reply_audio_bytes, audio_url = chat_service.synthesize_reply(
+            reply, cancel_check
+        )
 
+        sophia_emotion, _ = chat_service.analyze_emotion_by_audio(
+            reply_audio_bytes, cancel_check, role="sophia"
+        )
 
-            with tracer.start_as_current_span(
-                "emotion_analysis_sophia"
-            ) as sophia_emotion_span:
-                sophia_emotion, _ = chat_service.analyze_emotion_by_audio(reply_audio_bytes, cancel_check)
-                sophia_emotion_span.set_attribute(
-                    "phoenix_sophia_emotion.label", sophia_emotion.label
-                )
-                sophia_emotion_span.set_attribute(
-                    "phoenix_sophia_emotion.confidence",
-                    float(sophia_emotion.confidence),
-                )
-                sophia_emotion_span.set_attribute("emotion.type", "sophia")
-                sophia_emotion_span.set_attribute("emotion.source", "audio")
-
-            chat_span.set_attribute(
-                "phoenix_sophia_emotion.label", sophia_emotion.label
-            )
-            chat_span.set_attribute(
-                "phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence)
-            )
-
-            total_ms = int((time.time() - t0) * 1000)
-            chat_span.set_attribute("total_roundtrip_time.ms", total_ms)
+        total_ms = int((time.time() - t0) * 1000)
+        current_span.set_attribute("total_roundtrip_time.ms", total_ms)
+        current_span.set_attribute("phoenix_user_emotion.label", user_emotion.label)
+        current_span.set_attribute(
+            "phoenix_user_emotion.confidence", float(user_emotion.confidence)
+        )
+        current_span.set_attribute("phoenix_sophia_emotion.label", sophia_emotion.label)
+        current_span.set_attribute(
+            "phoenix_sophia_emotion.confidence", float(sophia_emotion.confidence)
+        )
 
         chat_service.persist_conversation_session(
             session_id=session_uuid,
@@ -1022,8 +898,8 @@ async def defi_chat_stream(
     user_id, discord_id = extract_identity_from_token(supabase_token)
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat/stream"}
-    if session_id:
-        metadata["provided_session_id"] = session_id
+    if session_identifier:
+        metadata["provided_session_id"] = session_identifier
     if discord_id:
         metadata["discord_id"] = discord_id
     manager = shared_services.get_session_turn_manager()
@@ -1033,12 +909,10 @@ async def defi_chat_stream(
     # generator with "I/O operation on closed file".
 
     async def event_generator():
-        nonlocal session_id
+        nonlocal session_identifier
         async with manage_session_turn(
             session_identifier, metadata=metadata
         ) as turn_state:
-            session_id_local = session_identifier
-            session_id = session_id_local
 
             def cancel_check():
                 manager.raise_if_cancelled(turn_state.turn_id)
@@ -1047,7 +921,9 @@ async def defi_chat_stream(
                 cancel_check()
                 transcript = chat_service.transcript_audio(wav_bytes, cancel_check)
                 cancel_check()
-                user_emotion, _ = chat_service.analyze_emotion_by_audio(wav_bytes, cancel_check)
+                user_emotion, _ = chat_service.analyze_emotion_by_audio(
+                    wav_bytes, cancel_check, role="user"
+                )
 
                 yield sse_event(
                     'transcript',
@@ -1056,13 +932,10 @@ async def defi_chat_stream(
 
                 turn_state.set_status("streaming")
                 reply_accum = []
-                for chunk in mistral_service.stream_generate_llm_reply(
+                for chunk in chat_service.generate_streamed_llm_reply(
                     transcript,
                     cancel_check=cancel_check,
                 ):
-                    cancel_check()
-                    if not chunk:
-                        continue
                     reply_accum.append(chunk)
                     safe_chunk = chunk.replace("\n", " ")
                     yield sse_event('token', safe_chunk)
@@ -1076,7 +949,9 @@ async def defi_chat_stream(
                 audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
 
                 cancel_check()
-                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(audio_bytes, cancel_check)
+                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(
+                    audio_bytes, cancel_check, role="sophia"
+                )
 
                 cancel_check()
                 chat_service.persist_conversation_session(
@@ -1318,13 +1193,10 @@ async def text_chat_stream(
 
                 turn_state.set_status("streaming")
                 reply_accum = []
-                for chunk in mistral_service.stream_generate_llm_reply(
+                for chunk in chat_service.generate_streamed_llm_reply(
                     guided_prompt,
                     cancel_check=cancel_check,
                 ):
-                    cancel_check()
-                    if not chunk:
-                        continue
                     reply_accum.append(chunk)
                     safe_chunk = chunk.replace("\n", " ")
                     yield sse_event('token', safe_chunk)
@@ -1338,7 +1210,9 @@ async def text_chat_stream(
 
                 audio_bytes, audio_url = chat_service.synthesize_reply(reply, cancel_check)
                 cancel_check()
-                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(audio_bytes, cancel_check)
+                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(
+                    audio_bytes, cancel_check, role="sophia"
+                )
 
                 payload = {
                     "audio_url": audio_url,
