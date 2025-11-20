@@ -17,7 +17,7 @@ Sophia is an intelligent voice assistant specifically designed for DeFi (Decentr
 - **Discord OAuth**: Seamless user authentication and profile management
 - **GDPR Compliance**: Comprehensive consent management with hashed record storage
 - **Real-time Observability**: OpenTelemetry integration with Grafana Cloud dashboards
-- **Scalable Architecture**: Containerized deployment on Fly.io with auto-scaling
+- **Scalable Architecture**: Backend on Render (Docker) and frontend on Vercel
 
 ## 🏗️ **Architecture**
 
@@ -47,8 +47,8 @@ git clone <repository>
 cd Sophia-1st-MVP
 
 # Create environment file
-cp .env.staging .env
-# Edit .env with your API keys
+cp .env.example .env
+# Edit .env with your local (non-production) API keys
 
 # Install dependencies
 pip install -r requirements.txt
@@ -195,8 +195,9 @@ Sophia includes a comprehensive RAG system with 20+ categories:
 │   ├── components/               # Reusable UI components
 │   └── api/                      # API routes (auth, consent)
 ├── grafana-dashboards/           # Observability dashboards
-├── fly.toml                      # Fly.io deployment config
-├── Dockerfile                    # Production container
+├── render.yaml                   # Render backend service definition
+├── Dockerfile.backend            # Backend-only container for Render
+├── Dockerfile                    # Alternate backend container (optional)
 └── deployment-guide.md           # Complete deployment instructions
 ```
 
@@ -222,7 +223,7 @@ Sophia includes a comprehensive RAG system with 20+ categories:
 - **Monitoring**: Grafana Cloud dashboards
 
 ### **Environment Variables**
-See `.env.staging` and `frontend-nextjs/.env.example` for complete configuration templates.
+See `.env.example` and `frontend-nextjs/.env.example` for complete configuration templates.
 
 ## 📝 **License**
 

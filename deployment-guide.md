@@ -2,45 +2,49 @@
 
 ## 🚀 Complete Deployment Pipeline
 
-This guide walks you through deploying Sophia's backend to Fly.io and frontend to Vercel with full observability.
+This guide walks you through deploying Sophia's backend to Render and frontend to Vercel with full observability.
 
-## Part 1: Backend Deployment (Fly.io)
+## Part 1: Backend Deployment (Render)
+
+The backend is deployed as a Docker-based web service on Render using `render.yaml` and `Dockerfile.backend`.
 
 ### Prerequisites
-```bash
-# Install Fly CLI
-curl -L https://fly.io/install.sh | sh
+- Render account with the GitHub repository connected
+- Python 3.10+ (already specified via `runtime.txt` in the repo)
 
-# Login to Fly.io
-fly auth login
-```
+### Configure Backend Service on Render
+1. Push your changes to GitHub (including `render.yaml` and `Dockerfile.backend`).
+2. In the Render dashboard, create or open the existing web service for the Sophia backend:
+   - **Environment**: `Docker`
+   - **Dockerfile path**: `./Dockerfile.backend`
+   - **Health check path**: `/health`
+3. In the service **Environment** settings, add the following environment variables (values should be set only in Render, not committed):
+   - `MISTRAL_API_KEY`
+   - `INWORLD_API_KEY`
+   - `GOOGLE_API_KEY`
+   - `OPENAI_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_KEY` (service role key)
+   - `SUPABASE_DB_DSN`
+   - `SUPABASE_BUCKET_AUDIO`
+   - `SUPABASE_AUDIO_PREFIX`
+   - `SUPABASE_DB_PASSWORD`
+   - `API_KEYS`
+   - `API_RATE_LIMIT`
+   - `OTEL_EXPORTER_OTLP_ENDPOINT`
+   - `OTEL_EXPORTER_OTLP_HEADERS`
+   - `REQUIRE_CONSENT`
+
+   For local development, use `.env.example` as a template, but **never** commit real keys.
 
 ### Deploy Backend
-```bash
-# Navigate to project root
-cd Sophia-1st-MVP
-
-# Set environment variables
-fly secrets set MISTRAL_API_KEY="your_mistral_key"
-fly secrets set INWORLD_API_KEY="your_inworld_key"
-fly secrets set GOOGLE_API_KEY="your_google_key"
-fly secrets set SUPABASE_URL="your_supabase_url"
-fly secrets set SUPABASE_KEY="your_supabase_key"
-fly secrets set SUPABASE_SERVICE_KEY="your_service_key"
-fly secrets set SUPABASE_DB_DSN="your_db_dsn"
-fly secrets set API_KEYS="staging-key-1,staging-key-2"
-fly secrets set OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
-fly secrets set OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic your_grafana_token"
-
-# Launch and deploy
-fly launch --no-deploy
-fly deploy
-```
+- Click **Deploy** (or **Manual Deploy → Clear build cache & deploy**) in the Render dashboard for the backend service.
 
 ### Verify Backend
-- Visit: `https://sophia-api.fly.dev/docs`
+- Visit: `https://sophia-1st-mvp-xjml.onrender.com/docs`
 - Test endpoints via Swagger UI
-- Check logs: `fly logs`
+- Check logs in the Render dashboard
 
 ## Part 2: Frontend Deployment (Vercel)
 
@@ -183,21 +187,29 @@ CREATE TABLE user_consents (
 
 ## Environment Variables Summary
 
-### Backend (.env)
+### Backend (Render environment or local .env)
+Use Render Secrets for production, and `.env.example` as a template for local development.
 ```
 MISTRAL_API_KEY=
 INWORLD_API_KEY=
 GOOGLE_API_KEY=
+OPENAI_API_KEY=
 SUPABASE_URL=
+SUPABASE_ANON_KEY=
 SUPABASE_KEY=
-SUPABASE_SERVICE_KEY=
 SUPABASE_DB_DSN=
+SUPABASE_BUCKET_AUDIO=
+SUPABASE_AUDIO_PREFIX=
+SUPABASE_DB_PASSWORD=
 API_KEYS=
+API_RATE_LIMIT=
 OTEL_EXPORTER_OTLP_ENDPOINT=
 OTEL_EXPORTER_OTLP_HEADERS=
+REQUIRE_CONSENT=
 ```
 
-### Frontend (.env.local)
+### Frontend (Vercel environment or local .env.local)
+Configure these in the Vercel dashboard; use `frontend-nextjs/.env.example` as a template for local development.
 ```
 NEXTAUTH_URL=
 NEXTAUTH_SECRET=
@@ -212,7 +224,7 @@ NEXT_PUBLIC_API_KEY=
 
 ## 🎯 Success Criteria
 
-✅ **Backend Live**: `https://sophia-api.fly.dev/docs` accessible with all endpoints functional  
+✅ **Backend Live**: `https://sophia-1st-mvp-xjml.onrender.com/docs` accessible with all endpoints functional  
 ✅ **Discord OAuth**: User login stores discord_user_id in Supabase  
 ✅ **Audio Loop**: Voice input → Sophia reply with audio + transcript  
 ✅ **Emotion Visuals**: Emoji labels match backend output (≥90% consistency)  
@@ -223,8 +235,8 @@ NEXT_PUBLIC_API_KEY=
 ## Support
 
 For deployment issues:
-1. Check Fly.io logs: `fly logs`
-2. Check Vercel logs in dashboard
+1. Check Render logs in the dashboard
+2. Check Vercel logs in the dashboard
 3. Verify environment variables are set
 4. Test API endpoints individually
 5. Check Grafana data source connectivity
