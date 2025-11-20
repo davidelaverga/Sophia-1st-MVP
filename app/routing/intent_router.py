@@ -7,7 +7,9 @@ from app.routing.models import (
     Intent,
     IntentResult,
     UtilityPath,
+    UtilityPathResult,
 )
+from app.routing.utility_router import classify_utility_path
 from app.services.tier0_classifier import (
     INTENT_CASUAL,
     INTENT_CRISIS,
@@ -56,14 +58,6 @@ def _prosody_intensity(prosody: Dict[str, float]) -> float:
         if level == "low":
             return 0.1
     return 0.0
-
-
-def classify_utility_path(user_message: str) -> Tuple[UtilityPath, float, str]:
-    """
-    Stub utility path selector. Currently a dud that always returns LIGHT.
-    """
-
-    return UtilityPath.LIGHT, 0.6, "Utility path selection placeholder → LIGHT."
 
 
 async def classify_intent_and_mode(
@@ -150,7 +144,8 @@ async def classify_intent_and_mode(
             reasoning=reasoning,
         )
 
-    utility_path, path_conf, path_reason = classify_utility_path(text)
+    utility_path_result: UtilityPathResult = classify_utility_path(text)
+    utility_path = utility_path_result.path
     if utility_path == UtilityPath.DIRECT:
         current_mode = CurrentMode.UTILITY_DIRECT
     elif utility_path == UtilityPath.LIGHT:
@@ -158,8 +153,8 @@ async def classify_intent_and_mode(
     else:
         current_mode = CurrentMode.UTILITY_AGENTIC
 
-    reasoning = " ".join(reason_chunks + [path_reason])
-    combined_confidence = max(final_confidence, path_conf)
+    reasoning = " ".join(reason_chunks + [utility_path_result.reasoning])
+    combined_confidence = max(final_confidence, utility_path_result.confidence)
 
     return IntentResult(
         intent=Intent.UTILITY,
