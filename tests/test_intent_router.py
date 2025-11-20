@@ -60,8 +60,19 @@ async def test_intent_router_accuracy_with_stubbed_tier0(monkeypatch):
             assert result.current_mode == CurrentMode.EMOTIONAL_SUPPORT
             assert result.utility_path is None
         else:
-            assert result.current_mode == CurrentMode.UTILITY_LIGHT
-            assert result.utility_path == UtilityPath.LIGHT
+            assert result.utility_path is not None
+            assert result.current_mode in {
+                CurrentMode.UTILITY_LIGHT,
+                CurrentMode.UTILITY_DIRECT,
+                CurrentMode.UTILITY_AGENTIC,
+            }
+            # Mode should mirror the chosen utility path.
+            if result.utility_path == UtilityPath.DIRECT:
+                assert result.current_mode == CurrentMode.UTILITY_DIRECT
+            elif result.utility_path == UtilityPath.LIGHT:
+                assert result.current_mode == CurrentMode.UTILITY_LIGHT
+            elif result.utility_path == UtilityPath.AGENTIC:
+                assert result.current_mode == CurrentMode.UTILITY_AGENTIC
 
     accuracy = correct / len(cases)
     assert accuracy >= 0.90, f"Intent accuracy below expectation: {accuracy:.2%}"

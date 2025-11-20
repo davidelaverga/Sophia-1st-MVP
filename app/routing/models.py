@@ -28,3 +28,10 @@ class IntentResult:
     utility_path: Optional[UtilityPath]
     confidence: float
     reasoning: Optional[str] = None
+
+
+@dataclass
+class UtilityPathResult:
+    path: UtilityPath
+    confidence: float
+    reasoning: str
