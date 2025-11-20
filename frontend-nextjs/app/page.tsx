@@ -1,13 +1,11 @@
 'use client'
 
-import Image from "next/image";
 import LiveCall from "./components/LiveCall";
-import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
-import { User, LogOut, Mic } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { LogOut } from 'lucide-react'
 import ChatInterface from './components/ChatInterface'
-import VoiceRecorder from './components/VoiceRecorder'
 import ConsentModal from './components/ConsentModal'
+import { useSupabase } from './providers'
 
 interface Message {
   id: string
@@ -21,29 +19,13 @@ interface Message {
 }
 
 export default function Home() {
-  const [user, setUser] = useState<any>(null)
+  const { supabase, user, accessToken, loading } = useSupabase()
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [hasConsent, setHasConsent] = useState(false)
   const [showConsent, setShowConsent] = useState(false)
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
 
-  useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      
-      if (user) {
-        checkConsent(user.id)
-      }
-    }
-    getUser()
-  }, [])
-
-  const checkConsent = async (userId: string) => {
+  const checkConsent = useCallback(async (userId: string) => {
     try {
       const response = await fetch('/api/consent/check', {
         method: 'POST',
@@ -76,7 +58,17 @@ export default function Home() {
       console.error('Error checking consent:', error)
       setShowConsent(true)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (loading) return
+    if (!user) {
+      setHasConsent(false)
+      setShowConsent(false)
+      return
+    }
+    checkConsent(user.id)
+  }, [user, loading, checkConsent])
 
   const handleConsentAccepted = () => {
     setHasConsent(true)
@@ -85,9 +77,9 @@ export default function Home() {
 
   const signOut = async () => {
     await supabase.auth.signOut()
-    setUser(null)
     setMessages([])
     setHasConsent(false)
+    setShowConsent(false)
   }
 
   const signInWithDiscord = async () => {
@@ -120,6 +112,16 @@ export default function Home() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl max-w-md w-full mx-4 text-center text-white">
+          <p className="text-lg font-semibold">Loading your session…</p>
+        </div>
+      </div>
+    )
   }
 
   if (!user) {
@@ -267,12 +269,14 @@ export default function Home() {
                 setMessages={setMessages}
                 isLoading={isLoading}
                 setIsLoading={setIsLoading}
+                accessToken={accessToken}
               />
 
               {/* Legacy upload-based voice recorder (hidden by default)
               <VoiceRecorder 
                 onMessage={(message) => setMessages(prev => [...prev, message])}
                 setIsLoading={setIsLoading}
+                accessToken={accessToken}
               />
               */}
             </div>

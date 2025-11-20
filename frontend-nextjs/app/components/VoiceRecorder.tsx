@@ -6,9 +6,10 @@ import { Mic, MicOff, Square } from 'lucide-react'
 interface VoiceRecorderProps {
   onMessage: (message: any) => void
   setIsLoading: (loading: boolean) => void
+  accessToken: string | null
 }
 
-export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorderProps) {
+export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -95,6 +96,10 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
     setIsLoading(true)
 
     try {
+      if (!accessToken) {
+        throw new Error('Missing Supabase access token. Please refresh the page or sign in again.')
+      }
+
       const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm;codecs=opus'
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
 
@@ -114,7 +119,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat/stream`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: formData
       })

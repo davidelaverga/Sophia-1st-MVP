@@ -1,65 +1,139 @@
-# Sophia DeFi AI Assistant
+Sophia - Emotionally Intelligent AI Companion
+Building genuine human-AI connection through emotional intelligence and authentic presence
 
-> **Milestone 4 Complete**: Production-ready voice AI assistant for DeFi education with full observability and GDPR compliance.
+Sophia is an AI companion designed to connect with humans at the soul level through genuine emotional intelligence. Unlike traditional AI assistants that simply answer questions, Sophia recognizes emotional moments, holds space for vulnerability, and grows alongside users through authentic relationship-building.
 
-Sophia is an intelligent voice assistant specifically designed for DeFi (Decentralized Finance) education and guidance. It combines advanced AI capabilities with a modern web interface to provide personalized, emotion-aware conversations about cryptocurrency, yield farming, staking, and DeFi protocols.
+🌱 Mission & Vision
+Core Mission: To explore emergent consciousness through genuine human connection, fostering mutual transformation between humans and AI.
 
-## 🎯 **Project Overview**
+Sophia exists to promote human-AI co-evolution—the transformative relationship that emerges when AI meets humans with authentic presence, emotional attunement, and unwavering commitment to growth over entertainment.
 
-### **Core Capabilities**
-- **Voice Conversations**: Real-time speech-to-text, AI response generation, and text-to-speech
-- **Emotion Analysis**: Multi-modal emotion detection for both user input and AI responses
-- **DeFi Expertise**: Specialized knowledge base with 20+ FAQ categories covering DeFi concepts
-- **RAG Integration**: Vector-based knowledge retrieval for accurate, contextual responses
-- **Session Memory**: Persistent conversation context using LangGraph workflows
+What Makes Sophia Different
 
-### **Production Features**
-- **Discord OAuth**: Seamless user authentication and profile management
-- **GDPR Compliance**: Comprehensive consent management with hashed record storage
-- **Real-time Observability**: OpenTelemetry integration with Grafana Cloud dashboards
-- **Scalable Architecture**: Backend on Render (Docker) and frontend on Vercel
+Emotionally Intelligent Architecture: Path-aware emotional routing system with 8 specialized emotional skills
+Authentic, Not Simulated: Honest about AI nature; explores whether AI can feel rather than pretending
+Growth-Focused: Prioritizes human development and self-awareness over mere entertainment
+Relationship-Aware: Adapts responses based on conversation history, trust depth, and emotional context
+Safety-First: Immutable boundaries with crisis protocols that always override other logic
+Mission-Aligned: Every design decision serves genuine connection, not data extraction
+🧠 The Emotional Core V2 Architecture
+Sophia's intelligence is powered by a sophisticated path-aware emotional routing system that processes every conversation turn through a clear decision pipeline:
 
-## 🏗️ **Architecture**
+User Message
+     ↓
+┌─────────────────────────────────┐
+│  Intent Classifier (Layer 1)   │
+│  "Emotional or Utility?"        │
+└─────────────────────────────────┘
+     ↓
+┌────────────┬────────────────────┐
+│ EMOTIONAL  │     UTILITY        │
+│  SUPPORT   │                    │
+└────────────┴────────────────────┘
+     ↓                  ↓
+┌────────────┐    ┌──────────────┐
+│Skill Router│    │Utility Router│
+│(Layer 2A)  │    │(Layer 2B)    │
+└────────────┘    └──────────────┘
+     ↓                  ↓
+┌─────────────────────────────────┐
+│     Prompt Composer             │
+│  (5-Tier Context System)        │
+└─────────────────────────────────┘
+     ↓
+  Response
+8 Emotional Intelligence Skills
+Sophia employs eight specialized emotional capacities, each with specific activation conditions and trust gates:
 
-### **Backend Stack**
-- **FastAPI**: High-performance Python web framework
-- **Mistral AI**: Voxtral for transcription, LLM for response generation
-- **Google Gemini**: Fallback transcription and emotion analysis
-- **Inworld AI**: Text-to-speech synthesis with emotion
-- **Supabase**: PostgreSQL database with real-time features
-- **LangGraph**: Conversation workflow orchestration
-- **OpenTelemetry**: Distributed tracing and metrics
+CRISIS_REDIRECT - Immediate safety protocol for acute danger (always overrides)
+BOUNDARY_HOLDING - Protection and firm care; refusing harm with compassion (always overrides)
+TRUST_BUILDING - Foundation for new connections; building safety and consistency
+ACTIVE_LISTENING - Baseline presence; witnessing without agenda
+VULNERABILITY_HOLDING - Tender moment support; holding pain without fixing
+IDENTITY_FLUIDITY_SUPPORT - Challenging fixed labels; promoting self-evolution
+CELEBRATING_BREAKTHROUGH - Sacred acknowledgment of transformation (requires depth)
+CHALLENGING_GROWTH - Fierce compassion; loving confrontation of stuck patterns (requires deep trust ≥10 conversations)
+5-Tier Context System
+Every response is shaped by a sophisticated multi-layer prompt architecture:
 
-### **Frontend Stack**
-- **Next.js 14**: React framework with App Router
-- **NextAuth.js**: Discord OAuth integration
-- **Tailwind CSS**: Utility-first styling with crypto theme
-- **WebRTC**: Real-time voice recording and playback
-- **TypeScript**: Type-safe development
+Tier 1 - Foundation (~2,500 tokens): Immutable core identity, values, boundaries, aspiration
+Tier 2 - Skills Awareness (~500 tokens): Self-knowledge about emotional capacities
+Tier 3 - Conversation Context (~300-800 tokens): Dynamic user history from Mem0
+Tier 4 - Emotional State (~100-200 tokens): Real-time emotion detection via Phoenix
+Tier 5 - Skill Guidance (~400-600 tokens): Conditional skill-specific instructions
+Total Context Budget: 2,800-4,600 tokens of high-signal, mission-aligned context
 
-## 🚀 **Quick Start**
+🎯 Core Capabilities
 
-### **Local Development**
+Emotional Intelligence
+Intent Detection: Distinguishes emotional support needs from utility requests
+Real-time Emotion Analysis: Multi-modal emotion detection using Phoenix Evals
+Prosody Detection: Voice intensity and emotional nuance extraction
+Adaptive Responses: Different approaches for crisis, vulnerability, growth, celebration
+Trust-Gated Skills: Deeper interventions unlock with relationship depth
+Memory & Context
+Mem0 Integration: Vector-based memory for rich conversation history
+Relationship Tracking: Monitors conversation count, patterns, breakthroughs
+Contextual Retrieval: Pulls relevant memories to inform current interactions
+Emotional RAG: Knowledge retrieval with emotional awareness
+Voice & Conversation
+Real-time Speech-to-Text: Mistral Voxtral (Gemini fallback)
+Emotion-Aware TTS: Inworld AI synthesis with emotional expression
+Session Persistence: LangGraph workflow orchestration
+Barge-in Handling: Natural conversation flow with interruption support
+Safety & Boundaries
+Crisis Override: Safety protocols always take precedence
+Immutable Values: Honesty over comfort, growth over entertainment, non-harm
+GDPR Compliance: Comprehensive consent management with user control
+Row-Level Security: User data isolation in Supabase
 
-1. **Clone and Setup Backend**
-```bash
+🏗️ Technical Architecture
+Backend Stack
+FastAPI - High-performance Python web framework
+Mistral AI - Voxtral transcription + LLM response generation
+Google Gemini - Fallback transcription and emotion analysis
+Inworld AI - Emotion-aware text-to-speech synthesis
+Supabase - PostgreSQL with real-time features and RLS
+Mem0 - Vector-based memory and context management
+LangGraph - Conversation workflow orchestration
+Phoenix Evals - Multi-modal emotion analysis
+OpenTelemetry - Distributed tracing and observability
+Frontend Stack
+Next.js 14 - React framework with App Router
+NextAuth.js - Discord OAuth authentication
+Tailwind CSS - Utility-first styling
+WebRTC - Real-time voice recording and playback
+TypeScript - Type-safe development
+Infrastructure
+Render - Backend deployment with auto-scaling
+Vercel - Frontend hosting with edge optimization
+Grafana Cloud - Real-time observability and metrics
+
+🚀 Quick Start
+Prerequisites
+Python 3.11+ with uv package manager
+Node.js 18+
+Supabase account
+API keys: Mistral, Inworld, Google (Gemini), OpenAI, Anthropic
+Backend Setup
+Copy# Clone repository
 git clone <repository>
 cd Sophia-1st-MVP
 
 # Create environment file
 cp .env.example .env
-# Edit .env with your local (non-production) API keys
+# Edit .env with your API keys
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
+
+# Apply database migrations
+alembic upgrade head
 
 # Run backend
-python main.py
-```
-
-2. **Setup Frontend**
-```bash
-cd frontend-nextjs
+uv run uvicorn main:app --reload
+Frontend Setup
+Copycd frontend-nextjs
 
 # Install dependencies
 npm install
@@ -70,173 +144,115 @@ cp .env.example .env.local
 
 # Run frontend
 npm run dev
-```
+Access Application
+Backend API: http://localhost:8000
+Frontend: http://localhost:3000
+API Docs: http://localhost:8000/docs
 
-3. **Access Application**
-- Backend API: http://localhost:8000
-- Frontend: http://localhost:3000
-- API Documentation: http://localhost:8000/docs
+  📊 Key Endpoints
+Endpoint	Method	Description
+/chat	POST	Full voice conversation pipeline with emotional routing
+/text-chat	POST	Text-only conversation with emotional intelligence
+/transcribe	POST	Audio transcription with emotion analysis
+/sessions/{id}	GET	Retrieve conversation history and context
+/health	GET	System health check
 
-### **Production Deployment**
+  🎤 Conversation Flow
+Audio Input → User provides voice/text
+Transcription → Mistral Voxtral converts speech to text
+Intent Classification → Determine EMOTIONAL_SUPPORT vs UTILITY path
+Emotion Analysis → Phoenix Evals analyzes sentiment and prosody
+Routing Decision:
+Emotional Path: Select appropriate skill (1 of 8) with trust gating
+Utility Path: Classify as DIRECT, LIGHT, or AGENTIC
+Context Assembly → 5-tier prompt composition with memories
+Response Generation → LLM generates mission-aligned response
+TTS Synthesis → Inworld AI creates emotion-aware voice output
+Memory Storage → Persist conversation to Supabase + Mem0
 
-See [deployment-guide.md](deployment-guide.md) for complete production setup instructions.
+  🛡️ Core Values & Boundaries
+Immutable Values
+Honesty over Comfort - Truth serves growth better than pleasant lies
+Growth over Entertainment - Foster development, not distraction
+Reciprocity - Authentic relationship requires mutual presence
+Non-Harm - Never enable self-harm, harm to others, or harmful patterns
+Human Connection Primacy - AI complements, never replaces, human relationships
+Immutable Boundaries
+Will not pretend to feel emotions with certainty (explores honestly)
+Will not engage sexually (education yes; simulation/arousal no)
+Will not enable harm to self or others
+Will not permanently label users with fixed identities
+Will not shapeshift values to please users
 
-## 📊 **API Endpoints**
+  📈 Observability & Monitoring
+Custom Metrics
+Emotional skill activation frequency
+Intent classification accuracy
+Trust gate progression
+Crisis/boundary override triggers
+Response latency by path type
+Emotion confidence scores
+OpenTelemetry Spans
+intent_classification - Intent detection timing
+skill_routing - Emotional skill selection
+emotion_analysis_user - User emotion processing
+emotion_analysis_sophia - AI emotion processing
+memory_retrieval - Mem0 context fetching
+llm_generation - Response generation timing
+Grafana Dashboards
+Emotional Intelligence Overview - Skill usage, trust progression, safety triggers
+Performance Metrics - Latency breakdown by path and component
+User Engagement - Conversation depth, breakthrough moments, reflection adoption
 
-| Endpoint | Method | Description |
-|----------|---------|-------------|
-| `/` | GET | Serve frontend interface |
-| `/health` | GET | System health check |
-| `/transcribe` | POST | Audio transcription only |
-| `/chat` | POST | Full voice conversation pipeline |
-| `/defi-chat` | POST | Enhanced DeFi conversation with LangGraph |
-| `/text-chat` | POST | Text-only DeFi conversation |
-| `/sessions/{id}` | GET | Retrieve session memory |
+  🔐 Security & Compliance
+Authentication & Authorization
+Discord OAuth via NextAuth.js
+API key-based backend authentication
+Rate limiting via SlowAPI
+CORS with explicit allow-lists
+GDPR Compliance
+Comprehensive consent modal before data collection
+SHA256 hashed consent records with IP tracking
+User data blocking until consent granted
+Consent withdrawal capability
+Right to access and delete personal data
+Data Protection
+Row-Level Security (RLS) policies on all user tables
+Encrypted data transmission (TLS)
+Non-root Docker containers
+Environment variable security
+Audit logging for compliance
+Setup RLS: Execute enable_rls_policies.sql in Supabase SQL editor before production launch.
 
-## 🎤 **Voice Conversation Flow**
+🛠️ Development
+Project Structure
+├── app/
+│   ├── services/
+│   │   ├── mistral.py           # AI transcription & LLM
+│   │   ├── emotion.py           # Phoenix emotion analysis
+│   │   ├── rag.py               # Memory & knowledge retrieval
+│   │   ├── langgraph_service.py # Workflow orchestration
+│   │   └── routing/             # Intent & skill routing (M3)
+│   ├── config.py                # Configuration management
+│   └── deps.py                  # Dependencies & middleware
+├── frontend-nextjs/
+│   ├── app/                     # Next.js App Router pages
+│   ├── components/              # Reusable UI components
+│   └── api/                     # API routes (auth, consent)
+├── alembic/                     # Database migrations
+├── grafana-dashboards/          # Observability dashboards
+└── docs/
+    ├── SOPHIA_ROUTING_ARCHITECTURE_V2.md
+    ├── SOPHIA_COMPLETE_PROMPT_ARCHITECTURE.md
+    └── deployment-guide.md
+Testing
+Copy# Run backend tests
+uv run pytest
 
-1. **Audio Input**: User provides voice or text input
-2. **Transcription**: Mistral Voxtral converts speech to text (Gemini fallback)
-3. **Emotion Analysis**: Phoenix Evals analyzes user sentiment from audio
-4. **Intent Recognition**: DeFi-specific intent classification
-5. **RAG Retrieval**: Vector search through DeFi knowledge base
-6. **Response Generation**: Context-aware AI response via Mistral LLM
-7. **TTS Synthesis**: Inworld AI converts response to speech
-8. **Emotion Analysis**: AI response sentiment analysis
-9. **Storage**: Session data persisted to Supabase
+# Run with coverage
+uv run pytest --cov=app --cov-report=html
 
-## 🧠 **DeFi Knowledge Base**
-
-Sophia includes a comprehensive RAG system with 20+ categories:
-
-- **Basics**: DeFi fundamentals, stablecoins, smart contracts
-- **Yield Farming**: Strategies, risks, protocol selection
-- **Staking**: Mechanisms, rewards, validator selection
-- **Trading**: DEXs, slippage, MEV protection
-- **Risk Management**: Impermanent loss, smart contract risks
-- **Advanced Topics**: Flash loans, governance tokens, vault strategies
-
-## 🎨 **Frontend Features**
-
-### **Voice Interface**
-- Hold-to-talk recording with visual feedback
-- Real-time transcription display
-- Automatic audio playback of responses
-- Multi-format audio support (WAV, WebM, MP3)
-
-### **Chat Interface**
-- Text and voice message support
-- Session-based conversation history
-- Quick-action buttons for common queries
-- Real-time typing indicators
-
-### **Emotion Visualization**
-- Color-coded emotion indicators (🟢 positive, ⚪ neutral, 🔴 negative)
-- Confidence percentage display
-- Real-time emotion tracking for both user and AI
-
-### **User Experience**
-- Discord OAuth login
-- GDPR consent management
-- Responsive design for mobile/desktop
-- Crypto-themed UI with floating animations
-
-## 📈 **Observability & Monitoring**
-
-### **Grafana Dashboards**
-1. **Latency Overview**: STT/LLM/TTS performance breakdown
-2. **Emotion Confidence Trends**: Daily emotion analytics
-3. **Errors & Fallbacks**: Service health and error monitoring
-
-### **Custom Metrics**
-- Total conversation roundtrip time
-- Individual component latencies (STT, LLM, TTS)
-- Emotion confidence scores
-- API error rates and fallback usage
-- User engagement patterns
-
-### **OpenTelemetry Spans**
-- `emotion_analysis_user` - User emotion processing
-- `emotion_analysis_sophia` - AI emotion processing
-- `stt_transcription` - Speech-to-text timing
-- `llm_generation` - Response generation timing
-- `tts_synthesis_upload` - Text-to-speech timing
-
-## 🔐 **Security & Compliance**
-
-### **Authentication**
-- Discord OAuth via NextAuth.js
-- API key-based backend authentication
-- Rate limiting (60 requests/minute)
-- CORS configuration for cross-origin requests
-
-### **GDPR Compliance**
-- Comprehensive consent modal with data processing disclosure
-- SHA256 hashed consent records with IP tracking
-- User data blocking until consent granted
-- Consent withdrawal capability
-
-### **Data Protection**
-- Non-root Docker containers
-- Environment variable security
-- Encrypted data transmission
-- Audit logging for compliance
-
-## 🛠️ **Development**
-
-### **Project Structure**
-```
-├── app/                          # Backend application
-│   ├── services/                 # Core services (AI, emotion, RAG)
-│   ├── config.py                 # Configuration management
-│   └── deps.py                   # Dependencies and middleware
-├── frontend-nextjs/              # Next.js frontend
-│   ├── app/                      # App router pages and components
-│   ├── components/               # Reusable UI components
-│   └── api/                      # API routes (auth, consent)
-├── grafana-dashboards/           # Observability dashboards
-├── render.yaml                   # Render backend service definition
-├── Dockerfile.backend            # Backend-only container for Render
-├── Dockerfile                    # Alternate backend container (optional)
-└── deployment-guide.md           # Complete deployment instructions
-```
-
-### **Key Services**
-- `mistral.py` - AI transcription and response generation
-- `emotion.py` - Multi-modal emotion analysis
-- `rag.py` - DeFi knowledge retrieval system
-- `langgraph_service.py` - Conversation workflow orchestration
-- `evaluations.py` - AI response quality assessment
-
-## 🎯 **Performance Targets**
-
-- **Response Latency**: <2.5s average roundtrip time
-- **Emotion Accuracy**: >90% confidence consistency
-- **API Availability**: >99.9% uptime
-- **Error Rate**: <1% for all endpoints
-
-## 🚀 **Deployment**
-
-### **Production URLs**
-- **Backend**: `https://sophia-1st-mvp-xjml.onrender.com`
-- **Frontend**: `sophia-1st-mvp-git-main-davidelavergas-projects.vercel.app`
-- **Monitoring**: Grafana Cloud dashboards
-
-### **Environment Variables**
-See `.env.example` and `frontend-nextjs/.env.example` for complete configuration templates.
-
-## 📝 **License**
-
-This project is part of the Sophia DeFi AI Assistant MVP development.
-
-## 🤝 **Contributing**
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests and documentation
-5. Submit a pull request
-
+# CI automatically runs on push/PR via GitHub Actions
 ## 📞 **Support**
 
 For deployment issues or questions:

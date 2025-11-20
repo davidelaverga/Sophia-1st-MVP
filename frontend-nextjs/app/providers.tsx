@@ -7,6 +7,7 @@ import { User } from '@supabase/supabase-js'
 type SupabaseContext = {
   supabase: ReturnType<typeof createBrowserClient>
   user: User | null
+  accessToken: string | null
   loading: boolean
 }
 
@@ -14,6 +15,7 @@ const Context = createContext<SupabaseContext | undefined>(undefined)
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [accessToken, setAccessToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   
   // Debug environment variables
@@ -35,6 +37,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         console.log('Session data:', session)
         console.log('Session error:', error)
         setUser(session?.user ?? null)
+        setAccessToken(session?.access_token ?? null)
       } catch (err) {
         console.error('❌ Error getting session:', err)
       }
@@ -46,6 +49,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('🔄 Auth state changed:', event, session?.user?.email)
       setUser(session?.user ?? null)
+      setAccessToken(session?.access_token ?? null)
       setLoading(false)
     })
 
@@ -53,7 +57,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, [supabase])
 
   return (
-    <Context.Provider value={{ supabase, user, loading }}>
+    <Context.Provider value={{ supabase, user, accessToken, loading }}>
       {children}
     </Context.Provider>
   )

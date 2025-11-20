@@ -4,6 +4,13 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Loader2 } from 'lucide-react'
 import EmotionDisplay from './EmotionDisplay'
 
+const createLocalId = () =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+
 interface Message {
   id: string
   type: 'user' | 'sophia'
@@ -13,6 +20,8 @@ interface Message {
   audioUrl?: string
   intent?: string
   timestamp: Date
+  isStreaming?: boolean
+  isSynthesizing?: boolean
 }
 
 interface ChatInterfaceProps {
@@ -20,10 +29,12 @@ interface ChatInterfaceProps {
   setMessages: (messages: Message[] | ((prev: Message[]) => Message[])) => void
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
+  accessToken: string | null
 }
 
-export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading }: ChatInterfaceProps) {
+export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading, accessToken }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('')
+  const [sessionId, setSessionId] = useState(() => createLocalId())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -35,11 +46,17 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     scrollToBottom()
   }, [messages])
 
+  useEffect(() => {
+    if (messages.length === 0) {
+      setSessionId(createLocalId())
+    }
+  }, [messages.length])
+
   const sendTextMessage = async () => {
     if (!inputText.trim() || isLoading) return
 
     const userMessage: Message = {
-      id: generateSessionId(),
+      id: createLocalId(),
       type: 'user',
       content: inputText.trim(),
       sender: 'user',
@@ -50,16 +67,33 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     setInputText('')
     setIsLoading(true)
 
+    const sophiaId = createLocalId()
+    const updateUserEmotion = (emotion: any) => {
+      setMessages(prev =>
+        prev.map(m => (m.id === userMessage.id ? { ...m, emotion } : m))
+      )
+    }
+    const updateSophia = (updates: Partial<Message>) => {
+      setMessages(prev =>
+        prev.map(m => (m.id === sophiaId ? { ...m, ...updates } : m))
+      )
+    }
+    let sophiaActive = false
+
     try {
+      if (!accessToken) {
+        throw new Error('Missing Supabase access token. Please refresh the page or sign in again.')
+      }
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/text-chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
           message: userMessage.content,
-          session_id: generateSessionId()
+          session_id: sessionId
         })
       })
 
@@ -69,40 +103,53 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       }
 
       // Initialize a Sophia message for incremental updates
-      const sophiaId = generateSessionId()
       setMessages(prev => [...prev, {
         id: sophiaId,
         type: 'sophia',
         content: '',
         sender: 'ai',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isStreaming: true,
+        isSynthesizing: true
       }])
+      sophiaActive = true
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       let accumulated = ''
 
-      const updateSophia = (content: string, extra?: { audioUrl?: string; emotion?: any }) => {
-        setMessages(prev => prev.map(m => m.id === sophiaId ? ({ ...m, content, audioUrl: extra?.audioUrl, emotion: extra?.emotion }) : m))
-      }
-
       let currentEvent: string | null = null
       let currentData: string[] = []
+      let replyFinished = false
+      let audioCompleted = false
 
       const handleEvent = (event: string, data: string) => {
         try {
           if (event === 'token') {
             const chunk = data
             accumulated += chunk
-            updateSophia(accumulated)
+            updateSophia({ content: accumulated })
           } else if (event === 'reply_done') {
             const payload = JSON.parse(data)
             accumulated = payload.reply || accumulated
-            updateSophia(accumulated)
+            updateSophia({ content: accumulated, isStreaming: false })
+            if (payload.user_emotion) {
+              updateUserEmotion(payload.user_emotion)
+            }
+            replyFinished = true
           } else if (event === 'audio_url') {
             const payload = JSON.parse(data)
-            updateSophia(accumulated, { audioUrl: payload.audio_url, emotion: payload.sophia_emotion })
+            updateSophia({
+              content: accumulated,
+              audioUrl: payload.audio_url,
+              emotion: payload.sophia_emotion,
+              isSynthesizing: false
+            })
+            if (payload.user_emotion) {
+              updateUserEmotion(payload.user_emotion)
+            }
+            audioCompleted = true
             const mock = !!payload.mock_audio
             if (payload.audio_url && !mock && /^https?:\/\//.test(payload.audio_url)) {
               setTimeout(() => playAudio(payload.audio_url), 300)
@@ -137,7 +184,9 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             flushIfEventComplete()
             currentEvent = line.slice('event:'.length).trim()
           } else if (line.startsWith('data:')) {
-            currentData.push(line.slice('data:'.length).trim())
+            const raw = line.slice('data:'.length)
+            const withoutPrefix = raw.startsWith(' ') ? raw.slice(1) : raw
+            currentData.push(withoutPrefix.replace(/\r$/, ''))
           } else if (line.trim() === '') {
             flushIfEventComplete()
           } else {
@@ -146,10 +195,25 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
         }
       }
 
+      if (sophiaActive) {
+        if (!replyFinished) {
+          updateSophia({ isStreaming: false })
+        }
+        if (!audioCompleted) {
+          updateSophia({ isSynthesizing: false })
+        }
+      }
+
     } catch (error) {
       console.error('Text message failed:', error)
+      if (sophiaActive) {
+        updateSophia({
+          isStreaming: false,
+          isSynthesizing: false
+        })
+      }
       const errorMessage: Message = {
-        id: generateSessionId(),
+        id: createLocalId(),
         type: 'sophia',
         content: `Sorry, I encountered an error: ${error.message}`,
         sender: 'ai',
@@ -158,6 +222,12 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
+      if (sophiaActive) {
+        updateSophia({
+          isStreaming: false,
+          isSynthesizing: false
+        })
+      }
     }
   }
 
@@ -168,14 +238,6 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     } catch (error) {
       console.error('Audio playback failed:', error)
     }
-  }
-
-  const generateSessionId = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0
-      const v = c == 'x' ? r : (r & 0x3 | 0x8)
-      return v.toString(16)
-    })
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -218,8 +280,10 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                       : 'bg-gradient-to-br from-gray-800/80 to-gray-900/80 text-gray-100 border-gray-700/50'
                   } group-hover:shadow-xl transition-all duration-300`}
                 >
-                  <p className="text-sm leading-relaxed font-medium">{message.content}</p>
-                  
+                  {message.content && (
+                    <p className="text-sm leading-relaxed font-medium whitespace-pre-wrap">{message.content}</p>
+                  )}
+
                   {message.audioUrl && (
                     <button
                       onClick={() => playAudio(message.audioUrl!)}
@@ -228,6 +292,23 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                       <span className="text-sm">🔊</span>
                       Play Audio Response
                     </button>
+                  )}
+
+                  {message.type === 'sophia' && (message.isStreaming || message.isSynthesizing) && (
+                    <div className="mt-4 space-y-2">
+                      {message.isStreaming && (
+                        <div className="flex items-center gap-2 text-purple-300/80 text-xs">
+                          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          <span className="sr-only">Generating response…</span>
+                        </div>
+                      )}
+                      {!message.isStreaming && message.isSynthesizing && (
+                        <div className="flex items-center gap-2 text-purple-300/60 text-xs">
+                          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          <span className="sr-only">Preparing audio response…</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
                 
@@ -258,24 +339,6 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             </div>
           ))}
           
-          {isLoading && (
-            <div className="flex gap-4 justify-start group">
-              <div className="w-12 h-12 bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg animate-pulse">
-                <span className="text-lg font-bold text-white">S</span>
-              </div>
-              <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-2xl p-5 shadow-lg backdrop-blur-sm border border-gray-700/50">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
-                  <span className="text-sm text-gray-300 font-medium">Sophia is analyzing your question...</span>
-                  <div className="flex gap-1">
-                    <div className="w-1 h-1 bg-purple-400 rounded-full animate-bounce"></div>
-                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                    <div className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
         <div ref={messagesEndRef} />
       </div>

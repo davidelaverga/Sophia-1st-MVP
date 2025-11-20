@@ -4,10 +4,15 @@
 -- Create the users table if it doesn't exist
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
+    discord_id TEXT,
     email TEXT UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_discord_id
+    ON users (discord_id)
+    WHERE discord_id IS NOT NULL;
 
 -- Enable Row Level Security
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
