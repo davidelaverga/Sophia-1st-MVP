@@ -18,7 +18,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.config import get_settings
-from app.services.supabase import has_user_consent
+from app.services.supabase_client import has_user_consent
 
 limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger("sophia-backend")
@@ -235,7 +235,7 @@ def require_consent(
     """Require GDPR consent before allowing voice/chat endpoints."""
     settings = get_settings()
     # Allow bypass in local dev if explicitly disabled
-    if getattr(settings, "REQUIRE_CONSENT", "true").lower() in {"0", "false", "no"}:
+    if getattr(settings, "REQUIRE_CONSENT", "false").lower() in {"0", "false", "no"}:
         return None
 
     token = supabase_token

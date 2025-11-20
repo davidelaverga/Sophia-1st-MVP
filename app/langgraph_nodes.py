@@ -22,7 +22,7 @@ from app.services.emotion import (
 )
 from app.services.emotional_guidance import get_guidance as get_emotional_guidance, format_guidance_block
 from app.services.tts import synthesize_inworld
-from app.services.supabase import upload_audio_and_get_url
+from app.services.supabase_client import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597

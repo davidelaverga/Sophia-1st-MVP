@@ -6,6 +6,12 @@ import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
+from supabase import create_client, Client
+
+try:
+    from supabase._sync.client import ClientOptions
+except ImportError:
+    ClientOptions = None
 
 try:
     from dotenv import load_dotenv, find_dotenv
@@ -17,15 +23,6 @@ except ImportError:  # pragma: no cover - optional dependency for local dev
     def find_dotenv(*_args, **_kwargs):  # type: ignore[override]
         return ""
 
-
-from supabase import Client, create_client
-
-try:
-    from supabase import ClientOptions  # type: ignore
-except (
-    ImportError
-):  # pragma: no cover - for environments without recent supabase package
-    ClientOptions = None  # type: ignore
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -42,7 +39,7 @@ SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio-uploads")
 SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
 SUPABASE_SIGNED_URL_TTL = os.getenv("SUPABASE_SIGNED_URL_TTL", 3600)
 SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
-
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", None)
 logger = logging.getLogger("sophia-backend")
 _supabase_tracer = trace.get_tracer("sophia.supabase")
 
@@ -64,7 +61,8 @@ def _supabase_span(name: str, **attrs):
 
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
-
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     global \
         _supabase, \
         _anon_supabase, \
@@ -77,8 +75,8 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
 
     if settings is None:
         settings = get_settings()
-
-    if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
+    logger.info(f"supa url: {SUPABASE_URL}")
+    if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError(
             "Supabase credentials not configured; set SUPABASE_URL and SUPABASE_KEY"
         )
@@ -91,7 +89,7 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
     SUPABASE_DB_DSN = settings.SUPABASE_DB_DSN
 
     with _supabase_span("supabase.init"):
-        _supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         options = None
         if ClientOptions is not None:
             options = ClientOptions(persist_session=False)  # type: ignore[arg-type]

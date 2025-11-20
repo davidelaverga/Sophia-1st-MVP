@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
 from app.config import get_settings
-from app.services.supabase import get_supabase
+from app.services.supabase_client import get_supabase
 from app.services.emotion import analyze_emotion_audio
 
 logger = logging.getLogger(__name__)

@@ -6,7 +6,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from app.services.supabase import get_supabase
+from app.services.supabase_client import get_supabase
 
 # Optional heavy dependency: sentence-transformers (pulls torch, transformers)
 # We intentionally avoid installing it in production containers by default.

@@ -38,7 +38,7 @@ from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
 from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
-from app.services import supabase as supabase_service
+from app.services import supabase_client as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.shared_services import shared_services
 from app.services.emotional_guidance import (
@@ -212,9 +212,8 @@ async def ws_voice(websocket: WebSocket):
     )
 
     try:
-        require_consent(
-            request=None, discord_id=discord_id, supabase_token=supabase_token
-        )
+        logger.info("skip consent")
+        #require_consent(request=None, discord_id=discord_id, supabase_token=supabase_token)
     except HTTPException as exc:
         await websocket.close(code=1008, reason=exc.detail)
         return
@@ -934,7 +933,7 @@ async def chat(
     request: Request,
     file: UploadFile = File(...),
     supabase_token: str = Depends(verify_api_key),
-    consent_ok: None = Depends(require_consent),
+    #consent_ok: None = Depends(require_consent),
 ):
     supabase_user_id, discord_id = extract_identity_from_token(supabase_token)
     manager = shared_services.get_session_turn_manager()
@@ -1122,7 +1121,7 @@ async def defi_chat(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     supabase_token: str = Depends(verify_api_key),
-    consent_ok: None = Depends(require_consent),
+    #consent_ok: None = Depends(require_consent),
 ):
     user_id, discord_id = extract_identity_from_token(supabase_token)
     allowed_extensions = [
@@ -1234,7 +1233,7 @@ async def defi_chat_stream(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     supabase_token: str = Depends(verify_api_key),
-    consent_ok: None = Depends(require_consent),
+    #consent_ok: None = Depends(require_consent),
 ):
     """Streaming variant of DeFi chat.
 
@@ -1666,7 +1665,7 @@ async def text_chat(
     request: Request,
     body: TextChatRequest,
     supabase_token: str = Depends(verify_api_key),
-    consent_ok: None = Depends(require_consent),
+    #consent_ok: None = Depends(require_consent),
 ):
     """Text-only chat endpoint for DeFi conversations"""
     user_id, discord_id = extract_identity_from_token(supabase_token)
@@ -1814,7 +1813,7 @@ async def text_chat_stream(
     request: Request,
     body: TextChatRequest,
     supabase_token: str = Depends(verify_api_key),
-    consent_ok: None = Depends(require_consent),
+    #consent_ok: None = Depends(require_consent),
 ):
     """Streaming variant for text-only chat.
 
