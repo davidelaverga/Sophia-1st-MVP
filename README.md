@@ -1,6 +1,3 @@
-Sophia is and Emotionally Intelligent AI Companion aimed at 
-building genuine human-AI connection through emotional intelligence and authentic presence
-
 Sophia is an AI companion designed to connect with humans at the soul level through genuine emotional intelligence. Unlike traditional AI assistants that simply answer questions, Sophia recognizes emotional moments, holds space for vulnerability, and grows alongside users through authentic relationship-building.
 
 🌱 Mission & Vision
