@@ -60,6 +60,7 @@ class GraphState(TypedDict):
     llm_response: str
     response_path: str
     sophia_emotion: EmotionData
+    is_mock_audio: bool
     audio_url: str
     tts_bytes: bytes
     evaluation_logs: List[Dict[str, Any]]
@@ -1101,6 +1102,7 @@ class TTSNode:
 
             state["tts_bytes"] = tts_bytes
             state["audio_url"] = audio_url
+            state["is_mock_audio"] = is_mock
             state["sophia_emotion"] = EmotionData(
                 label=sophia_emotion.label, confidence=sophia_emotion.confidence
             )
@@ -1384,6 +1386,7 @@ class SophiaLangGraph:
             "llm_response": "",
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
@@ -1427,6 +1430,7 @@ class SophiaLangGraph:
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
@@ -1496,6 +1500,7 @@ class SophiaLangGraph:
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],

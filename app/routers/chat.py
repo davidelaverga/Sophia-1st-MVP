@@ -831,41 +831,6 @@ async def text_chat(
             )
 
 
-def _format_memory_context_for_prompt(context: Optional[Dict[str, Any]]) -> str:
-    if not context:
-        return ""
-
-    parts: list[str] = []
-    topics = context.get("last_topics") or []
-    if topics:
-        parts.append(f"Recent topics: {', '.join(topics)}")
-
-    tone = context.get("last_user_tone")
-    if tone:
-        parts.append(f"Previous user tone: {tone}")
-
-    intents = context.get("recent_intents") or []
-    if intents:
-        parts.append(f"Recent intents: {', '.join(intents)}")
-
-    recent_turns = context.get("recent_turns") or []
-    if recent_turns:
-        snippet_lines: list[str] = [
-            "Conversation so far (use for context only; do not repeat lines verbatim):"
-        ]
-        for turn in recent_turns[-3:]:
-            user_line = (turn.get("user") or "").strip()
-            sophia_line = (turn.get("sophia") or "").strip()
-            if user_line:
-                snippet_lines.append(f"User: {user_line}")
-            if sophia_line:
-                snippet_lines.append(f"Sophia: {sophia_line}")
-        if len(snippet_lines) > 1:
-            parts.append("\n".join(snippet_lines))
-
-    return "\n".join(parts)
-
-
 def _record_text_stream_turn(
     session_id: str,
     user_text: str,
@@ -918,90 +883,82 @@ async def text_chat_stream(
 
             try:
 
-                user_emotion = chat_service.analyze_emotion_by_text(body.message)
-
-                emotion_guidance: Sequence[str] = chat_service.get_emotional_guidance(
-                    user_emotion
-                )
-                if emotion_guidance:
-                    preview = "; ".join(emotion_guidance[:2])
-                    logger.info(
-                        "Text chat stream guidance for %s: %s%s",
-                        user_emotion.label,
-                        preview,
-                        "..." if len(emotion_guidance) > 2 else "",
-                    )
-
-                memory_context_text = ""
-                try:
-                    flash_context = memory_manager.get_context_for_llm(
-                        session_identifier, access_token=supabase_token
-                    )
-                    memory_context_text = _format_memory_context_for_prompt(
-                        flash_context
-                    )
-                except Exception as context_error:
-                    logger.warning(
-                        "Text chat stream memory lookup failed: %s", context_error
-                    )
-                    memory_context_text = ""
-
-                guided_prompt = build_emotion_guided_prompt(
+                result = langgraph_service.process_text_conversation(
                     body.message,
-                    user_emotion.label,
-                    float(user_emotion.confidence),
-                    emotion_guidance,
-                    conversation_context=memory_context_text,
+                    session_identifier,
+                    collect_evaluation_data=True,
+                    supabase_token=supabase_token,
+                    cancel_check=cancel_check
                 )
+                yield sse_event('token', result['reply'].replace('\n', ' '))
+                yield sse_event('reply_done', {
+                    'reply': result['reply'],
+                    'user_emotion': result['user_emotion']
+                })
+                yield sse_event('audio_url', {
+                    "audio_url": result.get('audio_url'),
+                    "sophia_emotion": result['sophia_emotion'],
+                    "mock_audio": result['is_mock_audio'],
+                    "user_emotion": result['user_emotion'],
+                })
 
-                turn_state.set_status("streaming")
-                reply_accum = []
-                for chunk in chat_service.generate_streamed_llm_reply(
-                    guided_prompt,
-                    cancel_check=cancel_check,
-                ):
-                    reply_accum.append(chunk)
-                    safe_chunk = chunk.replace("\n", " ")
-                    yield sse_event("token", safe_chunk)
+                # user_emotion = chat_service.analyze_emotion_by_text(body.message)
+                # flash_context = memory_manager.get_context_for_llm(
+                #     session_identifier, access_token=supabase_token
+                # )
+                # guided_prompt = chat_service.get_enriched_prompt(
+                #     body.message,
+                #     user_emotion,
+                #     flash_context
+                # )
 
-                reply = "".join(reply_accum).strip()
-                reply_payload = {
-                    "reply": reply,
-                    "user_emotion": user_emotion.model_dump(),
-                }
-                yield sse_event("reply_done", reply_payload)
+                # turn_state.set_status("streaming")
+                # reply_accum = []
+                # for chunk in chat_service.generate_streamed_llm_reply(
+                #     guided_prompt,
+                #     cancel_check=cancel_check,
+                # ):
+                #     reply_accum.append(chunk)
+                #     safe_chunk = chunk.replace("\n", " ")
+                #     yield sse_event("token", safe_chunk)
 
-                turn_state.set_status("synthesizing")
-                cancel_check()
+                # reply = "".join(reply_accum).strip()
+                # reply_payload = {
+                #     "reply": reply,
+                #     "user_emotion": user_emotion.model_dump(),
+                # }
+                # yield sse_event("reply_done", reply_payload)
 
-                audio_bytes, audio_url = chat_service.synthesize_reply(
-                    reply, cancel_check
-                )
-                cancel_check()
-                sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(
-                    audio_bytes, cancel_check, role="sophia"
-                )
+                # turn_state.set_status("synthesizing")
+                # cancel_check()
 
-                payload = {
-                    "audio_url": audio_url,
-                    "sophia_emotion": (
-                        sophia_emotion.model_dump() if sophia_emotion else None
-                    ),
-                    "mock_audio": mock_audio,
-                    "user_emotion": user_emotion.model_dump(),
-                }
+                # audio_bytes, audio_url = chat_service.synthesize_reply(
+                #     reply, cancel_check
+                # )
+                # cancel_check()
+                # sophia_emotion, mock_audio = chat_service.analyze_emotion_by_audio(
+                #     audio_bytes, cancel_check, role="sophia"
+                # )
+
+                # payload = {
+                #     "audio_url": audio_url,
+                #     "sophia_emotion": (
+                #         sophia_emotion.model_dump() if sophia_emotion else None
+                #     ),
+                #     "mock_audio": mock_audio,
+                #     "user_emotion": user_emotion.model_dump(),
+                # }
 
                 _record_text_stream_turn(
                     session_identifier,
                     body.message,
-                    reply,
-                    user_emotion.model_dump(),
-                    sophia_emotion,
+                    result['reply'],
+                    result['user_emotion'],
+                    result['sophia_emotion'],
                     supabase_token,
                 )
 
                 turn_state.set_status("completed")
-                yield sse_event("audio_url", payload)
 
             except asyncio.CancelledError:
                 logger.info("Streaming text chat turn %s cancelled", turn_state.turn_id)

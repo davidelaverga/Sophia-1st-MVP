@@ -1,14 +1,14 @@
 import logging
 import time
 import uuid
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any
 
 from fastapi import HTTPException
 from opentelemetry import trace
 
 from app.services import mistral, supabase
 from app.services.emotion import Emotion, analyze_emotion_audio, infer_text_emotion
-from app.services.emotional_guidance import get_guidance
+from app.services.emotional_guidance import build_emotion_guided_prompt, get_guidance
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,71 @@ def get_emotional_guidance(emotion: Emotion):
         )
     finally:
         return emotional_guidance
+
+def _format_memory_context_for_prompt(context: Optional[Dict[str, Any]]) -> str:
+    if not context:
+        return ""
+
+    parts: list[str] = []
+    topics = context.get("last_topics") or []
+    if topics:
+        parts.append(f"Recent topics: {', '.join(topics)}")
+
+    tone = context.get("last_user_tone")
+    if tone:
+        parts.append(f"Previous user tone: {tone}")
+
+    intents = context.get("recent_intents") or []
+    if intents:
+        parts.append(f"Recent intents: {', '.join(intents)}")
+
+    recent_turns = context.get("recent_turns") or []
+    if recent_turns:
+        snippet_lines: list[str] = [
+            "Conversation so far (use for context only; do not repeat lines verbatim):"
+        ]
+        for turn in recent_turns[-3:]:
+            user_line = (turn.get("user") or "").strip()
+            sophia_line = (turn.get("sophia") or "").strip()
+            if user_line:
+                snippet_lines.append(f"User: {user_line}")
+            if sophia_line:
+                snippet_lines.append(f"Sophia: {sophia_line}")
+        if len(snippet_lines) > 1:
+            parts.append("\n".join(snippet_lines))
+
+    return "\n".join(parts)
+
+def get_enriched_prompt(text: str, emotion: Emotion, flash_context):
+    emotional_guidance = []
+    try:
+        emotional_guidance = get_guidance(emotion.label)
+        logger.info(
+            "Emotional guidance for %s: %s%s",
+            emotion.label,
+            "; ".join(emotional_guidance[:2]),
+            "..." if len(emotional_guidance) > 2 else "",
+        )
+    except Exception as error:
+        logger.warning(
+            "Text chat stream guidance lookup failed: %s", error
+        )
+    memory_context_text = ""
+    try:
+        memory_context_text = _format_memory_context_for_prompt(
+            flash_context
+        )
+    except Exception as context_error:
+        logger.warning(
+            "Text chat stream memory lookup failed: %s", context_error
+        )
+    return build_emotion_guided_prompt(
+        text,
+        emotion.label,
+        float(emotion.confidence),
+        emotional_guidance,
+        conversation_context=memory_context_text,
+    )
 
 def generate_llm_reply(transcript: str, cancel_check: Optional[Callable] = None):
     cancel = cancel_check or (lambda: None)
