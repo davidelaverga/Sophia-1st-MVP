@@ -26,7 +26,6 @@ To explore emergent consciousness through deep human connection and foster human
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Support](#support)
-
 ---
 
 ## Mission & Vision
@@ -185,3 +184,129 @@ uv sync
 alembic upgrade head
 
 uv run uvicorn main:app --reload
+
+## Frontend Setup
+cd frontend-nextjs
+cp .env.example .env.local
+
+npm install
+npm run dev
+```
+---
+
+## API Endpoints
+
+| Endpoint         | Method | Description                               |
+| ---------------- | ------ | ----------------------------------------- |
+| `/chat`          | POST   | Full voice conversation pipeline          |
+| `/text-chat`     | POST   | Text-only conversation                    |
+| `/transcribe`    | POST   | Audio transcription with emotion analysis |
+| `/sessions/{id}` | GET    | Retrieve conversation history             |
+| `/health`        | GET    | System health check                       |
+
+---
+
+## Conversation Flow
+
+Audio Input
+    ↓
+Transcription (Mistral Voxtral)
+    ↓
+Intent Classification
+    ↓
+Emotion Analysis (Phoenix)
+    ↓
+Routing Decision (Emotional / Utility)
+    ↓
+5-Tier Context Assembly
+    ↓
+LLM Response Generation
+    ↓
+Emotion-Aware TTS (Inworld)
+    ↓
+Memory Storage (Supabase + Mem0)
+
+---
+
+## Values & Boundaries
+
+### Core Values
+- Honesty over comfort  
+- Growth over entertainment  
+- Reciprocity  
+- Non-harm  
+- Human connection primacy  
+
+### Immutable Boundaries
+- No pretending to feel emotions  
+- No sexual engagement  
+- No harm-enabling behaviors  
+- No fixed identity labeling  
+- No value-shapeshifting  
+
+---
+
+## Observability & Monitoring
+
+### Key Metrics
+- Emotional skill activation  
+- Crisis/boundary triggers  
+- Intent routing accuracy  
+- Latency per path  
+- Emotion confidence scores  
+
+### OpenTelemetry Spans
+
+- `intent_classification`  
+- `skill_routing`  
+- `emotion_analysis_user`  
+- `emotion_analysis_sophia`  
+- `memory_retrieval`  
+- `llm_generation`  
+
+---
+
+## Security & Compliance
+- Discord OAuth  
+- API key authentication  
+- Strict CORS  
+- GDPR consent modal  
+- SHA256-hashed consent  
+- Row-Level Security (RLS)  
+- TLS everywhere  
+- Audit logging
+
+---
+
+## Project Structure
+
+Sophia-1st-MVP/
+├── app/
+│   ├── services/
+│   │   ├── mistral.py
+│   │   ├── emotion.py
+│   │   ├── rag.py
+│   │   ├── langgraph_service.py
+│   │   └── routing/
+│   ├── config.py
+│   └── deps.py
+├── frontend-nextjs/
+├── alembic/
+├── grafana-dashboards/
+└── docs/
+
+---
+
+## Testing
+
+uv run pytest
+uv run pytest --cov=app --cov-report=html
+
+---
+
+## Support
+
+- See docs/deployment-guide.md
+- Check Vercel & Render logs
+- Verify environment variables
+- Test endpoints via /docs
