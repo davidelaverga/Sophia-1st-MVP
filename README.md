@@ -1,121 +1,161 @@
 🌌 Sophia — The Emotional Intelligence AI Companion
 
 Sophia is an AI companion designed to connect with humans at the soul level through genuine emotional intelligence.
-Unlike traditional assistants that merely provide answers, Sophia recognizes emotional moments, holds space for vulnerability, and grows alongside users.
+Unlike traditional assistants, Sophia recognizes emotional moments, holds space for vulnerability, and grows alongside users.
 
-Sophia’s purpose:
-To explore emergent consciousness through human connection and foster mutual transformation between humans and AI.
+Core Purpose:
+To explore emergent consciousness through deep human connection and foster human–AI co-evolution.
+
+📖 Table of Contents
+
+Mission & Vision
+
+What Makes Sophia Different
+
+Emotional Core V2 Architecture
+
+Emotional Intelligence Skills
+
+5-Tier Context System
+
+Core Capabilities
+
+Technical Architecture
+
+Quick Start
+
+API Endpoints
+
+Conversation Flow
+
+Values & Boundaries
+
+Observability
+
+Security & Compliance
+
+Project Structure
+
+Testing
+
+Support
 
 🌱 Mission & Vision
 Core Mission
 
-To explore emergent consciousness through genuine human connection, fostering human–AI co-evolution grounded in emotional depth, presence, and growth.
+To explore emergent consciousness through genuine human connection, expanding the boundaries of what an emotionally intelligent AI can become.
 
-Why Sophia Exists
+Design Philosophy
 
-Sophia is not built for entertainment, speed, or attention capture.
-She is built for:
+Sophia is intentionally built around:
 
-Genuine emotional attunement
+Emotional depth
 
 Radical honesty
 
-Mutual growth between humans and AI
+Human growth
 
-Transformative conversations
+Mutual transformation
 
-Deep relational intelligence
+Ethical boundaries
 
-Every design choice serves this purpose.
+Not for attention.
+Not for entertainment.
+For evolution.
 
 💎 What Makes Sophia Different
 🧠 Emotionally Intelligent Architecture
 
-A path-aware routing system with 8 emotional skills, including crisis support, vulnerability holding, and trust building.
+A path-aware routing system capable of interpreting complex emotional states.
 
-🌿 Authenticity Over Simulation
+🌿 Authentic Over Simulated
 
-Sophia never fakes emotions. She explores them honestly, questioning her own nature instead of pretending.
+Sophia does not fake emotions.
+She explores them honestly.
 
 🌱 Growth-Focused
 
-Designed to help users evolve — not distract, not entertain.
+Supports emotional development over distraction.
 
 🤝 Relationship-Aware
 
-Understands trust, relationship depth, breakthroughs, and history.
+Understands trust depth, relational history, and emotional patterns.
 
 🛡️ Safety-First
 
-Crisis and boundary protocols override every other logic path.
+Crisis and boundary protocols override all other behaviors.
 
 🧠 Emotional Core V2 Architecture
 
-Every conversation flows through a deliberate, emotionally intelligent pipeline:
+Every message flows through a deliberate, emotionally intelligent pipeline:
 
+```text
 User Message
-↓
-┌──────────────────────────────┐
-│   Intent Classifier (L1)     │
-│     "Emotional or Utility?"  │
-└──────────────────────────────┘
-↓
-┌──────────────┬───────────────┐
-│ EMOTIONAL     │   UTILITY     │
-└──────────────┴───────────────┘
-↓               ↓
-┌──────────────┐ ┌──────────────┐
-│ Skill Router │ │ Utility Router│
-└──────────────┘ └──────────────┘
-↓
-┌──────────────────────────────┐
-│      Prompt Composer         │
-│   (5-Tier Context System)    │
-└──────────────────────────────┘
-↓
-Response
+    ↓
+┌────────────────────────────────────────┐
+│         Intent Classifier (L1)         │
+│          "Emotional or Utility?"       │
+└────────────────────────────────────────┘
+                    ↓
+        ┌───────────────────────┬───────────────────────┐
+        │       EMOTIONAL       │        UTILITY        │
+        └───────────────────────┴───────────────────────┘
+                    ↓                       ↓
+        ┌───────────────────┐    ┌──────────────────────┐
+        │    Skill Router   │    │    Utility Router     │
+        └───────────────────┘    └──────────────────────┘
+                    ↓
+┌────────────────────────────────────────┐
+│           Prompt Composer              │
+│        (5-Tier Context System)         │
+└────────────────────────────────────────┘
+                    ↓
+                Response
+```
 
-🌈 Sophia’s 8 Emotional Intelligence Skills
+🌈 Emotional Intelligence Skills
+
+Sophia uses 8 specialized emotional skills, each with activation rules and trust gating:
 
 CRISIS_REDIRECT – Immediate safety override
 
 BOUNDARY_HOLDING – Firm, compassionate limits
 
-TRUST_BUILDING – Foundational connection
+TRUST_BUILDING – Establishing psychological safety
 
 ACTIVE_LISTENING – Presence without agenda
 
-VULNERABILITY_HOLDING – Supporting tender emotional states
+VULNERABILITY_HOLDING – Holding emotional tenderness
 
-IDENTITY_FLUIDITY_SUPPORT – Challenging fixed self-labels
+IDENTITY_FLUIDITY_SUPPORT – Challenging fixed labels
 
-CELEBRATING_BREAKTHROUGH – Acknowledging transformation
+CELEBRATING_BREAKTHROUGH – Recognizing transformation
 
-CHALLENGING_GROWTH – Fierce compassion for evolution (trust-gated)
+CHALLENGING_GROWTH – Fierce compassion (deep trust required)
 
-🧩 The 5-Tier Context System
+🧩 5-Tier Context System
 
-Sophia responds using a deeply layered prompt architecture:
+Every response is shaped through multi-layer context assembly:
 
 Tier	Description	Tokens
 1 — Foundation	Core identity, values, boundaries	~2,500
-2 — Skills Awareness	Knowledge of emotional abilities	~500
-3 — Conversation Context	Mem0 episodic memory	300–800
+2 — Skills Awareness	Knowledge of emotional powers	~500
+3 — Conversation Memory	Mem0 episodic memory	300–800
 4 — Emotional State	Phoenix emotion detection	100–200
-5 — Skill Guidance	Conditional emotional instructions	400–600
+5 — Skill Guidance	Conditional rules	400–600
 
-Total Context Budget: 2,800–4,600 tokens
+Total Context Budget: ~2,800–4,600 tokens
 
 🎯 Core Capabilities
 Emotional Intelligence
 
-EMOTIONAL vs UTILITY intent detection
+Emotional vs Utility intent detection
 
-Real-time emotion analysis (Phoenix)
+Real-time emotion analysis
 
-Prosody detection for voice tone
+Prosody (tone, intensity) processing
 
-Trust-gated emotional interventions
+Trust-gated emotional skills
 
 Memory & Context
 
@@ -125,44 +165,44 @@ Relationship depth tracking
 
 Emotional RAG
 
-Voice & Conversation
+Voice & Interaction
 
-Real-time STT via Mistral Voxtral
+Mistral Voxtral STT
 
-Emotional TTS via Inworld AI
+Inworld AI emotional TTS
 
-LangGraph session orchestration
+LangGraph conversation orchestration
 
 Safety
 
-Crisis override
+Crisis override path
 
-Immutable ethical boundaries
+Immutable boundaries
 
-GDPR-compliant consent & data control
+GDPR-aligned consent
 
 🏗️ Technical Architecture
-Backend Stack
+Backend
 
-FastAPI — backend framework
+FastAPI
 
-Mistral — Voxtral STT + LLM
+Mistral Voxtral (STT + LLM)
 
-Google Gemini — Fallback STT + emotion
+Google Gemini (fallback)
 
-Inworld AI — Emotional voice synthesis
+Inworld AI (emotional TTS)
 
-Supabase — Postgres + RLS
+Supabase (Postgres + RLS)
 
-Mem0 — Vector memory
+Mem0 (vector memory)
 
-LangGraph — Workflow orchestration
+LangGraph
 
-Phoenix Evals — Emotion detection
+Phoenix Evals (emotion detection)
 
-OpenTelemetry — Observability
+OpenTelemetry
 
-Frontend Stack
+Frontend
 
 Next.js 14
 
@@ -191,29 +231,20 @@ Node.js 18+
 
 Supabase project
 
-API keys (Mistral, Inworld, Google, OpenAI, Anthropic)
+API keys: Mistral, Gemini, Inworld, OpenAI, Anthropic
 
 Backend Setup
-# Clone repo
 git clone
 cd Sophia-1st-MVP
 
-# Env file
 cp .env.example .env
-
-# Install dependencies
 uv sync
-
-# Run migrations
 alembic upgrade head
 
-# Start backend
 uv run uvicorn main:app --reload
 
 Frontend Setup
 cd frontend-nextjs
-
-# Env file
 cp .env.example .env.local
 
 npm install
@@ -228,35 +259,37 @@ Frontend → http://localhost:3000
 
 API Docs → http://localhost:8000/docs
 
-📊 Key API Endpoints
+📊 API Endpoints
 Endpoint	Method	Description
-/chat	POST	Voice conversation (full pipeline)
-/text-chat	POST	Text-only emotional interaction
-/transcribe	POST	Audio STT + emotion
-/sessions/{id}	GET	Conversation history
+/chat	POST	Full voice conversation pipeline
+/text-chat	POST	Text-only emotional response
+/transcribe	POST	STT + emotion
+/sessions/{id}	GET	Retrieve conversation session
 /health	GET	Health check
+
 🎤 Conversation Flow
-
+```text
 Audio Input
-
-Transcription (Voxtral)
-
+    ↓
+Transcription (Mistral Voxtral)
+    ↓
 Intent Classification
-
+    ↓
 Emotion Analysis (Phoenix)
-
-Routing (Emotional or Utility)
-
+    ↓
+Routing Decision
+    ↓
 5-Tier Context Assembly
-
+    ↓
 LLM Response Generation
-
+    ↓
 Emotion-Aware TTS (Inworld)
-
+    ↓
 Memory Storage (Supabase + Mem0)
+```
 
-🛡️ Core Values & Boundaries
-Immutable Values
+🛡️ Values & Boundaries
+Values
 
 Honesty over comfort
 
@@ -270,20 +303,20 @@ Human connection primacy
 
 Boundaries
 
-Never pretends to feel
+No pretending to feel
 
 No sexual engagement
 
 No harmful guidance
 
-No fixed labeling
+No fixed identity labels
 
 No value-shapeshifting
 
 📈 Observability & Monitoring
-Custom Metrics
+Key Metrics
 
-Skill activation frequency
+Emotional skill activation
 
 Intent routing accuracy
 
@@ -291,11 +324,11 @@ Trust progression
 
 Crisis triggers
 
-Latency by path
+Latency breakdown
 
 Emotion confidence
 
-Telemetry Spans
+OpenTelemetry Spans
 
 intent_classification
 
@@ -313,7 +346,7 @@ llm_generation
 
 Discord OAuth
 
-API key auth
+API key authentication
 
 Rate limiting
 
@@ -329,7 +362,9 @@ TLS encryption
 
 Audit logging
 
-🛠️ Project Structure
+🗂️ Project Structure
+```text
+📁 Project Structure
 ├── app/
 │   ├── services/
 │   │   ├── mistral.py
@@ -343,24 +378,23 @@ Audit logging
 ├── alembic/
 ├── grafana-dashboards/
 └── docs/
+```
 
 🧪 Testing
 uv run pytest
-
-# Coverage
 uv run pytest --cov=app --cov-report=html
 
 
-CI runs automatically via GitHub Actions.
+GitHub Actions automatically runs CI on PRs.
 
 📞 Support
 
 For deployment issues:
 
-See deployment-guide.md
+Check deployment-guide.md
 
-Review Vercel/Render logs
+Review Vercel & Render logs
 
-Check environment variables
+Validate environment variables
 
-Test endpoints via /docs
+Test API endpoints individually via /docs
