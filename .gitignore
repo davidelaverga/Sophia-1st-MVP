@@ -45,7 +45,8 @@ venv/
 ENV/
 env/
 .venv
-
+.env
+.env.*
 # IDEs
 .vscode/
 .idea/
@@ -98,4 +99,3 @@ Thumbs.db
 uploads/
 outputs/
 audio-uploads/
-"@ | Out-File -FilePath .gitignore -Encoding UTF8
