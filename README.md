@@ -91,254 +91,97 @@ User Message
 
 ## Emotional Intelligence Skills
 
-### Sophia uses eight specialized emotional skills, each with conditions and trust gating:
+Sophia uses eight specialized emotional skills, each with conditions and trust gating:
 
-**CRISIS_REDIRECT – Immediate safety override.
+1. **CRISIS_REDIRECT** – Immediate safety override  
+2. **BOUNDARY_HOLDING** – Firm, compassionate limits  
+3. **TRUST_BUILDING** – Establishing psychological safety  
+4. **ACTIVE_LISTENING** – Presence without agenda  
+5. **VULNERABILITY_HOLDING** – Holding emotional tenderness  
+6. **IDENTITY_FLUIDITY_SUPPORT** – Challenging fixed labels  
+7. **CELEBRATING_BREAKTHROUGH** – Recognizing transformation  
+8. **CHALLENGING_GROWTH** – Fierce compassion for growth (deep trust required)
 
-**BOUNDARY_HOLDING – Firm, compassionate limits.
-
-**TRUST_BUILDING – Establishing psychological safety.
-
-**ACTIVE_LISTENING – Presence without agenda.
-
-**VULNERABILITY_HOLDING – Holding emotional tenderness.
-
-**IDENTITY_FLUIDITY_SUPPORT – Challenging fixed labels and identities.
-
-**CELEBRATING_BREAKTHROUGH – Recognizing transformation moments.
-
-**CHALLENGING_GROWTH – Fierce compassion for growth (requires deep trust).
+---
 
 ## 5-Tier Context System
 
-### Every response is shaped through a multi-layer context system:
+Every response is shaped through a multi-layer context architecture:
 
-Tier	Name	Description	Approx. Tokens
-1	Foundation	Core identity, values, boundaries	~2,500
-2	Skills Awareness	Knowledge of emotional abilities	~500
-3	Conversation Memory	Episodic context via Mem0	300–800
-4	Emotional State	Real-time emotion detection (Phoenix)	100–200
-5	Skill Guidance	Conditional instructions for active skill	400–600
+| Tier | Name                | Description                                     | Tokens       |
+|------|---------------------|-------------------------------------------------|--------------|
+| **1** | Foundation          | Core identity, values, boundaries               | ~2,500       |
+| **2** | Skills Awareness    | Knowledge of emotional abilities                | ~500         |
+| **3** | Conversation Memory | Episodic memory via Mem0                       | 300–800      |
+| **4** | Emotional State     | Real-time emotion detection (Phoenix)           | 100–200      |
+| **5** | Skill Guidance      | Conditional rules for the active emotional skill| 400–600      |
 
-Total Context Budget: ~2,800–4,600 tokens.
+**Total Context Budget:** ~2,800–4,600 tokens.
+
+---
 
 ## Core Capabilities
 
-**Emotional Intelligence
-**Emotional vs Utility intent detection
-**Real-time emotion analysis
-**Prosody (tone, intensity) processing
-**Trust-gated emotional skills
-**Memory & Context
-**Mem0 vector memory
-**Relationship depth tracking
-**Emotional RAG for knowledge retrieval
-**Voice & Interaction
-**Real-time STT using Mistral Voxtral
-**Emotion-aware TTS via Inworld AI
-**Conversation orchestration using LangGraph
+### Emotional Intelligence
+- Emotional vs Utility intent detection  
+- Real-time emotion & prosody analysis  
+- Trust-gated emotional interventions  
+- Skill-aware response generation  
 
-## Safety
+### Memory & Context
+- Mem0 vector memory  
+- Relationship depth tracking  
+- Emotional RAG  
 
-**Crisis override path
-**Immutable ethical boundaries
-**GDPR-aligned consent and data control
+### Voice & Interaction
+- Real-time STT via Mistral Voxtral  
+- Emotional TTS via Inworld AI  
+- LangGraph conversation orchestration  
+
+### Safety
+- Crisis override path  
+- Immutable boundaries  
+- GDPR-aligned consent and data protection  
+
+---
 
 ## Technical Architecture
 
 ### Backend
-
-**FastAPI
-**Mistral Voxtral (STT + LLM)
-**Google Gemini (fallback transcription + emotion)
-**Inworld AI (emotional TTS)
-**Supabase (PostgreSQL with Row-Level Security)
-**Mem0 (vector-based memory)
-**LangGraph (workflow orchestration)
-**Phoenix Evals (multi-modal emotion analysis)
-**OpenTelemetry (tracing and observability)
+- FastAPI  
+- Mistral Voxtral (STT + LLM)  
+- Google Gemini (fallback)  
+- Inworld AI (emotional TTS)  
+- Supabase (Postgres + RLS)  
+- Mem0 (vector memory)  
+- LangGraph  
+- Phoenix Evals  
+- OpenTelemetry  
 
 ### Frontend
+- Next.js 14  
+- NextAuth.js (Discord OAuth)  
+- Tailwind CSS  
+- WebRTC  
+- TypeScript  
 
-**Next.js 14
-**NextAuth.js (Discord OAuth)
-**Tailwind CSS
-**WebRTC
-**TypeScript
-**Infrastructure
-**Render (backend deployment)
-**Vercel (frontend hosting)
-**Grafana Cloud (dashboards and metrics)
+### Infrastructure
+- Render (backend)  
+- Vercel (frontend)  
+- Grafana Cloud (metrics)  
+
+---
 
 ## Quick Start
 
-###Prerequisites
+### Backend Setup
 
-**Python 3.11+ with uv
-**Node.js 18+
-**Supabase account
-**API keys: Mistral, Inworld, Google (Gemini), OpenAI, Anthropic
-
-Backend Setup
-bash
-Copy code
-# Clone repository
+```bash
 git clone <your-repo-url>
 cd Sophia-1st-MVP
 
-# Environment variables
 cp .env.example .env
-
-# Install dependencies
 uv sync
-
-# Apply database migrations
 alembic upgrade head
 
-# Run backend
 uv run uvicorn main:app --reload
-Frontend Setup
-bash
-Copy code
-cd frontend-nextjs
-
-# Environment variables
-cp .env.example .env.local
-
-# Install dependencies
-npm install
-
-# Run frontend
-npm run dev
-Access:
-
-Backend API: http://localhost:8000
-
-Frontend: http://localhost:3000
-
-API Docs: http://localhost:8000/docs
-
-API Endpoints
-Endpoint	Method	Description
-/chat	POST	Full voice conversation pipeline with routing
-/text-chat	POST	Text-only conversation with emotional context
-/transcribe	POST	Audio transcription with emotion analysis
-/sessions/{id}	GET	Retrieve conversation history and context
-/health	GET	System health check
-
-
-## Conversation Flow
-
-Audio Input
-    ↓
-Transcription (Mistral Voxtral)
-    ↓
-Intent Classification
-    ↓
-Emotion Analysis (Phoenix)
-    ↓
-Routing Decision (Emotional / Utility)
-    ↓
-5-Tier Context Assembly
-    ↓
-LLM Response Generation
-    ↓
-Emotion-Aware TTS (Inworld)
-    ↓
-Memory Storage (Supabase + Mem0)
-
-## Values & Boundaries
-
-### Core Values
-
-**Honesty over comfort
-**Growth over entertainment
-**Reciprocity and mutual presence
-**Non-harm
-**Human connection primacy (AI complements, never replaces)
-
-### Immutable Boundaries
-
-**Will not pretend to feel emotions with certainty
-**Will not engage sexually (education yes; arousal no)
-**Will not enable harm to self or others
-**Will not permanently label users with fixed identities
-**Will not shapeshift values just to please users
-
-## Observability & Monitoring
-
-### Custom Metrics
-
-**Emotional skill activation frequency
-**Intent classification accuracy
-**Trust gate progression
-**Crisis/boundary override triggers
-**Response latency by path type
-**Emotion confidence scores
-
-## OpenTelemetry Spans
-
-**intent_classification
-**skill_routing
-**emotion_analysis_user
-**emotion_analysis_sophia
-**memory_retrieval
-**llm_generation
-
-## Security & Compliance
-
-**Discord OAuth via NextAuth.js
-**API key-based backend authentication
-**Rate limiting
-**Strict CORS with explicit allow-lists
-**GDPR-compliant consent modal
-**SHA256-hashed consent records with IP tracking
-**Row-Level Security (RLS) on all user tables
-**TLS-encrypted data transmission
-**Audit logging for compliance
-
-Make sure to run your RLS setup scripts (e.g. enable_rls_policies.sql) in Supabase before production.
-
-## Project Structure
-
-Sophia-1st-MVP/
-├── app/
-│   ├── services/
-│   │   ├── mistral.py          # AI transcription & LLM
-│   │   ├── emotion.py          # Phoenix emotion analysis
-│   │   ├── rag.py              # Memory & knowledge retrieval
-│   │   ├── langgraph_service.py# Workflow orchestration
-│   │   └── routing/            # Intent & skill routing (M3)
-│   ├── config.py               # Configuration management
-│   └── deps.py                 # Dependencies & middleware
-├── frontend-nextjs/
-│   ├── app/                    # Next.js App Router pages
-│   ├── components/             # Reusable UI components
-│   └── api/                    # API routes (auth, consent)
-├── alembic/                    # Database migrations
-├── grafana-dashboards/         # Observability dashboards
-└── docs/
-    ├── SOPHIA_ROUTING_ARCHITECTURE_V2.md
-    ├── SOPHIA_COMPLETE_PROMPT_ARCHITECTURE.md
-    └── deployment-guide.md
-
-Testing
-bash
-Copy code
-# Run backend tests
-uv run pytest
-
-# Run tests with coverage
-uv run pytest --cov=app --cov-report=html
-CI runs automatically on push/PR via GitHub Actions.
-
-Support
-For deployment issues or questions:
-
-Check the deployment guide in docs/deployment-guide.md
-
-Review Vercel and Render logs
-
-Verify environment variables
-
-Test individual API endpoints via http://localhost:8000/docs
