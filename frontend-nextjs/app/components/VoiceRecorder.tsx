@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { Mic, MicOff, Square } from 'lucide-react'
+import { Mic, Square } from 'lucide-react'
+import { copy, t } from '../../copy'
 
 interface VoiceRecorderProps {
   onMessage: (message: any) => void
@@ -63,7 +64,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
 
     } catch (error) {
       console.error('Failed to start recording:', error)
-      alert('Microphone access denied or not available')
+      alert(t('voiceRecorder.errors.micDenied'))
     }
   }, [])
 
@@ -86,7 +87,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
 
   const processRecording = async () => {
     if (audioChunksRef.current.length === 0) {
-      alert('No audio recorded')
+      alert(t('voiceRecorder.errors.noAudio'))
       return
     }
 
@@ -99,7 +100,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
 
       if (audioBlob.size === 0) {
-        alert('No audio captured. Please try again and allow microphone access.')
+        alert(t('voiceRecorder.errors.noAudio'))
         return
       }
       
@@ -245,7 +246,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
 
     } catch (error) {
       console.error('Voice processing failed:', error)
-      alert(`Voice message failed: ${error.message}`)
+      alert(t('voiceRecorder.errors.network'))
     } finally {
       setIsLoading(false)
       setRecordingTime(0)
@@ -280,15 +281,15 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
               <Mic className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-white">Voice Assistant</h3>
-              <p className="text-sm text-gray-400">Speak naturally with Sophia</p>
+              <h3 className="text-xl font-bold text-white">{t('voiceRecorder.title')}</h3>
+              <p className="text-sm text-gray-400">{t('voiceRecorder.subtitle')}</p>
             </div>
           </div>
           {isRecording && (
             <div className="flex items-center gap-3 px-4 py-2 bg-red-500/20 border border-red-500/30 rounded-xl">
               <div className="w-3 h-3 bg-red-400 rounded-full animate-pulse shadow-lg shadow-red-400/50"></div>
               <span className="text-sm font-mono text-red-300 font-bold">{formatTime(recordingTime)}</span>
-              <span className="text-xs text-red-400">RECORDING</span>
+              <span className="text-xs text-red-400 uppercase">{t('voiceRecorder.recordingBadge')}</span>
             </div>
           )}
         </div>
@@ -306,26 +307,23 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
               </button>
               
               <div className="space-y-2">
-                <p className="text-lg font-semibold text-white">Ready to Listen</p>
+                <p className="text-lg font-semibold text-white">{t('voiceRecorder.readyTitle')}</p>
                 <p className="text-sm text-gray-400 max-w-md mx-auto leading-relaxed">
-                  Click the microphone and ask about DeFi strategies, yield farming, staking, or any blockchain topics
+                  {t('voiceRecorder.readyBody')}
                 </p>
               </div>
               
               {/* Feature highlights */}
               <div className="grid grid-cols-3 gap-4 mt-8 max-w-md mx-auto">
-                <div className="text-center p-3 bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-xl">
-                  <div className="text-lg mb-1">🎯</div>
-                  <p className="text-xs text-gray-300 font-medium">Smart Analysis</p>
-                </div>
-                <div className="text-center p-3 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20 rounded-xl">
-                  <div className="text-lg mb-1">⚡</div>
-                  <p className="text-xs text-gray-300 font-medium">Real-time</p>
-                </div>
-                <div className="text-center p-3 bg-gradient-to-br from-cyan-500/10 to-green-500/10 border border-cyan-500/20 rounded-xl">
-                  <div className="text-lg mb-1">🔊</div>
-                  <p className="text-xs text-gray-300 font-medium">Voice Reply</p>
-                </div>
+                {copy.voiceRecorder.highlights.map((highlight) => (
+                  <div
+                    key={highlight.id}
+                    className="text-center p-3 bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-xl"
+                  >
+                    <div className="text-lg mb-1">{highlight.emoji}</div>
+                    <p className="text-xs text-gray-300 font-medium">{highlight.label}</p>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
@@ -339,9 +337,9 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
               </button>
               
               <div className="space-y-2">
-                <p className="text-lg font-semibold text-white">Listening...</p>
+                <p className="text-lg font-semibold text-white">{t('voiceRecorder.recordingTitle')}</p>
                 <p className="text-sm text-gray-400">
-                  Speak clearly about your DeFi question
+                  {t('voiceRecorder.recordingBody')}
                 </p>
               </div>
               
@@ -370,11 +368,11 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
               <span className="text-sm">💡</span>
             </div>
             <div>
-              <p className="text-sm font-semibold text-white mb-1">Pro Tips</p>
+              <p className="text-sm font-semibold text-white mb-1">{t('voiceRecorder.tipsTitle')}</p>
               <ul className="text-xs text-gray-400 space-y-1">
-                <li>• Speak clearly and at normal pace for best transcription</li>
-                <li>• Ask specific questions about DeFi protocols, risks, or strategies</li>
-                <li>• Wait for the audio response to complete before asking follow-ups</li>
+                {copy.voiceRecorder.tips.map((tip, idx) => (
+                  <li key={idx}>• {tip}</li>
+                ))}
               </ul>
             </div>
           </div>

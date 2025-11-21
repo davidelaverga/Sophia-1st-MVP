@@ -1,12 +1,11 @@
-import './globals.css'
-import { Inter } from 'next/font/google'
-import { Providers } from './providers'
-
-const inter = Inter({ subsets: ['latin'] })
+import "./globals.css"
+import { Providers } from "./providers"
+import { copy } from "../copy"
+import { inter } from "./fonts"
 
 export const metadata = {
-  title: 'Sophia - DeFi AI Assistant',
-  description: 'Your intelligent voice assistant for DeFi education and guidance',
+  title: `${copy.brand.name} – ${copy.brand.tagline}`,
+  description: copy.auth.subtitle,
 }
 
 export default function RootLayout({
@@ -15,10 +14,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" className={inter.variable}>
+      <body className="bg-sophia-bg text-sophia-text antialiased">
         <Providers>
-          {children}
+          <div className="min-h-[100svh]">
+            {children}
+          </div>
         </Providers>
       </body>
     </html>

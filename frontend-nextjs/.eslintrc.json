@@ -1,0 +1,54 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "plugins": ["i18next"],
+  "overrides": [
+    {
+      "files": ["**/*.{ts,tsx}"],
+      "excludedFiles": [
+        "copy/**",
+        "next-env.d.ts",
+        "next.config.js",
+        "tailwind.config.js",
+        "tailwind.config.ts",
+        "postcss.config.js"
+      ],
+      "rules": {
+        "i18next/no-literal-string": [
+          "error",
+          {
+            "markupOnly": false,
+            "ignoreAttribute": [
+              "data-testid",
+              "key",
+              "aria-label",
+              "aria-labelledby",
+              "aria-describedby",
+              "aria-hidden",
+              "role",
+              "fill",
+              "stroke",
+              "viewBox",
+              "focusable",
+              "mask",
+              "stopColor",
+              "stopOpacity"
+            ],
+            "ignoreProperty": [
+              "className",
+              "id",
+              "to",
+              "href",
+              "src",
+              "target",
+              "rel",
+              "type"
+            ],
+            "ignoreCallee": ["t"],
+            "ignore": ["-", "/", "|", ":", ".", ",", "!", "?", "(", ")"],
+            "message": "Use the copy deck via t() instead of hard-coded strings."
+          }
+        ]
+      }
+    }
+  ]
+}

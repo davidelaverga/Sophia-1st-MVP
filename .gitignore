@@ -3,3 +3,127 @@ supabase_schema.sql
 Scarecriw/
 Scarecriw/
 frontend-nextjs/node_modules/
+
+# Crear/actualizar .gitignore
+@"
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+.env
+.env.*
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Redis
+dump.rdb
+
+# Secrets & Keys
+*.pem
+*.key
+*.cert
+secrets/
+credentials/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+tmp/
+temp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
+uploads/
+outputs/
+audio-uploads/
+
+*.dll
+*.pyd
+*.so
+*.dylib
+*.pyo
+*.pyc
+
+# Archivos de distribución
+*.whl
+*.egg
+*.egg-info/
+
+# Builds
+build/
+dist/
+*.spec
+
+# Archivos grandes
+*.bin
+*.dat
+*.h5
+*.model
+*.weights
+
+# Caches
+.cache/
+*.cache

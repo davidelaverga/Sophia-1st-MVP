@@ -1,0 +1,205 @@
+type StreamHandlers = {
+  onToken?: (token: string) => void
+  onMeta?: (payload: Record<string, any>) => void
+  onDone?: (payload?: Record<string, any>) => void
+  onError?: (payload?: { message?: string }) => void
+}
+
+export type StreamConversationOptions = {
+  body: Record<string, unknown>
+  url?: string
+  headers?: HeadersInit
+  maxRetries?: number
+}
+
+const defaultUrl = "/api/conversation/respond"
+const defaultHeaders: HeadersInit = {
+  "Content-Type": "application/json",
+}
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+const safeJsonParse = (input: string) => {
+  try {
+    return JSON.parse(input)
+  } catch (error) {
+    console.warn("[conversation] Failed to parse SSE payload", error)
+    return undefined
+  }
+}
+
+const extractTextFromPayload = (payload: unknown): string | undefined => {
+  if (!payload) return undefined
+  if (typeof payload === "string") return payload
+  if (typeof payload === "object") {
+    const record = payload as Record<string, any>
+    return record.reply ?? record.message ?? record.text ?? record.content
+  }
+  return undefined
+}
+
+const deliverJsonPayload = (payload: unknown, handlers: StreamHandlers) => {
+  if (typeof payload === "undefined" || payload === null) return
+  const derivedText = extractTextFromPayload(payload)
+  if (derivedText) {
+    handlers.onToken?.(derivedText)
+  }
+  if (typeof payload === "object") {
+    handlers.onDone?.(payload as Record<string, any>)
+  } else {
+    handlers.onDone?.({ raw: payload })
+  }
+}
+
+const requestJsonFallback = async (
+  url: string,
+  body: Record<string, unknown>,
+  headers: HeadersInit | undefined,
+  handlers: StreamHandlers,
+) => {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { ...defaultHeaders, ...headers, Accept: "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) return false
+    const payload = await response.json().catch(() => undefined)
+    if (typeof payload === "undefined") return false
+    deliverJsonPayload(payload, handlers)
+    return true
+  } catch (error) {
+    console.warn("[conversation] JSON fallback failed", error)
+    return false
+  }
+}
+
+async function readStream(reader: ReadableStreamDefaultReader<Uint8Array>, handlers: StreamHandlers) {
+  const decoder = new TextDecoder("utf-8")
+  let buffer = ""
+  let currentEvent: string | null = null
+  let currentData: string[] = []
+
+  const flush = () => {
+    if (!currentEvent) {
+      currentData = []
+      return
+    }
+    const payload = currentData.join("\n")
+
+    switch (currentEvent) {
+      case "token":
+        handlers.onToken?.(payload)
+        break
+      case "meta":
+        handlers.onMeta?.(safeJsonParse(payload) ?? { raw: payload })
+        break
+      case "done":
+        handlers.onDone?.(safeJsonParse(payload) ?? { raw: payload })
+        break
+      case "error":
+        handlers.onError?.(safeJsonParse(payload) ?? { message: payload })
+        break
+      default:
+        console.debug("[conversation] Unhandled SSE event", currentEvent)
+        break
+    }
+
+    currentEvent = null
+    currentData = []
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) {
+      flush()
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    let newlineIndex: number
+
+    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIndex)
+      buffer = buffer.slice(newlineIndex + 1)
+
+      if (line.startsWith("event:")) {
+        flush()
+        currentEvent = line.slice(6).trim()
+      } else if (line.startsWith("data:")) {
+        currentData.push(line.slice(5).trim())
+      } else if (line.trim() === "") {
+        flush()
+      } else {
+        currentData.push(line)
+      }
+    }
+  }
+}
+
+export async function streamConversation(options: StreamConversationOptions, handlers: StreamHandlers = {}) {
+  const { body, headers, maxRetries = 2, url = defaultUrl } = options
+
+  let attempt = 0
+  let lastError: unknown
+
+  while (attempt <= maxRetries) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { ...defaultHeaders, ...headers },
+        body: JSON.stringify(body),
+      })
+
+      const contentType = response.headers.get("content-type") ?? ""
+
+      if (!response.ok) {
+        const handled = await requestJsonFallback(url, body, headers, handlers)
+        if (handled) {
+          lastError = undefined
+          break
+        }
+        throw new Error(`Conversation request failed: ${response.status} ${response.statusText}`)
+      }
+
+      if (contentType.includes("application/json")) {
+        const payload = await response.json().catch(() => undefined)
+        if (typeof payload === "undefined") {
+          throw new Error("Conversation returned invalid JSON payload")
+        }
+        deliverJsonPayload(payload, handlers)
+        lastError = undefined
+        break
+      }
+
+      if (!response.body) {
+        const handled = await requestJsonFallback(url, body, headers, handlers)
+        if (handled) {
+          lastError = undefined
+          break
+        }
+        throw new Error("Conversation stream unavailable")
+      }
+
+      const reader = response.body.getReader()
+      await readStream(reader, handlers)
+      lastError = undefined
+      break
+    } catch (error) {
+      lastError = error
+      if (attempt === maxRetries) {
+        const handled = await requestJsonFallback(url, body, headers, handlers)
+        if (handled) {
+          lastError = undefined
+          break
+        }
+        handlers.onError?.({ message: error instanceof Error ? error.message : "Unknown streaming error" })
+        throw error
+      }
+      attempt += 1
+      await sleep(300 * attempt)
+    }
+  }
+
+  return lastError
+}
