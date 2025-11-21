@@ -69,6 +69,9 @@ class LangGraphService:
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
                 "response_path": final_state.get("response_path"),
+                "current_mode": final_state.get("current_mode"),
+                "utility_path": final_state.get("utility_path"),
+                "router_path": final_state.get("router_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
@@ -153,6 +156,9 @@ class LangGraphService:
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
                 "response_path": final_state.get("response_path"),
+                "current_mode": final_state.get("current_mode"),
+                "utility_path": final_state.get("utility_path"),
+                "router_path": final_state.get("router_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
