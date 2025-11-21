@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from enum import Enum
@@ -30,14 +31,16 @@ from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
 from app.config import get_settings
+from app.routing.intent_router import classify_intent_and_mode
+from app.routing.models import CurrentMode, Intent, UtilityPath
 
 logger = logging.getLogger(__name__)
 
 # Task #42729: Mode routing constants
-MODE_DIRECT = "DIRECT"
-MODE_LIGHT = "LIGHT"
-MODE_UTILITY_AGENTIC = "UTILITY_AGENTIC"
-MODE_EMOTIONAL_SUPPORT = "EMOTIONAL_SUPPORT"
+MODE_DIRECT = CurrentMode.UTILITY_DIRECT.value
+MODE_LIGHT = CurrentMode.UTILITY_LIGHT.value
+MODE_UTILITY_AGENTIC = CurrentMode.UTILITY_AGENTIC.value
+MODE_EMOTIONAL_SUPPORT = CurrentMode.EMOTIONAL_SUPPORT.value
 
 
 @dataclass
@@ -61,7 +64,9 @@ class GraphState(TypedDict):
     transcript: str
     user_emotion: EmotionData
     intent: str
-    current_mode: str  # Task #42729: Routing mode (DIRECT, LIGHT, UTILITY_AGENTIC, EMOTIONAL_SUPPORT)
+    current_mode: str  # Task #42729: Routing mode
+    utility_path: Optional[str]
+    router_path: str
     context_memory: Dict[str, Any]
     memo_context: Dict[str, Any]  # Task #42597: MemO intelligent memory context
     llm_response: str
@@ -303,12 +308,12 @@ class AudioIngestor:
 
 
 class IntentAnalyzer:
-    """Classifies user intent (DeFi question, emotional support, small talk)"""
+    """Classifies intent and routing mode via centralized intent router."""
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"IntentAnalyzer processing session {state['session_id']}")
 
-        transcript = state["transcript"]
+        transcript = state.get("transcript") or ""
         logger.debug(
             "IntentAnalyzer: received transcript %s (len=%d)",
             repr(transcript[:75] if isinstance(transcript, str) else transcript),
@@ -320,129 +325,83 @@ class IntentAnalyzer:
                 state["session_id"],
             )
 
-        # Simple rule-based intent classification
-        intent = self._classify_intent(transcript)
-        state["intent"] = intent
-
-        logger.info(f"IntentAnalyzer completed: intent={intent}")
-        return state
-
-    def _classify_intent(self, text: str) -> str:
-        """Enhanced intent classification - prioritizes DeFi keywords over emotional cues"""
-        text_lower = text.lower()
-
-        # Expanded DeFi keywords for better detection
-        defi_keywords = [
-            "defi",
-            "yield",
-            "staking",
-            "liquidity",
-            "farming",
-            "token",
-            "swap",
-            "protocol",
-            "apy",
-            "apr",
-            "pool",
-            "vault",
-            "ethereum",
-            "crypto",
-            "blockchain",
-            "smart contract",
-            "wallet",
-            "gas",
-            "fee",
-            "dex",
-            "exchange",
-            "collateral",
-            "lending",
-            "borrowing",
-            "loan",
-            "impermanent loss",
-            "slippage",
-            "tvl",
-            "flash loan",
-            "governance",
-            "stablecoin",
-            "usdc",
-            "usdt",
-            "dai",
-            "mev",
-            "risk",
-            "audit",
-        ]
-
-        emotional_keywords = [
-            "sad",
-            "worried",
-            "anxious",
-            "happy",
-            "excited",
-            "confused",
-            "frustrated",
-            "help me",
-        ]
-
-        # CRITICAL: DeFi keywords take priority over emotional keywords
-        # This prevents "I'm confused about yield farming" from being classified as emotional_support
-        if any(keyword in text_lower for keyword in defi_keywords):
-            return "defi_question"
-        elif any(keyword in text_lower for keyword in emotional_keywords):
-            return "emotional_support"
-        else:
-            return "small_talk"
-
-
-class ModeClassifier:
-    """Determines processing mode based on intent, emotion, and query complexity (Task #42729)"""
-
-    def __call__(self, state: GraphState) -> GraphState:
-        logger.info(f"ModeClassifier processing session {state['session_id']}")
-
-        intent = state["intent"]
-        emotion = state["user_emotion"].label
-        transcript = state["transcript"]
-
-        # Determine mode based on classification
-        mode = self._classify_mode(intent, emotion, transcript)
-        state["current_mode"] = mode
-
-        logger.info(f"ModeClassifier selected mode: {mode}")
-        return state
-
-    def _classify_mode(self, intent: str, emotion: str, transcript: str) -> str:
-        """Classify processing mode based on inputs
-
-        - DIRECT: Simple greetings without emotional complexity (skip Mem0, skip RAG, Voxtral-only)
-        - LIGHT: Standard conversation with memory context (include Mem0, use PromptComposer + Mistral)
-        - UTILITY_AGENTIC: Complex knowledge queries requiring analysis (route to reflection subgraph)
-        - EMOTIONAL_SUPPORT: Emotional support or crisis situations (route to emotional skill router)
-        """
-
-        # EMOTIONAL_SUPPORT mode: Crisis, strong negative emotions, or explicit emotional request
-        if intent in ["crisis", "emotional_support"] or emotion in ["panic", "anxious", "sad", "angry", "fearful", "grief"]:
-            return MODE_EMOTIONAL_SUPPORT
-
-        # DIRECT mode: Simple greetings with neutral/positive emotion
-        if intent == "small_talk" and emotion in ["neutral", "joy", "excited"]:
-            # Check if it's a simple greeting
-            greeting_patterns = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
-            if any(pattern in transcript.lower() for pattern in greeting_patterns) and len(transcript.split()) <= 3:
-                return MODE_DIRECT
-
-        # UTILITY_AGENTIC mode: Complex DeFi/knowledge queries
-        if intent == "defi_question":
-            # Complex query indicators
-            complex_keywords = ["explain", "compare", "analyze", "how does", "why does", "difference between"]
-            is_complex = (
-                len(transcript.split()) > 20  # Long query
-                or any(kw in transcript.lower() for kw in complex_keywords)
+        try:
+            _maybe_cancel(state)
+            result = self._run_intent_router(transcript, state)
+            state["intent"] = result.intent.value
+            state["current_mode"] = result.current_mode.value
+            state["utility_path"] = (
+                result.utility_path.value if result.utility_path else None
             )
-            if is_complex:
-                return MODE_UTILITY_AGENTIC
+            state["router_path"] = self._map_router_path(result.current_mode)
 
-        # LIGHT mode: Default for most conversations
-        return MODE_LIGHT
+            logger.info(
+                "IntentAnalyzer completed: intent=%s mode=%s router_path=%s",
+                state["intent"],
+                state["current_mode"],
+                state["router_path"],
+            )
+        except Exception as exc:
+            logger.exception("IntentAnalyzer failed, using safe defaults: %s", exc)
+            _raise_if_cancelled(exc)
+            state["intent"] = Intent.EMOTIONAL_SUPPORT.value
+            state["current_mode"] = MODE_EMOTIONAL_SUPPORT
+            state["utility_path"] = None
+            state["router_path"] = "emotional"
+
+        return state
+
+    def _run_intent_router(self, transcript: str, state: GraphState):
+        async def _classify():
+            return await classify_intent_and_mode(
+                user_message=transcript,
+                session_id=state["session_id"],
+                prosody=None,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop_running = loop.is_running()
+        except RuntimeError:
+            loop = None
+            loop_running = False
+
+        if not loop_running:
+            return asyncio.run(_classify())
+
+        result_container: Dict[str, Any] = {}
+        error_container: List[BaseException] = []
+
+        def _worker():
+            try:
+                result_container["result"] = asyncio.run(_classify())
+            except BaseException as exc:
+                error_container.append(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join()
+
+        if error_container:
+            raise error_container[0]
+        return result_container["result"]
+
+    def _map_router_path(self, current_mode: CurrentMode) -> str:
+        """Map CurrentMode enum to compact router_path string for metrics."""
+        if isinstance(current_mode, CurrentMode):
+            mode_value = current_mode.value
+        else:
+            mode_value = str(current_mode).lower()
+        
+        match mode_value:
+            case CurrentMode.EMOTIONAL_SUPPORT.value:
+                return "emotional"
+            case CurrentMode.UTILITY_DIRECT.value:
+                return "direct"
+            case CurrentMode.UTILITY_LIGHT.value:
+                return "light"
+            case _:
+                return "agentic"
 
 
 class ResponseGenerator:
@@ -464,7 +423,8 @@ class ResponseGenerator:
         _maybe_cancel(state)
 
         # Task #42729: Check current_mode for routing
-        mode = state.get("current_mode", MODE_LIGHT)
+        mode = self._normalize_mode(state.get("current_mode", MODE_LIGHT))
+        state["current_mode"] = mode
         logger.info(f"ResponseGenerator using mode: {mode}")
 
         try:
@@ -492,6 +452,26 @@ class ResponseGenerator:
             state["llm_response"] = response
 
         return state
+
+    def _normalize_mode(self, mode_value: Any) -> str:
+        """Normalize mode value from enums/legacy strings to canonical strings."""
+        if isinstance(mode_value, CurrentMode):
+            return mode_value.value
+
+        if isinstance(mode_value, str):
+            value = mode_value.lower()
+            mapping = {
+                "direct": MODE_DIRECT,
+                "utility_direct": MODE_DIRECT,
+                "light": MODE_LIGHT,
+                "utility_light": MODE_LIGHT,
+                "agentic": MODE_UTILITY_AGENTIC,
+                "utility_agentic": MODE_UTILITY_AGENTIC,
+                "emotional_support": MODE_EMOTIONAL_SUPPORT,
+            }
+            return mapping.get(value, MODE_LIGHT)
+
+        return MODE_LIGHT
 
     def _process_with_voxtral_large(self, state: GraphState) -> GraphState:
         """Process using Voxtral Large unified pipeline (transcript already extracted by AudioIngestor)"""
@@ -1115,20 +1095,26 @@ class ResponseGenerator:
 
         # Add prefix indicating analytical processing
         result_state["llm_response"] = result_state["llm_response"]
-        logger.info("UTILITY_AGENTIC: Using LIGHT mode as placeholder (reflection subgraph TBD)")
+        logger.info(
+            "UTILITY_AGENTIC: Using LIGHT mode as placeholder (reflection subgraph TBD)"
+        )
 
         return result_state
 
     def _process_emotional_support_mode(self, state: GraphState) -> GraphState:
         """EMOTIONAL_SUPPORT mode: Pass to emotional skill router (Task #42729 - placeholder)"""
-        logger.info("ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing")
+        logger.info(
+            "ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing"
+        )
 
         # TODO: Implement emotional skill router in future
         # For now, enhance emotional guidance in existing pipeline
         emotion_guidance = _ensure_emotion_guidance(state)
 
         # Force emotional support focus in prompt
-        logger.info(f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips")
+        logger.info(
+            f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips"
+        )
 
         # Use LIGHT mode with enhanced emotional context
         result_state = self._process_light_mode(state)
@@ -1138,6 +1124,7 @@ class ResponseGenerator:
     def _generate_simple_greeting(self, transcript: str) -> str:
         """Generate simple greeting response for DIRECT mode"""
         import random
+
         greetings = [
             "Hello! How can I help you today?",
             "Hi there! What brings you here?",
@@ -1339,6 +1326,9 @@ class EvalLogger:
                 "confidence": state["sophia_emotion"].confidence,
             },
             "intent": state["intent"],
+            "current_mode": state.get("current_mode"),
+            "utility_path": state.get("utility_path"),
+            "router_path": state.get("router_path"),
             "fallbacks_used": state.get("fallback_used", {}),
             "transcript_length": len(state["transcript"]),
             "response_length": len(state["llm_response"]),
@@ -1463,7 +1453,6 @@ class SophiaLangGraph:
         # Initialize nodes
         audio_ingestor = AudioIngestor()
         intent_analyzer = IntentAnalyzer()
-        mode_classifier = ModeClassifier()  # Task #42729
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
@@ -1474,16 +1463,14 @@ class SophiaLangGraph:
         # Add nodes
         workflow.add_node("audio_ingestor", audio_ingestor)
         workflow.add_node("intent_analyzer", intent_analyzer)
-        workflow.add_node("mode_classifier", mode_classifier)  # Task #42729
         workflow.add_node("response_generator", response_generator)
         workflow.add_node("tts_node", tts_node)
         workflow.add_node("eval_logger", eval_logger)
 
-        # Define edges (workflow sequence with mode classification)
+        # Define edges (workflow sequence with intent/mode classification inside IntentAnalyzer)
         workflow.add_edge(START, "audio_ingestor")
         workflow.add_edge("audio_ingestor", "intent_analyzer")
-        workflow.add_edge("intent_analyzer", "mode_classifier")  # Task #42729
-        workflow.add_edge("mode_classifier", "response_generator")  # Task #42729
+        workflow.add_edge("intent_analyzer", "response_generator")
         workflow.add_edge("response_generator", "tts_node")
         workflow.add_edge("tts_node", "eval_logger")
         workflow.add_edge("eval_logger", END)
@@ -1509,7 +1496,9 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
-            "current_mode": MODE_LIGHT,  # Task #42729: Default mode, will be set by ModeClassifier
+            "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
             "memo_context": {},  # Task #42597: MemO context
             "llm_response": "",
@@ -1553,9 +1542,10 @@ class SophiaLangGraph:
             "transcript": message,  # Use the text message directly
             "user_emotion": EmotionData(label="neutral", confidence=0.7),
             "intent": "",
-            "current_mode": MODE_LIGHT,  # Task #42729: Default mode, will be set by ModeClassifier
+            "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
-            "memo_context": {},  # Task #42597: MemO context
             "llm_response": "",
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
@@ -1584,22 +1574,19 @@ class SophiaLangGraph:
 
         # Initialize nodes
         intent_analyzer = IntentAnalyzer()
-        mode_classifier = ModeClassifier()  # Task #42729
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
 
         # Add nodes (skip audio_ingestor for text input)
         text_workflow.add_node("intent_analyzer", intent_analyzer)
-        text_workflow.add_node("mode_classifier", mode_classifier)  # Task #42729
         text_workflow.add_node("response_generator", response_generator)
         text_workflow.add_node("tts_node", tts_node)
         text_workflow.add_node("eval_logger", eval_logger)
 
-        # Define edges (workflow sequence without audio processing, with mode classification)
+        # Define edges (workflow sequence without audio processing)
         text_workflow.add_edge(START, "intent_analyzer")
-        text_workflow.add_edge("intent_analyzer", "mode_classifier")  # Task #42729
-        text_workflow.add_edge("mode_classifier", "response_generator")  # Task #42729
+        text_workflow.add_edge("intent_analyzer", "response_generator")
         text_workflow.add_edge("response_generator", "tts_node")
         text_workflow.add_edge("tts_node", "eval_logger")
         text_workflow.add_edge("eval_logger", END)
@@ -1627,9 +1614,10 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
-            "current_mode": MODE_LIGHT,  # Task #42729
+            "current_mode": MODE_LIGHT,
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
-            "memo_context": {},  # Task #42597
             "llm_response": "",
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
