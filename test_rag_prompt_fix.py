@@ -10,20 +10,21 @@ Tests that:
 import os
 import sys
 
-# Set environment
-os.environ["ENABLE_LOCAL_RAG"] = "1"
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from dotenv import load_dotenv
-load_dotenv()
 
 from app.services.rag import rag_system
 from app.services.mistral import generate_llm_reply_with_context
 from app.langgraph_nodes import IntentAnalyzer
 
-print("="*70)
+# Set environment
+os.environ["ENABLE_LOCAL_RAG"] = "1"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+load_dotenv()
+
+print("=" * 70)
 print("RAG PROMPT FIX VERIFICATION TEST")
-print("="*70)
+print("=" * 70)
 
 # Test 1: Intent Classification
 print("\n🔍 TEST 1: Intent Classification (DeFi Priority)")
@@ -81,15 +82,22 @@ print("Testing new function signature...")
 try:
     # Test that the function exists and has the right signature
     from inspect import signature
+
     sig = signature(generate_llm_reply_with_context)
     params = list(sig.parameters.keys())
-    expected_params = ['user_question', 'rag_context', 'emotion_label', 'memory_context', 'intent']
-    
+    expected_params = [
+        "user_question",
+        "rag_context",
+        "emotion_label",
+        "memory_context",
+        "intent",
+    ]
+
     if all(p in params for p in expected_params):
         print(f"✅ Function signature correct: {params}")
         print("✅ New function properly separates context from user question")
     else:
-        print(f"❌ Function signature mismatch")
+        print("❌ Function signature mismatch")
         print(f"   Expected: {expected_params}")
         print(f"   Got: {params}")
 except Exception as e:
@@ -108,20 +116,22 @@ print(f"Intent: {intent}")
 print(f"RAG Context Length: {len(rag_context)} chars")
 
 if intent == "defi_question" and len(rag_context) > 0:
-    print("✅ Full pipeline working: DeFi query → correct intent → RAG context retrieved")
-    print(f"\nRAG Content Preview:")
+    print(
+        "✅ Full pipeline working: DeFi query → correct intent → RAG context retrieved"
+    )
+    print("\nRAG Content Preview:")
     print(rag_context[:200])
 else:
     print("❌ Pipeline issue detected")
 
 # Summary
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("📊 TEST SUMMARY")
-print("="*70)
+print("=" * 70)
 print(f"Intent Classification: {passed}/{len(test_cases)} passed")
 print(f"RAG Retrieval: {rag_passed}/{len(defi_queries)} passed")
-print(f"Function Structure: ✅ Verified")
-print(f"Integration: ✅ Pipeline working")
+print("Function Structure: ✅ Verified")
+print("Integration: ✅ Pipeline working")
 
 print("\n✅ ALL FIXES VERIFIED!")
 print("\n📋 What Changed:")
@@ -133,4 +143,4 @@ print("\n🚀 Next Steps:")
 print("1. Restart Sophia: python main.py")
 print("2. Test with real queries via API")
 print("3. Verify responses use FAQ content")
-print("="*70)
+print("=" * 70)

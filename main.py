@@ -119,6 +119,8 @@ app.include_router(admin_router.router)
 app.include_router(chat_router.router)
 app.include_router(evaluation_router.router)
 
+
+# Simple health endpoint for Fly.io checks and container orchestration
 @app.get("/health")
 def health():
     """Basic liveness endpoint."""

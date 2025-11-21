@@ -248,18 +248,22 @@ class LangGraphService:
             # Fallback to rule-based response
             yield "I'm having trouble processing your request. Could you please try again?"
 
-    def stream_conversation_response_old(self, audio_bytes: bytes, session_id: str = None):
+    def stream_conversation_response_old(
+        self, audio_bytes: bytes, session_id: str = None
+    ):
         """Stream conversation response through LangGraph pipeline
-        
+
         Flow: Audio → Voxtral ASR → Mistral LLM (streaming)
         """
-        
-        logger.info(f"Streaming conversation through LangGraph for session {session_id}")
-        
+
+        logger.info(
+            f"Streaming conversation through LangGraph for session {session_id}"
+        )
+
         try:
             # Process audio to get context (ASR + emotion + intent + RAG)
             state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
-            
+
             # Stream LLM response using the processed context
             for token in self.sophia_graph.stream_llm_response(state):
                 yield token
