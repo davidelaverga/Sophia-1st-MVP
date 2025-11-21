@@ -65,7 +65,7 @@ For evolution.
 
 Every message flows through an emotionally intelligent pipeline:
 
-```text
+
 User Message
     ↓
 ┌────────────────────────────────────────┐
