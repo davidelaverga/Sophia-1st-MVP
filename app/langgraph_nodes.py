@@ -24,6 +24,12 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Task #42729: Mode routing constants
+MODE_DIRECT = "DIRECT"
+MODE_LIGHT = "LIGHT"
+MODE_UTILITY_AGENTIC = "UTILITY_AGENTIC"
+MODE_EMOTIONAL_SUPPORT = "EMOTIONAL_SUPPORT"
+
 
 @dataclass
 class EmotionData:
@@ -40,6 +46,7 @@ class GraphState(TypedDict):
     transcript: str
     user_emotion: EmotionData
     intent: str
+    current_mode: str  # Task #42729: Routing mode (DIRECT, LIGHT, UTILITY_AGENTIC, EMOTIONAL_SUPPORT)
     context_memory: Dict[str, Any]
     memo_context: Dict[str, Any]  # Task #42597: MemO intelligent memory context
     llm_response: str
@@ -281,6 +288,58 @@ class IntentAnalyzer:
             return "small_talk"
 
 
+class ModeClassifier:
+    """Determines processing mode based on intent, emotion, and query complexity (Task #42729)"""
+
+    def __call__(self, state: GraphState) -> GraphState:
+        logger.info(f"ModeClassifier processing session {state['session_id']}")
+
+        intent = state["intent"]
+        emotion = state["user_emotion"].label
+        transcript = state["transcript"]
+
+        # Determine mode based on classification
+        mode = self._classify_mode(intent, emotion, transcript)
+        state["current_mode"] = mode
+
+        logger.info(f"ModeClassifier selected mode: {mode}")
+        return state
+
+    def _classify_mode(self, intent: str, emotion: str, transcript: str) -> str:
+        """Classify processing mode based on inputs
+
+        - DIRECT: Simple greetings without emotional complexity (skip Mem0, skip RAG, Voxtral-only)
+        - LIGHT: Standard conversation with memory context (include Mem0, use PromptComposer + Mistral)
+        - UTILITY_AGENTIC: Complex knowledge queries requiring analysis (route to reflection subgraph)
+        - EMOTIONAL_SUPPORT: Emotional support or crisis situations (route to emotional skill router)
+        """
+
+        # EMOTIONAL_SUPPORT mode: Crisis, strong negative emotions, or explicit emotional request
+        if intent in ["crisis", "emotional_support"] or emotion in ["panic", "anxious", "sad", "angry", "fearful", "grief"]:
+            return MODE_EMOTIONAL_SUPPORT
+
+        # DIRECT mode: Simple greetings with neutral/positive emotion
+        if intent == "small_talk" and emotion in ["neutral", "joy", "excited"]:
+            # Check if it's a simple greeting
+            greeting_patterns = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
+            if any(pattern in transcript.lower() for pattern in greeting_patterns) and len(transcript.split()) <= 3:
+                return MODE_DIRECT
+
+        # UTILITY_AGENTIC mode: Complex DeFi/knowledge queries
+        if intent == "defi_question":
+            # Complex query indicators
+            complex_keywords = ["explain", "compare", "analyze", "how does", "why does", "difference between"]
+            is_complex = (
+                len(transcript.split()) > 20  # Long query
+                or any(kw in transcript.lower() for kw in complex_keywords)
+            )
+            if is_complex:
+                return MODE_UTILITY_AGENTIC
+
+        # LIGHT mode: Default for most conversations
+        return MODE_LIGHT
+
+
 class ResponseGenerator:
     """Generates responses using appropriate pipeline based on AudioIngestor decision"""
 
@@ -296,16 +355,20 @@ class ResponseGenerator:
         state.setdefault("fallback_used", {})
         _maybe_cancel(state)
 
-        # Check pipeline decision from AudioIngestor
-        use_voxtral_large = state.get("use_voxtral_large", False)
+        # Task #42729: Check current_mode for routing
+        mode = state.get("current_mode", MODE_LIGHT)
+        logger.info(f"ResponseGenerator using mode: {mode}")
 
         try:
-            if use_voxtral_large:
-                # VOXTRAL LARGE PATH: Complete processing
-                return self._process_with_voxtral_large(state)
-            else:
-                # LEGACY PATH: LLM-only processing
-                return self._process_with_legacy_llm(state)
+            # Route based on mode
+            if mode == MODE_DIRECT:
+                return self._process_direct_mode(state)
+            elif mode == MODE_EMOTIONAL_SUPPORT:
+                return self._process_emotional_support_mode(state)
+            elif mode == MODE_UTILITY_AGENTIC:
+                return self._process_utility_agentic_mode(state)
+            else:  # MODE_LIGHT or fallback
+                return self._process_light_mode(state)
 
         except Exception as e:
             logger.error(f"ResponseGenerator failed: {e}")
@@ -651,6 +714,70 @@ class ResponseGenerator:
             cancel_check()
         return generate_llm_reply(full_prompt, cancel_check=cancel_check)
 
+    def _process_direct_mode(self, state: GraphState) -> GraphState:
+        """DIRECT mode: Skip Mem0, skip RAG, use Voxtral-only path (Task #42729)"""
+        logger.info("ResponseGenerator: DIRECT mode - fast path without memory/RAG")
+
+        # Skip memory retrieval
+        state["memo_context"] = {"memories": []}
+        state["context_memory"] = {}
+
+        # Use simple, fast response
+        state["llm_response"] = self._generate_simple_greeting(state["transcript"])
+        return state
+
+    def _process_light_mode(self, state: GraphState) -> GraphState:
+        """LIGHT mode: Include Mem0, use PromptComposer + Mistral (Task #42729)"""
+        logger.info("ResponseGenerator: LIGHT mode - standard path with memory")
+
+        # Use existing logic with Mem0 + PromptComposer
+        use_voxtral_large = state.get("use_voxtral_large", False)
+        if use_voxtral_large:
+            return self._process_with_voxtral_large(state)
+        else:
+            return self._process_with_legacy_llm(state)
+
+    def _process_utility_agentic_mode(self, state: GraphState) -> GraphState:
+        """UTILITY_AGENTIC mode: Route to reflection subgraph (Task #42729 - placeholder)"""
+        logger.info("ResponseGenerator: UTILITY_AGENTIC mode - complex analysis")
+
+        # TODO: Implement reflection subgraph routing in future
+        # For now, use enhanced LIGHT mode with note about analysis
+        result_state = self._process_light_mode(state)
+
+        # Add prefix indicating analytical processing
+        result_state["llm_response"] = result_state["llm_response"]
+        logger.info("UTILITY_AGENTIC: Using LIGHT mode as placeholder (reflection subgraph TBD)")
+
+        return result_state
+
+    def _process_emotional_support_mode(self, state: GraphState) -> GraphState:
+        """EMOTIONAL_SUPPORT mode: Pass to emotional skill router (Task #42729 - placeholder)"""
+        logger.info("ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing")
+
+        # TODO: Implement emotional skill router in future
+        # For now, enhance emotional guidance in existing pipeline
+        emotion_guidance = _ensure_emotion_guidance(state)
+
+        # Force emotional support focus in prompt
+        logger.info(f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips")
+
+        # Use LIGHT mode with enhanced emotional context
+        result_state = self._process_light_mode(state)
+
+        return result_state
+
+    def _generate_simple_greeting(self, transcript: str) -> str:
+        """Generate simple greeting response for DIRECT mode"""
+        import random
+        greetings = [
+            "Hello! How can I help you today?",
+            "Hi there! What brings you here?",
+            "Hey! Nice to see you!",
+            "Hello! I'm here to assist you.",
+        ]
+        return random.choice(greetings)
+
     def _claude_fallback(
         self,
         transcript: str,
@@ -907,11 +1034,12 @@ class SophiaLangGraph:
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph state machine"""
+        """Build the LangGraph state machine (Task #42729: with ModeClassifier)"""
 
         # Initialize nodes
         audio_ingestor = AudioIngestor()
         intent_analyzer = IntentAnalyzer()
+        mode_classifier = ModeClassifier()  # Task #42729
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
@@ -922,14 +1050,16 @@ class SophiaLangGraph:
         # Add nodes
         workflow.add_node("audio_ingestor", audio_ingestor)
         workflow.add_node("intent_analyzer", intent_analyzer)
+        workflow.add_node("mode_classifier", mode_classifier)  # Task #42729
         workflow.add_node("response_generator", response_generator)
         workflow.add_node("tts_node", tts_node)
         workflow.add_node("eval_logger", eval_logger)
 
-        # Define edges (workflow sequence)
+        # Define edges (workflow sequence with mode classification)
         workflow.add_edge(START, "audio_ingestor")
         workflow.add_edge("audio_ingestor", "intent_analyzer")
-        workflow.add_edge("intent_analyzer", "response_generator")
+        workflow.add_edge("intent_analyzer", "mode_classifier")  # Task #42729
+        workflow.add_edge("mode_classifier", "response_generator")  # Task #42729
         workflow.add_edge("response_generator", "tts_node")
         workflow.add_edge("tts_node", "eval_logger")
         workflow.add_edge("eval_logger", END)
@@ -955,7 +1085,9 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
+            "current_mode": MODE_LIGHT,  # Task #42729: Default mode, will be set by ModeClassifier
             "context_memory": {},
+            "memo_context": {},  # Task #42597: MemO context
             "llm_response": "",
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
@@ -996,7 +1128,9 @@ class SophiaLangGraph:
             "transcript": message,  # Use the text message directly
             "user_emotion": EmotionData(label="neutral", confidence=0.7),
             "intent": "",
+            "current_mode": MODE_LIGHT,  # Task #42729: Default mode, will be set by ModeClassifier
             "context_memory": {},
+            "memo_context": {},  # Task #42597: MemO context
             "llm_response": "",
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
@@ -1023,19 +1157,22 @@ class SophiaLangGraph:
 
         # Initialize nodes
         intent_analyzer = IntentAnalyzer()
+        mode_classifier = ModeClassifier()  # Task #42729
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
 
         # Add nodes (skip audio_ingestor for text input)
         text_workflow.add_node("intent_analyzer", intent_analyzer)
+        text_workflow.add_node("mode_classifier", mode_classifier)  # Task #42729
         text_workflow.add_node("response_generator", response_generator)
         text_workflow.add_node("tts_node", tts_node)
         text_workflow.add_node("eval_logger", eval_logger)
 
-        # Define edges (workflow sequence without audio processing)
+        # Define edges (workflow sequence without audio processing, with mode classification)
         text_workflow.add_edge(START, "intent_analyzer")
-        text_workflow.add_edge("intent_analyzer", "response_generator")
+        text_workflow.add_edge("intent_analyzer", "mode_classifier")  # Task #42729
+        text_workflow.add_edge("mode_classifier", "response_generator")  # Task #42729
         text_workflow.add_edge("response_generator", "tts_node")
         text_workflow.add_edge("tts_node", "eval_logger")
         text_workflow.add_edge("eval_logger", END)
@@ -1063,7 +1200,9 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
+            "current_mode": MODE_LIGHT,  # Task #42729
             "context_memory": {},
+            "memo_context": {},  # Task #42597
             "llm_response": "",
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
             "audio_url": "",
@@ -1071,6 +1210,8 @@ class SophiaLangGraph:
             "evaluation_logs": [],
             "emotion_guidance": [],
             "fallback_used": {},
+            "use_voxtral_large": False,
+            "cancel_check": None,
         }
 
         # Process through initial nodes
