@@ -1,9 +1,8 @@
 """PromptComposer: Dynamic system prompt composition with hot reload (Task #42597)."""
 
 import logging
-import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Sequence
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,7 @@ class PromptComposer:
         memory_context: Optional[Dict[str, Any]] = None,
         user_emotion: Optional[str] = None,
         additional_context: Optional[str] = None,
+        emotion_guidance: Optional[Sequence[str]] = None,
     ) -> str:
         """Compose full system prompt with base identity + memory context"""
 
@@ -78,10 +78,17 @@ class PromptComposer:
 
         # Add user emotion context if provided
         if user_emotion and user_emotion != "neutral":
-            prompt += f"\n\n## Current User Emotional State\n"
+            prompt += "\n\n## Current User Emotional State\n"
             prompt += f"The user appears to be feeling **{user_emotion}**. "
             prompt += "Please adapt your response tone and content accordingly, "
             prompt += "showing empathy and emotional intelligence."
+
+        if emotion_guidance:
+            prompt += "\n\n## Emotional Guidance\n"
+            for tip in emotion_guidance:
+                cleaned = (tip or "").strip()
+                if cleaned:
+                    prompt += f"\n- {cleaned}"
 
         # Add any additional context
         if additional_context:

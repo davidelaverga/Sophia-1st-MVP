@@ -34,6 +34,7 @@ class Settings:
 
     # External services
     MISTRAL_API_KEY: Optional[str] = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_API_BASE: str = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai")
     INWORLD_API_KEY: Optional[str] = os.getenv("INWORLD_API_KEY")  # Base64 Basic token
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
@@ -48,7 +49,7 @@ class Settings:
     SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_ANON_KEY: Optional[str] = os.getenv("SUPABASE_ANON_KEY")
-    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "Audio Storage")
+    SUPABASE_BUCKET_AUDIO: str = os.getenv("SUPABASE_BUCKET_AUDIO", "audio")
     SUPABASE_AUDIO_PREFIX: str = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
     SUPABASE_SIGNED_URL_TTL: int = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 
@@ -59,8 +60,12 @@ class Settings:
     # MemO Memory (Task #42597)
     MEMO_ENABLED: bool = os.getenv("MEMO_ENABLED", "true").lower() == "true"
     MEMO_TOP_K: int = int(os.getenv("MEMO_TOP_K", "5"))
-    MEMO_SIMILARITY_THRESHOLD: float = float(os.getenv("MEMO_SIMILARITY_THRESHOLD", "0.7"))
-    MEMO_EMBEDDING_MODEL: str = os.getenv("MEMO_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    MEMO_SIMILARITY_THRESHOLD: float = float(
+        os.getenv("MEMO_SIMILARITY_THRESHOLD", "0.7")
+    )
+    MEMO_EMBEDDING_MODEL: str = os.getenv(
+        "MEMO_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     # OpenTelemetry (OTLP HTTP exporter)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = os.getenv(
@@ -94,6 +99,14 @@ class Settings:
     EMOTIONAL_RAG_SERVICE_URL: Optional[str] = os.getenv("EMOTIONAL_RAG_SERVICE_URL")
     EMOTIONAL_RAG_TIMEOUT_SECONDS: float = float(
         os.getenv("EMOTIONAL_RAG_TIMEOUT_SECONDS", "0.3")
+    )
+
+    # Affect snapshot / Phoenix background
+    AFFECT_SNAPSHOT_TTL_SECONDS: int = int(
+        os.getenv("AFFECT_SNAPSHOT_TTL_SECONDS", "300")
+    )
+    PHOENIX_BG_TIMEOUT_SECONDS: float = float(
+        os.getenv("PHOENIX_BG_TIMEOUT_SECONDS", "12.0")
     )
 
 

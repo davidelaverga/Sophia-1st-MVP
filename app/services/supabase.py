@@ -1,10 +1,22 @@
 """Supabase client utilities for storage uploads, consent checks, and conversation inserts."""
 
 import logging
+import os
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
-from dotenv import load_dotenv, find_dotenv
+
+try:
+    from dotenv import load_dotenv, find_dotenv
+except ImportError:  # pragma: no cover - optional dependency for local dev
+
+    def load_dotenv(*_args, **_kwargs):  # type: ignore[override]
+        return False
+
+    def find_dotenv(*_args, **_kwargs):  # type: ignore[override]
+        return ""
+
+
 from supabase import Client, create_client
 
 try:
@@ -25,10 +37,10 @@ load_dotenv(find_dotenv(), override=False)
 # Global Supabase client state
 _supabase: Optional[Client] = None
 _anon_supabase: Optional[Client] = None
-SUPABASE_BUCKET_AUDIO: str = "audio"
-SUPABASE_AUDIO_PREFIX: str = "uploads/"
-SUPABASE_SIGNED_URL_TTL: int = 3600
-SUPABASE_DB_DSN: Optional[str] = None
+SUPABASE_BUCKET_AUDIO = os.getenv("SUPABASE_BUCKET_AUDIO", "audio-uploads")
+SUPABASE_AUDIO_PREFIX = os.getenv("SUPABASE_AUDIO_PREFIX", "uploads/")
+SUPABASE_SIGNED_URL_TTL = os.getenv("SUPABASE_SIGNED_URL_TTL", 3600)
+SUPABASE_DB_DSN = os.getenv("SUPABASE_DB_DSN", None)
 
 logger = logging.getLogger("sophia-backend")
 _supabase_tracer = trace.get_tracer("sophia.supabase")
@@ -52,7 +64,13 @@ def _supabase_span(name: str, **attrs):
 def init_supabase(settings: Optional[Settings] = None) -> Client:
     """Initialise the Supabase client once using application settings."""
 
-    global _supabase, _anon_supabase, SUPABASE_BUCKET_AUDIO, SUPABASE_AUDIO_PREFIX, SUPABASE_DB_DSN, SUPABASE_SIGNED_URL_TTL
+    global \
+        _supabase, \
+        _anon_supabase, \
+        SUPABASE_BUCKET_AUDIO, \
+        SUPABASE_AUDIO_PREFIX, \
+        SUPABASE_DB_DSN, \
+        SUPABASE_SIGNED_URL_TTL
     if _supabase is not None:
         return _supabase
 
@@ -76,7 +94,9 @@ def init_supabase(settings: Optional[Settings] = None) -> Client:
         options = None
         if ClientOptions is not None:
             options = ClientOptions(persist_session=False)  # type: ignore[arg-type]
-        _anon_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options)
+        _anon_supabase = create_client(
+            settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, options=options
+        )
     return _supabase
 
 
@@ -185,8 +205,7 @@ def insert_emotion_score(
     user_id: str,
     access_token: Optional[str] = None,
 ) -> None:
-    """Insert a row into the emotion_scores table
-    """
+    """Insert a row into the emotion_scores table"""
 
     payload = {
         "session_id": str(session_id),
@@ -210,9 +229,10 @@ def insert_emotion_score(
         # Don't raise the exception, just log it and continue
 
 
-def insert_conversation_session(data: Dict[str, Any], access_token: Optional[str] = None) -> None:
-    """Insert a conversation session row using REST.
-    """
+def insert_conversation_session(
+    data: Dict[str, Any], access_token: Optional[str] = None
+) -> None:
+    """Insert a conversation session row using REST."""
 
     # Ensure all SQL parameters expected by insert_conversation_session_sql are present
     # If missing, provide sensible defaults.

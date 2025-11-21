@@ -379,6 +379,10 @@ class EvaluationManager:
 
         return reports
 
+    def check_and_run_evaluations(self) -> List[EvaluationReport]:
+        """Alias for check_and_evaluate_finished_conversations"""
+        return self.check_and_evaluate_finished_conversations()
+
     def force_evaluate_conversation(
         self, session_id: str
     ) -> Optional[EvaluationReport]:

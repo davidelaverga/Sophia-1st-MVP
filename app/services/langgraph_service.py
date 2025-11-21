@@ -68,6 +68,7 @@ class LangGraphService:
                 "session_id": final_state["session_id"],
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
+                "response_path": final_state.get("response_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
@@ -151,6 +152,7 @@ class LangGraphService:
                 "session_id": final_state["session_id"],
                 "transcript": final_state["transcript"],
                 "reply": final_state["llm_response"],
+                "response_path": final_state.get("response_path"),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
@@ -244,6 +246,30 @@ class LangGraphService:
         except Exception as e:
             logger.error(f"Conversation streaming failed: {e}")
             # Fallback to rule-based response
+            yield "I'm having trouble processing your request. Could you please try again?"
+
+    def stream_conversation_response_old(
+        self, audio_bytes: bytes, session_id: str = None
+    ):
+        """Stream conversation response through LangGraph pipeline
+
+        Flow: Audio → Voxtral ASR → Mistral LLM (streaming)
+        """
+
+        logger.info(
+            f"Streaming conversation through LangGraph for session {session_id}"
+        )
+
+        try:
+            # Process audio to get context (ASR + emotion + intent + RAG)
+            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
+
+            # Stream LLM response using the processed context
+            for token in self.sophia_graph.stream_llm_response(state):
+                yield token
+
+        except Exception as e:
+            logger.error(f"LangGraph streaming failed: {e}")
             yield "I'm having trouble processing your request. Could you please try again?"
 
     def _run_eval_checks_background(self):
