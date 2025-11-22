@@ -47,7 +47,10 @@ from app.services.emotional_guidance import (
 )
 from app.services.memory import memory_manager, ConversationTurn
 from dotenv import load_dotenv
-
+load_dotenv()
+from app.routers import text_chat as text_chat_router
+from app.routers import reflections as reflections_router
+from app.routers import community as community_router
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -691,6 +694,11 @@ logger.info(
 )
 
 # Simple health endpoint for Fly.io checks and container orchestration
+app.include_router(text_chat_router.router, prefix="/text-chat", tags=["text-chat"])
+app.include_router(reflections_router.router, tags=["reflections"])
+app.include_router(community_router.router, tags=["community"])
+
+logger.info("✅ New routers mounted: /text-chat, /api/reflections, /api/community")
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -1807,185 +1815,67 @@ def _record_text_stream_turn(
         logger.warning("Text chat stream memory update failed: %s", exc)
 
 
-@app.post("/text-chat/stream")
-@limiter.limit(settings.API_RATE_LIMIT)
-async def text_chat_stream(
-    request: Request,
-    body: TextChatRequest,
-    supabase_token: str = Depends(verify_api_key),
-    #consent_ok: None = Depends(require_consent),
-):
-    """Streaming variant for text-only chat.
+# @app.post("/text-chat/stream")
+# @limiter.limit(settings.API_RATE_LIMIT)
+# async def text_chat_stream(
+#     request: Request,
+#     body: TextChatRequest,
+#     api_key_ok: None = Depends(verify_api_key),
+# ):
+#     """Streaming variant for text-only chat.
 
-    Server-Sent Events (SSE) with:
-    - event: token, data: <text chunk>
-    - event: reply_done, data: { reply }
-    - event: audio_url, data: { audio_url, sophia_emotion }
-    """
-    user_id, discord_id = extract_identity_from_token(supabase_token)
-    session_identifier = body.session_id or str(uuid.uuid4())
-    metadata: Dict[str, Any] = {"endpoint": "/text-chat/stream"}
-    if body.session_id:
-        metadata["provided_session_id"] = body.session_id
-    if discord_id:
-        metadata["discord_id"] = discord_id
-    manager = shared_services.get_session_turn_manager()
+#     Server-Sent Events (SSE) with:
+#     - event: token, data: <text chunk>
+#     - event: reply_done, data: { reply }
+#     - event: audio_url, data: { audio_url, sophia_emotion }
+#     """
+#     async def event_generator():
+#         try:
+#             import json as _json
+#             # Stream LLM tokens
+#             reply_accum = []
+#             for chunk in mistral_service.stream_generate_llm_reply(body.message):
+#                 if not chunk:
+#                     continue
+#                 reply_accum.append(chunk)
+#                 safe_chunk = chunk.replace("\n", " ")
+#                 yield f"event: token\ndata: {safe_chunk}\n\n"
 
-    async def event_generator():
-        async with manage_session_turn(
-            session_identifier, metadata=metadata
-        ) as turn_state:
+#             reply = "".join(reply_accum).strip()
+#             yield f"event: reply_done\ndata: {{\"reply\": { _json.dumps(reply) }}}\n\n"
 
-            def cancel_check():
-                manager.raise_if_cancelled(turn_state.turn_id)
+#             # Optional TTS synthesis and audio URL
+#             audio_url = ""
+#             sophia_emotion = None
+#             mock_audio = False
+#             try:
+#                 audio_bytes = tts_service.synthesize_inworld(reply)
+#                 file_name = f"sophia_{int(time.time()*1000)}.mp3"
+#                 audio_url = supabase_service.upload_audio_and_get_url(audio_bytes, file_name)
+#                 try:
+#                     mock_audio = audio_bytes.startswith(b"ID3mock") or len(audio_bytes) < 2048
+#                 except Exception:
+#                     mock_audio = False
+#                 sophia_emotion = emotion_service.analyze_emotion_audio(audio_bytes)
+#             except Exception:
+#                 logger.exception("Synthesis or upload failed in text_chat_stream")
 
-            try:
-                import json as _json
+#             payload = {"audio_url": audio_url, "sophia_emotion": (sophia_emotion.model_dump() if sophia_emotion else None), "mock_audio": mock_audio}
+#             yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
 
-                emotion_label = "neutral"
-                emotion_conf = 0.7
-                user_emotion_payload: Dict[str, Any] = {
-                    "label": emotion_label,
-                    "confidence": emotion_conf,
-                }
+#         except Exception as e:
+#             logger.exception("Streaming text chat failed")
+#             yield f"event: error\ndata: {{\"detail\": \"{str(e)}\"}}\n\n"
 
-                try:
-                    user_emotion = infer_text_emotion(body.message)
-                    user_emotion_payload = user_emotion.model_dump()
-                    emotion_label = user_emotion.label
-                    emotion_conf = float(user_emotion.confidence)
-                except Exception as emotion_error:
-                    logger.warning(
-                        "Text chat stream emotion detection failed: %s", emotion_error
-                    )
-
-                emotion_guidance: Sequence[str] = []
-
-                try:
-                    emotion_guidance = get_emotional_guidance(emotion_label)
-                    if emotion_guidance:
-                        preview = "; ".join(emotion_guidance[:2])
-                        logger.info(
-                            "Text chat stream guidance for %s: %s%s",
-                            emotion_label,
-                            preview,
-                            "..." if len(emotion_guidance) > 2 else "",
-                        )
-                except Exception as guidance_error:
-                    logger.warning(
-                        "Text chat stream guidance lookup failed: %s", guidance_error
-                    )
-                    emotion_guidance = []
-
-                memory_context_text = ""
-                try:
-                    flash_context = memory_manager.get_context_for_llm(
-                        session_identifier, access_token=supabase_token
-                    )
-                    memory_context_text = _format_memory_context_for_prompt(
-                        flash_context
-                    )
-                except Exception as context_error:
-                    logger.warning(
-                        "Text chat stream memory lookup failed: %s", context_error
-                    )
-                    memory_context_text = ""
-
-                guided_prompt = build_emotion_guided_prompt(
-                    body.message,
-                    emotion_label,
-                    emotion_conf,
-                    emotion_guidance,
-                    conversation_context=memory_context_text,
-                )
-
-                turn_state.set_status("streaming")
-                reply_accum = []
-                for chunk in mistral_service.stream_generate_llm_reply(
-                    guided_prompt,
-                    cancel_check=cancel_check,
-                ):
-                    cancel_check()
-                    if not chunk:
-                        continue
-                    reply_accum.append(chunk)
-                    safe_chunk = chunk.replace("\n", " ")
-                    yield f"event: token\ndata: {safe_chunk}\n\n"
-
-                reply = "".join(reply_accum).strip()
-                reply_payload = {"reply": reply, "user_emotion": user_emotion_payload}
-                yield f"event: reply_done\ndata: {_json.dumps(reply_payload)}\n\n"
-
-                turn_state.set_status("synthesizing")
-                cancel_check()
-                audio_url = ""
-                sophia_emotion = None
-                mock_audio = False
-                try:
-                    audio_bytes = synthesize_inworld(
-                        reply,
-                        cancel_check=cancel_check,
-                    )
-                    cancel_check()
-                    file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                    audio_url = supabase_service.upload_audio_and_get_url(
-                        audio_bytes, file_name
-                    )
-                    try:
-                        mock_audio = (
-                            audio_bytes.startswith(b"ID3mock")
-                            or len(audio_bytes) < 2048
-                        )
-                    except Exception:
-                        mock_audio = False
-                    cancel_check()
-                    sophia_emotion = analyze_emotion_audio(audio_bytes)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Synthesis or upload failed in text_chat_stream")
-
-                payload = {
-                    "audio_url": audio_url,
-                    "sophia_emotion": (
-                        sophia_emotion.model_dump() if sophia_emotion else None
-                    ),
-                    "mock_audio": mock_audio,
-                    "user_emotion": user_emotion_payload,
-                }
-
-                _record_text_stream_turn(
-                    session_identifier,
-                    body.message,
-                    reply,
-                    user_emotion_payload,
-                    sophia_emotion,
-                    supabase_token,
-                )
-                turn_state.set_status("completed")
-                yield f"event: audio_url\ndata: {_json.dumps(payload)}\n\n"
-
-            except asyncio.CancelledError:
-                logger.info("Streaming text chat turn %s cancelled", turn_state.turn_id)
-                raise
-            except Exception as e:
-                logger.exception("Streaming text chat failed")
-                import json as _json
-
-                error_payload = _json.dumps({"detail": str(e)})
-                yield f"event: error\ndata: {error_payload}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
+#     return StreamingResponse(
+#         event_generator(),
+#         media_type="text/event-stream",
+#         headers={
+#             "Cache-Control": "no-cache",
+#             "Connection": "keep-alive",
+#             "X-Accel-Buffering": "no",
+#         },
+#     )
 @app.get("/health")
 def health_check():
     """Health check endpoint"""

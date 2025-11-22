@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, Optional
 from app.langgraph_nodes import SophiaLangGraph
 from app.services.evaluations import evaluation_manager
+from app.services.supabase import insert_conversation_session, insert_emotion_score, insert_conversation_message
 import threading
 
 logger = logging.getLogger(__name__)
@@ -31,13 +32,58 @@ class LangGraphService:
 
         try:
             # Run through LangGraph
-            final_state = self.sophia_graph.process_conversation(
-                audio_bytes,
-                session_id,
-                supabase_token=supabase_token,
-                cancel_check=cancel_check,
-            )
-
+            final_state = self.sophia_graph.process_conversation(audio_bytes, session_id)
+            
+            # SAVE TO SUPABASE
+            try:
+                session_data = {
+                    "id": final_state["session_id"],
+                    "user_id": "00000000-0000-0000-0000-000000000000",
+                    "transcript": final_state["transcript"],
+                    "response": final_state["llm_response"],
+                    "audio_url": final_state.get("audio_url", ""),
+                    "user_emotion": {
+                        "label": final_state["user_emotion"].label,
+                        "confidence": final_state["user_emotion"].confidence
+                    },
+                    "sophia_emotion": {
+                        "label": final_state["sophia_emotion"].label,
+                        "confidence": final_state["sophia_emotion"].confidence
+                    },
+                    "source": "web"
+                }
+                insert_conversation_session(session_data)
+                
+                # Save individual messages for multi-turn support
+                insert_conversation_message({
+                    "session_id": final_state["session_id"],
+                    "role": "user",
+                    "content": final_state["transcript"],
+                    "audio_url": final_state.get("audio_url"),
+                    "emotion": {
+                        "label": final_state["user_emotion"].label,
+                        "confidence": final_state["user_emotion"].confidence
+                    }
+                })
+                
+                insert_conversation_message({
+                    "session_id": final_state["session_id"],
+                    "role": "sophia",
+                    "content": final_state["llm_response"],
+                    "audio_url": final_state.get("audio_url"),
+                    "emotion": {
+                        "label": final_state["sophia_emotion"].label,
+                        "confidence": final_state["sophia_emotion"].confidence
+                    }
+                })
+                
+                # Save emotion scores
+                insert_emotion_score(final_state["session_id"], "user", final_state["user_emotion"])
+                insert_emotion_score(final_state["session_id"], "sophia", final_state["sophia_emotion"])
+                
+            except Exception as e:
+                logger.error(f"Failed to save conversation to Supabase: {e}")
+            
             # Collect evaluation data if requested (instead of running full evaluation)
             if collect_evaluation_data:
                 try:
@@ -113,13 +159,91 @@ class LangGraphService:
 
         try:
             # Run through LangGraph with text input
-            final_state = self.sophia_graph.process_text_conversation(
-                message,
-                session_id,
-                supabase_token=supabase_token,
-                cancel_check=cancel_check,
-            )
-
+            final_state = self.sophia_graph.process_text_conversation(message, session_id)
+            
+            # SAVE TO SUPABASE
+            try:
+                # Check if session already exists in database
+                session_exists = False
+                if session_id:  # User provided a session_id
+                    # Check if it exists in DB
+                    from app.services.supabase import get_supabase
+                    supabase = get_supabase()
+                    try:
+                        result = supabase.table("conversation_sessions").select("id").eq(
+                            "id", final_state["session_id"]
+                        ).execute()
+                        session_exists = bool(result.data)
+                    except Exception:
+                        session_exists = False
+                
+                # Insert session ONLY if it's new
+                if not session_exists:
+                    try:
+                        session_data = {
+                            "id": final_state["session_id"],
+                            "user_id": "00000000-0000-0000-0000-000000000000",
+                            "transcript": final_state["transcript"],
+                            "response": final_state["llm_response"],
+                            "audio_url": final_state.get("audio_url", ""),
+                            "user_emotion": {
+                                "label": final_state["user_emotion"].label,
+                                "confidence": final_state["user_emotion"].confidence
+                            },
+                            "sophia_emotion": {
+                                "label": final_state["sophia_emotion"].label,
+                                "confidence": final_state["sophia_emotion"].confidence
+                            },
+                            "source": "web"
+                        }
+                        insert_conversation_session(session_data)
+                        logger.info(f"✅ New session created: {final_state['session_id']}")
+                    except Exception as session_error:
+                        # Log but continue - session might have been created by another request
+                        logger.warning(f"⚠️ Session insert failed (may already exist): {session_error}")
+                else:
+                    logger.info(f"✅ Continuing existing session: {final_state['session_id']}")
+                
+                # ALWAYS save individual messages (for multi-turn)
+                try:
+                    insert_conversation_message({
+                        "session_id": final_state["session_id"],
+                        "role": "user",
+                        "content": final_state["transcript"],
+                        "emotion": {
+                            "label": final_state["user_emotion"].label,
+                            "confidence": final_state["user_emotion"].confidence
+                        }
+                    })
+                    logger.info(f"✅ User message saved to conversation_messages")
+                except Exception as msg_error:
+                    logger.error(f"❌ Failed to save user message: {msg_error}")
+                
+                try:
+                    insert_conversation_message({
+                        "session_id": final_state["session_id"],
+                        "role": "sophia",
+                        "content": final_state["llm_response"],
+                        "audio_url": final_state.get("audio_url"),
+                        "emotion": {
+                            "label": final_state["sophia_emotion"].label,
+                            "confidence": final_state["sophia_emotion"].confidence
+                        }
+                    })
+                    logger.info(f"✅ Sophia message saved to conversation_messages")
+                except Exception as msg_error:
+                    logger.error(f"❌ Failed to save sophia message: {msg_error}")
+                
+                # Save emotion scores
+                try:
+                    insert_emotion_score(final_state["session_id"], "user", final_state["user_emotion"])
+                    insert_emotion_score(final_state["session_id"], "sophia", final_state["sophia_emotion"])
+                except Exception as emotion_error:
+                    logger.warning(f"⚠️ Failed to save emotion scores: {emotion_error}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to save conversation to Supabase: {e}")
+            
             # Collect evaluation data if requested
             if collect_evaluation_data:
                 try:
