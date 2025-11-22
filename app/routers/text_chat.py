@@ -13,7 +13,7 @@ import logging
 import time
 import uuid
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,8 @@ from app.services.supabase import upload_audio_and_get_url, insert_conversation_
 from app.services.evaluations import evaluation_manager
 from app.services.mistral import generate_llm_reply_with_context
 from app.services.rag import rag_system
+from app.services.rate_limits import rate_limit_service
+
 import json
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,29 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
     _clear_cancel_flag(session_id)
     
     try:
+        # check rate limit
+        from app.services.rate_limits import rate_limit_service
+        
+        limit_check = rate_limit_service.check_limits(
+            user_id=user_id,
+            additional_text_msgs=1
+        )
+        
+        if not limit_check.allowed:
+            # Send limit exceeded event
+            error_data = json.dumps({
+                "error": "USAGE_LIMIT_REACHED",
+                "reason": limit_check.reason,
+                "plan_tier": limit_check.plan_tier,
+                "limit": limit_check.limit,
+                "used": limit_check.used,
+                "title": limit_check.title,
+                "body": limit_check.body,
+            })
+            yield f"event: error\ndata: {error_data}\n\n"
+            return 
+
+
         # EVENT 1: Receiving
         event_data = json.dumps({"stage": "receiving", "session_id": session_id})
         yield f"event: meta\ndata: {event_data}\n\n"
@@ -324,6 +349,12 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
             )
         except Exception as e:
             logger.error(f"[Text Chat Stream] Failed to collect evaluation data: {e}")
+
+        try:
+            rate_limit_service.add_text_usage(user_id, messages=1)
+            logger.info(f"[Text Chat Stream] Usage incremented for user {user_id}")
+        except Exception as e:
+            logger.error(f"[Text Chat Stream] Failed to increment usage: {e}")
         
         # EVENT 7: Resting
         yield f"event: meta\ndata: {json.dumps({'stage': 'resting', 'session_id': session_id})}\n\n"
@@ -342,6 +373,7 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
 async def text_chat_stream_enhanced(
     request: Request,
     body: TextChatRequest,
+    user_id: str = Query("00000000-0000-0000-0000-000000000000", description="User ID"),
     api_key_ok: None = Depends(verify_api_key),
 ):
     """
@@ -358,11 +390,12 @@ async def text_chat_stream_enhanced(
     - Authorization: Bearer <API_KEY>
     - Accept: text/event-stream
     """
+    """Enhanced streaming text chat with rate limits."""
     
-    logger.info(f"[Enhanced Text Chat] Request: message='{body.message[:50]}...', session={body.session_id}")
+    logger.info(f"[Enhanced Text Chat] user_id={user_id}, message='{body.message[:50]}...'")
     
     return StreamingResponse(
-        _stream_text_chat_enhanced(body.message, body.session_id),
+        _stream_text_chat_enhanced(body.message, body.session_id, user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -394,22 +427,49 @@ async def cancel_text_chat(
 async def text_chat_non_streaming(
     request: Request,
     body: TextChatRequest,
+    user_id: str = Query("00000000-0000-0000-0000-000000000000", description="User ID for rate limiting"),
     api_key_ok: None = Depends(verify_api_key),
 ):
     """
-    Non-streaming text chat endpoint (fallback).
-    
-    Returns complete response at once without SSE.
+    Non-streaming text chat endpoint with rate limiting.
     """
     
-    logger.info(f"[Text Chat Non-Streaming] message='{body.message[:50]}...'")
+    logger.info(f"[Text Chat] user_id={user_id}, message='{body.message[:50]}...'")
     
-    # Use LangGraph service
+    # CHECK RATE LIMITS BEFORE PROCESSING
+    limit_check = rate_limit_service.check_limits(
+        user_id=user_id,
+        additional_text_msgs=1
+    )
+    
+    if not limit_check.allowed:
+        logger.warning(f"[Text Chat] Rate limit exceeded for user {user_id}: {limit_check.reason}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "USAGE_LIMIT_REACHED",
+                "reason": limit_check.reason,
+                "plan_tier": limit_check.plan_tier,
+                "limit": limit_check.limit,
+                "used": limit_check.used,
+                "title": limit_check.title,
+                "body": limit_check.body,
+            }
+        )
+    
+    # Process normally
     result = langgraph_service.process_text_conversation(
         message=body.message,
         session_id=body.session_id,
         collect_evaluation_data=True
     )
+    
+    # INCREMENT USAGE AFTER SUCCESSFUL PROCESSING
+    try:
+        rate_limit_service.add_text_usage(user_id, messages=1)
+        logger.info(f"[Text Chat] Usage incremented for user {user_id}")
+    except Exception as e:
+        logger.error(f"[Text Chat] Failed to increment usage: {e}")
     
     return TextChatResponse(
         session_id=result["session_id"],

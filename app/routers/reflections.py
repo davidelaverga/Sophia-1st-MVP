@@ -21,6 +21,7 @@ from app.deps import verify_api_key, limiter
 from app.config import get_settings
 from app.services.supabase import get_supabase
 from app.services.memory import memory_manager
+from app.services.rate_limits import rate_limit_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -270,6 +271,35 @@ async def create_reflection(
     3. Store in reflection_cards table
     4. Optionally post to Discord
     """
+
+    """
+    Generate a reflection card with rate limit enforcement.
+    """
+    
+    logger.info(f"[Reflection] Creating for user {body.user_id}, conversation {body.conversation_id}")
+    
+    # ============================================
+    # CHECK RATE LIMITS BEFORE CREATING
+    # ============================================
+    limit_check = rate_limit_service.check_limits(
+        user_id=body.user_id,
+        additional_reflections=1
+    )
+    
+    if not limit_check.allowed:
+        logger.warning(f"[Reflection] Rate limit exceeded for user {body.user_id}: {limit_check.reason}")
+        raise HTTPException(
+            status_code=429,  # Too Many Requests
+            detail={
+                "error": "USAGE_LIMIT_REACHED",
+                "reason": limit_check.reason,
+                "plan_tier": limit_check.plan_tier,
+                "limit": limit_check.limit,
+                "used": limit_check.used,
+                "title": limit_check.title,
+                "body": limit_check.body,
+            }
+        )
     
     try:
         logger.info(f"[Reflection] Generating for conversation {body.conversation_id}")
@@ -317,6 +347,8 @@ async def create_reflection(
             }).execute()
             
             logger.info(f"[Reflection] Created card {reflection_id} - '{card['title']}'")
+            logger.info(f"[Reflection] Successfully created for user {body.user_id}")
+
         except Exception as e:
             logger.error(f"[Reflection] Failed to store in Supabase: {e}")
             # Continue anyway - return the card even if storage fails
