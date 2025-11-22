@@ -46,6 +46,7 @@ from app.services.emotional_guidance import (
     build_emotion_guided_prompt,
 )
 from app.services.memory import memory_manager, ConversationTurn
+from app.services.rate_limits import rate_limit_service
 from dotenv import load_dotenv
 load_dotenv()
 from app.routers import text_chat as text_chat_router
@@ -1132,18 +1133,12 @@ async def defi_chat(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     supabase_token: str = Depends(verify_api_key),
-    #consent_ok: None = Depends(require_consent),
 ):
-    user_id, discord_id = extract_identity_from_token(supabase_token)
+    discord_id = extract_identity_from_token(supabase_token)
+    user_id = '00000000-0000-0000-0000-000000000000'
+    # Validate file extension
     allowed_extensions = [
-        ".wav",
-        ".webm",
-        ".mp3",
-        ".mp4",
-        ".ogg",
-        ".flac",
-        ".m4a",
-        ".aac",
+        ".wav", ".webm", ".mp3", ".mp4", ".ogg", ".flac", ".m4a", ".aac",
     ]
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
         raise HTTPException(
@@ -1165,8 +1160,38 @@ async def defi_chat(
             manager.raise_if_cancelled(turn_state.turn_id)
 
         try:
+            # Read audio bytes
             wav_bytes = await file.read()
             cancel_check()
+            
+            # ============================================
+            # RATE LIMIT CHECK - VOICE
+            # ============================================
+            # Estimate audio duration (bytes / 16000 for rough estimate)
+            estimated_seconds = max(1, len(wav_bytes) // 16000)
+            logger.info(f"[DeFi Chat] User {user_id}, estimated audio: {estimated_seconds}s")
+            
+            # Check rate limits BEFORE processing
+            limit_check = rate_limit_service.check_limits(
+                user_id=user_id,
+                additional_voice_sec=estimated_seconds
+            )
+            
+            if not limit_check.allowed:
+                logger.warning(f"[DeFi Chat] Voice limit exceeded for user {user_id}")
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "USAGE_LIMIT_REACHED",
+                        "reason": limit_check.reason,
+                        "plan_tier": limit_check.plan_tier,
+                        "limit": limit_check.limit,
+                        "used": limit_check.used,
+                        "title": limit_check.title,
+                        "body": limit_check.body,
+                    }
+                )
+            # ============================================
 
             turn_state.set_status("streaming")
             cancel_check()
@@ -1189,9 +1214,7 @@ async def defi_chat(
                         "user_emotion_label": result["user_emotion"]["label"],
                         "user_emotion_confidence": result["user_emotion"]["confidence"],
                         "sophia_emotion_label": result["sophia_emotion"]["label"],
-                        "sophia_emotion_confidence": result["sophia_emotion"][
-                            "confidence"
-                        ],
+                        "sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
                         "audio_url": result["audio_url"] or None,
                         "intent": result["intent"],
                         "context_memory": str(result["context_memory"]),
@@ -1224,6 +1247,16 @@ async def defi_chat(
             except Exception as e:
                 logger.warning(f"Failed to persist conversation session: {e}")
 
+            # ============================================
+            # INCREMENT VOICE USAGE AFTER SUCCESS
+            # ============================================
+            try:
+                rate_limit_service.add_voice_usage(user_id, estimated_seconds)
+                logger.info(f"[DeFi Chat] Added {estimated_seconds}s voice usage for user {user_id}")
+            except Exception as e:
+                logger.error(f"[DeFi Chat] Failed to increment voice usage: {e}")
+            # ============================================
+
             turn_state.set_status("completed")
             return DefiChatResponse(**result)
 
@@ -1244,17 +1277,18 @@ async def defi_chat_stream(
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
     supabase_token: str = Depends(verify_api_key),
-    #consent_ok: None = Depends(require_consent),
 ):
-    """Streaming variant of DeFi chat.
+    """Streaming variant of DeFi chat with rate limits.
 
     Server-Sent Events (SSE) stream with events:
     - event: transcript, data: { transcript, user_emotion }
     - event: token, data: <text chunk>
     - event: reply_done, data: { reply }
     - event: audio_url, data: { audio_url, sophia_emotion }
+    - event: error, data: { error: "USAGE_LIMIT_REACHED", ... } (if limit exceeded)
     """
-    user_id, discord_id = extract_identity_from_token(supabase_token)
+    discord_id = extract_identity_from_token(supabase_token)
+    user_id = "00000000-0000-0000-0000-000000000000"
     session_identifier = session_id or str(uuid.uuid4())
     metadata: Dict[str, Any] = {"endpoint": "/defi-chat/stream"}
     if session_id:
@@ -1262,11 +1296,48 @@ async def defi_chat_stream(
     if discord_id:
         metadata["discord_id"] = discord_id
     manager = shared_services.get_session_turn_manager()
-    # IMPORTANT: Read the uploaded file BEFORE starting the generator.
-    # Starlette may close the underlying SpooledTemporaryFile once the coroutine
-    # returns control, which would make subsequent reads fail within the
-    # generator with "I/O operation on closed file".
+    
+    # Read the uploaded file BEFORE starting the generator
     wav_bytes = await file.read()
+    
+    # ============================================
+    # RATE LIMIT CHECK - VOICE (before streaming starts)
+    # ============================================
+    estimated_seconds = max(1, len(wav_bytes) // 16000)
+    logger.info(f"[DeFi Chat Stream] User {user_id}, estimated audio: {estimated_seconds}s")
+    
+    limit_check = rate_limit_service.check_limits(
+        user_id=user_id,
+        additional_voice_sec=estimated_seconds
+    )
+    
+    if not limit_check.allowed:
+        logger.warning(f"[DeFi Chat Stream] Voice limit exceeded for user {user_id}")
+        
+        # Return error as SSE event
+        async def error_generator():
+            import json as _json
+            error_data = _json.dumps({
+                "error": "USAGE_LIMIT_REACHED",
+                "reason": limit_check.reason,
+                "plan_tier": limit_check.plan_tier,
+                "limit": limit_check.limit,
+                "used": limit_check.used,
+                "title": limit_check.title,
+                "body": limit_check.body,
+            })
+            yield f"event: error\ndata: {error_data}\n\n"
+        
+        return StreamingResponse(
+            error_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+    # ============================================
 
     async def event_generator():
         nonlocal session_id
@@ -1391,6 +1462,16 @@ async def defi_chat_stream(
                     logger.warning(
                         f"Failed to persist conversation session (stream): {e}"
                     )
+
+                # ============================================
+                # INCREMENT VOICE USAGE AFTER SUCCESS
+                # ============================================
+                try:
+                    rate_limit_service.add_voice_usage(user_id, estimated_seconds)
+                    logger.info(f"[DeFi Chat Stream] Added {estimated_seconds}s voice usage for user {user_id}")
+                except Exception as e:
+                    logger.error(f"[DeFi Chat Stream] Failed to increment voice usage: {e}")
+                # ============================================
 
                 turn_state.set_status("completed")
 
