@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Sophia backend server for testing
+  sophia-test-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-test_key}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-test_key}
+      - SUPABASE_URL=${SUPABASE_URL:-http://mock-supabase:54321}
+      - SUPABASE_KEY=${SUPABASE_KEY:-test_key}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-test_key}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=6379
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test-network
+
+  # Redis for session management
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - test-network
+
+  # Load test runner
+  load-tester:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile.test
+    depends_on:
+      sophia-test-server:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=http://sophia-test-server:8000
+      - WS_URL=ws://sophia-test-server:8000
+      - TEST_API_KEY=test_token
+    command: >
+      sh -c "
+        echo '🚀 Starting load tests against Sophia server...' &&
+        python /app/tests/test_real_websocket_integration.py
+      "
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
