@@ -8,6 +8,7 @@ import { VoicePanel } from "./VoicePanel"
 import { FeedbackStrip } from "./FeedbackStrip"
 import { SessionFeedbackToast } from "./SessionFeedbackToast"
 import { ReflectionModal } from "./reflection/ReflectionModal"
+import { UsageHint } from "./UsageHint"
 import { copy, t } from "../../copy"
 import { useChatStore } from "../stores/chat-store"
 import type { ChatMessage } from "../stores/chat-store"
@@ -206,33 +207,36 @@ function Composer({ textareaRef }: { textareaRef: RefObject<HTMLTextAreaElement>
   }
 
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-soft">
-      <div className="flex flex-col gap-3">
-        <textarea
-          ref={textareaRef}
-          rows={3}
-          value={value}
-          placeholder={t("chat.placeholder")}
-          disabled={isLocked}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={onKeyDown}
-          className="w-full resize-none rounded-2xl border border-sophia-text/10 bg-sophia-user px-4 py-3 text-base text-sophia-text outline-none transition focus:border-sophia-purple/60"
-        />
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-sophia-text2">
-            {presenceDetail ?? t(getPresenceCopyKey(presenceStatus))}
-          </p>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!value.trim() || isLocked}
-            className="inline-flex items-center gap-2 rounded-2xl bg-sophia-purple px-5 py-2 text-sm font-medium text-white transition disabled:opacity-60"
-          >
-            {isLocked ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            <span>{isLocked ? t("chat.sending") : t("chat.send")}</span>
-          </button>
+    <div className="space-y-2">
+      <div className="rounded-2xl bg-white p-4 shadow-soft">
+        <div className="flex flex-col gap-3">
+          <textarea
+            ref={textareaRef}
+            rows={3}
+            value={value}
+            placeholder={t("chat.placeholder")}
+            disabled={isLocked}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={onKeyDown}
+            className="w-full resize-none rounded-2xl border border-sophia-text/10 bg-sophia-user px-4 py-3 text-base text-sophia-text outline-none transition focus:border-sophia-purple/60"
+          />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-sophia-text2">
+              {presenceDetail ?? t(getPresenceCopyKey(presenceStatus))}
+            </p>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!value.trim() || isLocked}
+              className="inline-flex items-center gap-2 rounded-2xl bg-sophia-purple px-5 py-2 text-sm font-medium text-white transition disabled:opacity-60"
+            >
+              {isLocked ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              <span>{isLocked ? t("chat.sending") : t("chat.send")}</span>
+            </button>
+          </div>
         </div>
       </div>
+      <UsageHint />
     </div>
   )
 }

@@ -28,9 +28,17 @@ export function useReflectionPrompt(conversationId?: string, turnId?: string) {
 
     const fetchPrompt = async () => {
       try {
-        const response = await fetch(`/api/conversations/${conversationId}/reflection-prompt`, {
+        const response = await fetch(`/api/reflections/prompt`, {
+          method: "POST",
           signal: controller.signal,
-          headers: { Accept: "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Accept": "application/json" 
+          },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            user_id: "anonymous", // TODO: Replace with actual user_id from auth
+          }),
         })
         if (!response.ok) {
           return

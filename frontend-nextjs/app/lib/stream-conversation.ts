@@ -1,8 +1,11 @@
+import type { UsageLimitError } from "../types/rate-limits"
+
 type StreamHandlers = {
   onToken?: (token: string) => void
   onMeta?: (payload: Record<string, any>) => void
   onDone?: (payload?: Record<string, any>) => void
   onError?: (payload?: { message?: string }) => void
+  onUsageLimit?: (error: UsageLimitError) => void
 }
 
 export type StreamConversationOptions = {
@@ -97,9 +100,16 @@ async function readStream(reader: ReadableStreamDefaultReader<Uint8Array>, handl
       case "done":
         handlers.onDone?.(safeJsonParse(payload) ?? { raw: payload })
         break
-      case "error":
-        handlers.onError?.(safeJsonParse(payload) ?? { message: payload })
+      case "error": {
+        const errorPayload = safeJsonParse(payload) ?? { message: payload }
+        // Check if it's a usage limit error
+        if (errorPayload.error === "USAGE_LIMIT_REACHED") {
+          handlers.onUsageLimit?.(errorPayload as UsageLimitError)
+        } else {
+          handlers.onError?.(errorPayload)
+        }
         break
+      }
       default:
         console.debug("[conversation] Unhandled SSE event", currentEvent)
         break
@@ -154,6 +164,14 @@ export async function streamConversation(options: StreamConversationOptions, han
       const contentType = response.headers.get("content-type") ?? ""
 
       if (!response.ok) {
+        // Check if it's a usage limit error before fallback
+        if (response.status === 429 || response.status === 403) {
+          const errorData = await response.json().catch(() => null)
+          if (errorData?.error === "USAGE_LIMIT_REACHED") {
+            handlers.onUsageLimit?.(errorData as UsageLimitError)
+            return undefined
+          }
+        }
         const handled = await requestJsonFallback(url, body, headers, handlers)
         if (handled) {
           lastError = undefined

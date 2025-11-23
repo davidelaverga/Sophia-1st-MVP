@@ -3,6 +3,7 @@
 import { create } from "zustand"
 import { streamConversation } from "../lib/stream-conversation"
 import { usePresenceStore } from "./presence-store"
+import { useUsageLimitStore } from "./usage-limit-store"
 import { copy } from "../../copy"
 
 type ChatRole = "user" | "sophia" | "system"
@@ -124,6 +125,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           conversationId: get().conversationId,
         },
       }, {
+        onUsageLimit: (error) => {
+          // Show usage limit modal
+          useUsageLimitStore.getState().showModal({
+            reason: error.reason,
+            plan_tier: error.plan_tier,
+            limit: error.limit,
+            used: error.used,
+          })
+          // Clean up UI state
+          set((state) => ({
+            messages: state.messages.filter((m) => m.id !== replyId),
+            isLocked: false,
+            activeReplyId: undefined,
+            feedbackGate: undefined,
+          }))
+          usePresenceStore.getState().setListening(false)
+          usePresenceStore.getState().settleToRestingSoon()
+        },
         onMeta: (meta) => {
           if (meta?.conversationId && meta.conversationId !== get().conversationId) {
             set({ conversationId: meta.conversationId })

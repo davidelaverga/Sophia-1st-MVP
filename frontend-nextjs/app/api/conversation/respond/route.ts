@@ -37,8 +37,8 @@ const sendMetaEvent = (controller: ReadableStreamDefaultController, conversation
 }
 
 export async function POST(request: NextRequest) {
-  const apiBase = process.env.NEXT_PUBLIC_API_URL
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY
+  const apiBase = process.env.BACKEND_API_URL
+  const apiKey = process.env.BACKEND_API_KEY
 
   if (!apiBase || !apiKey) {
     return NextResponse.json({ error: "Server configuration incomplete" }, { status: 500 })

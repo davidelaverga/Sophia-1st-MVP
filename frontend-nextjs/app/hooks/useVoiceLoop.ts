@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react"
 import { usePresenceStore } from "../stores/presence-store"
+import { useUsageLimitStore } from "../stores/usage-limit-store"
 import { emitTelemetry } from "../lib/telemetry"
+import type { UsageLimitError } from "../types/rate-limits"
 
 const PREBUFFER_CHUNKS = 3
 const FIRST_AUDIO_TARGET_MS = 200
@@ -316,16 +318,42 @@ export function useVoiceLoop() {
           handleStreamEos()
         }
         break
-      case "error":
-        setError(data.detail ?? data.message ?? "The voice session ended unexpectedly.")
-        setStage("error")
-        flushPlaybackQueue()
-        setListeningPresence(false)
-        setSpeakingPresence(false)
-        setMetaPresence("resting")
-        settlePresence()
-        emitTelemetry("voice.error", { message: data.detail ?? data.message ?? "server_error", path })
+      case "error": {
+        // Check if it's a usage limit error
+        if (data.error === "USAGE_LIMIT_REACHED") {
+          const limitError: UsageLimitError = {
+            error: "USAGE_LIMIT_REACHED",
+            reason: data.reason || "voice",
+            plan_tier: data.plan_tier || "FREE",
+            limit: data.limit || 0,
+            used: data.used || 0,
+            message: data.message,
+            body: data.body,
+          }
+          useUsageLimitStore.getState().showModal({
+            reason: limitError.reason,
+            plan_tier: limitError.plan_tier,
+            limit: limitError.limit,
+            used: limitError.used,
+          })
+          flushPlaybackQueue()
+          setStage("idle")
+          setListeningPresence(false)
+          setSpeakingPresence(false)
+          resetPresence()
+          emitTelemetry("voice.usage_limit", { reason: limitError.reason, path })
+        } else {
+          setError(data.detail ?? data.message ?? "The voice session ended unexpectedly.")
+          setStage("error")
+          flushPlaybackQueue()
+          setListeningPresence(false)
+          setSpeakingPresence(false)
+          setMetaPresence("resting")
+          settlePresence()
+          emitTelemetry("voice.error", { message: data.detail ?? data.message ?? "server_error", path })
+        }
         break
+      }
       default:
         break
     }
@@ -341,8 +369,9 @@ export function useVoiceLoop() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING && connectPromiseRef.current) {
       return connectPromiseRef.current
     }
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
-    const wsUrl = `${httpToWs(base)}/ws/voice`
+    // Use NEXT_PUBLIC_BACKEND_WS_URL if available, otherwise construct from API URL
+    const wsBase = process.env.NEXT_PUBLIC_BACKEND_WS_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+    const wsUrl = wsBase.startsWith("ws") ? `${wsBase}/ws/voice` : `${httpToWs(wsBase)}/ws/voice`
     setStage("connecting")
 
     const promise = new Promise<WebSocket>((resolve, reject) => {
@@ -552,6 +581,7 @@ export function useVoiceLoop() {
     error,
     path,
     needsUnlock,
+    stream: streamRef.current,
     startTalking,
     stopTalking,
     bargeIn,

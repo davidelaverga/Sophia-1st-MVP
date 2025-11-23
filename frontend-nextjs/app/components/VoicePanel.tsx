@@ -3,6 +3,8 @@
 import { useRef } from "react"
 import { Mic, Square, Zap } from "lucide-react"
 import { useVoiceLoop } from "../hooks/useVoiceLoop"
+import { usePresenceStore } from "../stores/presence-store"
+import { Waveform } from "./Waveform"
 
 const stageLabel: Record<string, string> = {
   idle: "Press and hold whenever you’re ready",
@@ -14,8 +16,9 @@ const stageLabel: Record<string, string> = {
 }
 
 export function VoicePanel() {
-  const { stage, partialReply, finalReply, error, path, needsUnlock, startTalking, stopTalking, bargeIn, unlockAudio } =
+  const { stage, partialReply, finalReply, error, path, needsUnlock, stream, startTalking, stopTalking, bargeIn, unlockAudio } =
     useVoiceLoop()
+  const presenceStatus = usePresenceStore((state) => state.status)
   const holdRef = useRef(false)
   const pointerIdRef = useRef<number | null>(null)
 
@@ -60,7 +63,7 @@ export function VoicePanel() {
   const showInterrupt = stage === "speaking"
 
   return (
-    <section className="rounded-3xl bg-white p-5 shadow-soft">
+    <section className="rounded-3xl bg-white p-5 pb-6 shadow-soft">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-sophia-text">Live voice space</p>
@@ -74,41 +77,54 @@ export function VoicePanel() {
       </div>
 
       <div className="mt-6 flex flex-col items-center gap-4">
-        <button
-          type="button"
-          onPointerDown={(event) => {
-            pointerIdRef.current = event.pointerId
-            handlePressStart()
-          }}
-          onPointerUp={(event) => {
-            if (pointerIdRef.current === event.pointerId) {
-              handlePressEnd()
-            }
-          }}
-          onPointerLeave={(event) => {
-            if (pointerIdRef.current === event.pointerId) {
-              handlePressEnd()
-            }
-          }}
-          onPointerCancel={(event) => {
-            if (pointerIdRef.current === event.pointerId) {
-              handlePressEnd()
-            }
-          }}
-          onKeyDown={handleKeyDown}
-          onKeyUp={handleKeyUp}
-          className={`group relative flex h-16 w-16 items-center justify-center rounded-3xl text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 sm:h-24 sm:w-24 ${
-            stage === "listening"
-              ? "bg-gradient-to-br from-sophia-purple to-sophia-glow shadow-lg shadow-sophia-purple/40"
-              : "bg-gradient-to-br from-sophia-purple to-sophia-glow/60"
-          }`}
-          aria-pressed={stage === "listening"}
-        >
-          <Mic className="h-7 w-7 sm:h-10 sm:w-10" />
+        {/* Waveform visualization - ABOVE the button for better visibility */}
+        <div className="w-full max-w-xs">
+          <Waveform
+            stream={stream ?? undefined}
+            presenceState={presenceStatus}
+          />
+        </div>
+
+        {/* Button with hint text below */}
+        <div className="flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              pointerIdRef.current = event.pointerId
+              handlePressStart()
+            }}
+            onPointerUp={(event) => {
+              if (pointerIdRef.current === event.pointerId) {
+                handlePressEnd()
+              }
+            }}
+            onPointerLeave={(event) => {
+              if (pointerIdRef.current === event.pointerId) {
+                handlePressEnd()
+              }
+            }}
+            onPointerCancel={(event) => {
+              if (pointerIdRef.current === event.pointerId) {
+                handlePressEnd()
+              }
+            }}
+            onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
+            className={`group relative flex h-16 w-16 items-center justify-center rounded-3xl text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 sm:h-24 sm:w-24 ${
+              stage === "listening"
+                ? "bg-gradient-to-br from-sophia-purple to-sophia-glow shadow-lg shadow-sophia-purple/40"
+                : "bg-gradient-to-br from-sophia-purple to-sophia-glow/60"
+            }`}
+            aria-pressed={stage === "listening"}
+          >
+            <Mic className="h-7 w-7 sm:h-10 sm:w-10" />
+          </button>
+          
+          {/* Hint text below button - always inside container */}
           {stage === "listening" && (
-            <span className="absolute -bottom-7 text-[11px] font-medium text-sophia-text2">Release to send</span>
+            <span className="text-[11px] font-medium text-sophia-text2 animate-fadeIn">Release to send</span>
           )}
-        </button>
+        </div>
 
         {showInterrupt && (
           <button
