@@ -190,36 +190,45 @@ class LangGraphService:
     async def stream_conversation_response(
         self, audio_bytes: bytes, session_id: str = None
     ):
-        """Stream conversation response with tier-0 classification - Task #42537"""
+        """Stream conversation response through full LangGraph pipeline with tier-0 classification
+
+        M2-BUG-1 Fix: Uses complete LangGraph flow with all 8 nodes:
+        - AudioIngestor: Voxtral ASR + Phoenix emotion analysis
+        - IntentAnalyzer: Intent classification
+        - ResponseGenerator: Memory (Mem0) + RAG + emotion-guided prompts
+        - TTSNode: Inworld TTS
+        - EvalLogger: RAGAS + Phoenix evaluations
+
+        Also includes tier-0 fast classification for immediate UX feedback.
+        """
 
         logger.info(
-            f"Streaming conversation with tier-0 classifier for session {session_id}"
+            f"🎯 M2-BUG-1: Streaming through FULL LangGraph pipeline for session {session_id}"
         )
 
         try:
-            # Step 1: STT to get transcript
-            from app.services.mistral import transcribe_audio_with_voxtral
-
-            transcript = transcribe_audio_with_voxtral(audio_bytes)
-            logger.info(f"📝 Transcript ({len(transcript)} chars): '{transcript}'")
-
-            # Step 2: Tier-0 Fast Classifier (Task #42537)
+            # Step 1: Quick tier-0 classification for immediate feedback (Task #42537)
             tier0_result = None
             try:
                 from app.services.tier0_classifier import classify_tier0_fast
+                from app.services.mistral import transcribe_audio_with_voxtral
 
-                # Call async function directly with await (now that we're in async generator)
+                # Quick transcription for tier-0
+                transcript = transcribe_audio_with_voxtral(audio_bytes)
+                logger.info(f"📝 Transcript ({len(transcript)} chars): '{transcript}'")
+
+                # Tier-0 classification (500ms timeout)
                 result = await classify_tier0_fast(
                     transcript, prosody=None, timeout_ms=500
                 )
 
                 logger.info(
-                    f"🎯 Tier-0: intent={result.type}, emotion={result.emotion}, "
+                    f"⚡ Tier-0: intent={result.type}, emotion={result.emotion}, "
                     f"confidence={result.confidence:.2f}, latency={result.latency_ms}ms, "
                     f"source={result.source}"
                 )
 
-                # Send tier-0 results to frontend as first yield
+                # Send tier-0 results to frontend immediately
                 tier0_result = {
                     "__tier0__": True,
                     "transcript": transcript,
@@ -240,17 +249,31 @@ class LangGraphService:
 
             except Exception as e:
                 logger.warning(
-                    f"Tier-0 classifier failed: {e}, continuing without classification"
+                    f"⚠️ Tier-0 classifier failed: {e}, continuing with full pipeline"
                 )
 
-            # Step 3: Generate response with streaming
-            from app.services.mistral import stream_generate_reply_from_audio
+            # Step 2: Process through FULL LangGraph pipeline
+            # This executes: AudioIngestor → IntentAnalyzer nodes
+            logger.info("🔄 Processing through LangGraph nodes (Phoenix emotion, Memory, RAG)...")
+            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
 
-            for token in stream_generate_reply_from_audio(audio_bytes):
+            logger.info(
+                f"✅ LangGraph context ready: "
+                f"emotion={state['user_emotion'].label} ({state['user_emotion'].confidence:.2f}), "
+                f"intent={state.get('intent')}, "
+                f"mode={state.get('current_mode')}, "
+                f"memory_entries={len(state.get('memo_context', {}).get('memories', []))}"
+            )
+
+            # Step 3: Stream LLM response with full context (memory + RAG + emotion guidance)
+            logger.info("💬 Streaming LLM response with memory, RAG, and emotion guidance...")
+            for token in self.sophia_graph.stream_llm_response(state):
                 yield token
 
         except Exception as e:
-            logger.error(f"Conversation streaming failed: {e}")
+            logger.error(f"❌ LangGraph streaming failed: {e}")
+            import traceback
+            traceback.print_exc()
             # Fallback to rule-based response
             yield "I'm having trouble processing your request. Could you please try again?"
 
