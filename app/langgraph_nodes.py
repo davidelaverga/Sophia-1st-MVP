@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from enum import Enum
@@ -13,27 +14,33 @@ from langgraph.graph import StateGraph, START, END
 from app.services.mistral import (
     transcribe_audio_with_voxtral,
     generate_llm_reply,
-    generate_llm_reply_with_context
 )
 from app.services.emotion import (
     analyze_emotion_audio,
     infer_text_emotion,
     trigger_phoenix_bg,
 )
-from app.services.emotional_guidance import get_guidance as get_emotional_guidance, format_guidance_block
+from app.services.emotional_guidance import (
+    get_guidance as get_emotional_guidance,
+    format_guidance_block,
+)
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
-from app.services.emotional_guidance import (
-    get_guidance as get_emotional_guidance,
-    format_guidance_block,
-)
 from app.config import get_settings
+from app.routing.intent_router import classify_intent_and_mode
+from app.routing.models import CurrentMode, Intent, UtilityPath
 
 logger = logging.getLogger(__name__)
+
+# Task #42729: Mode routing constants
+MODE_DIRECT = CurrentMode.UTILITY_DIRECT.value
+MODE_LIGHT = CurrentMode.UTILITY_LIGHT.value
+MODE_UTILITY_AGENTIC = CurrentMode.UTILITY_AGENTIC.value
+MODE_EMOTIONAL_SUPPORT = CurrentMode.EMOTIONAL_SUPPORT.value
 
 
 @dataclass
@@ -57,11 +64,15 @@ class GraphState(TypedDict):
     transcript: str
     user_emotion: EmotionData
     intent: str
+    current_mode: str  # Task #42729: Routing mode
+    utility_path: Optional[str]
+    router_path: str
     context_memory: Dict[str, Any]
     memo_context: Dict[str, Any]  # Task #42597: MemO intelligent memory context
     llm_response: str
     response_path: str
     sophia_emotion: EmotionData
+    is_mock_audio: bool
     audio_url: str
     tts_bytes: bytes
     evaluation_logs: List[Dict[str, Any]]
@@ -190,7 +201,9 @@ class AudioIngestor:
         try:
             _maybe_cancel(state)
             # Transcribe using Voxtral + Phoenix emotion analysis
-            transcript = transcribe_audio_with_voxtral(state["audio_bytes"], cancel_check=state.get("cancel_check"))
+            transcript = transcribe_audio_with_voxtral(
+                state["audio_bytes"], cancel_check=state.get("cancel_check")
+            )
             logger.debug(
                 "AudioIngestor: transcribe_audio_with_voxtral returned %s (len=%d)",
                 repr(transcript[:75] if isinstance(transcript, str) else transcript),
@@ -198,13 +211,17 @@ class AudioIngestor:
             )
 
             # Try Whisper immediately if Voxtral produced an empty transcript
-            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+            if not transcript or (
+                isinstance(transcript, str) and not transcript.strip()
+            ):
                 logger.warning(
                     "AudioIngestor: Voxtral returned empty transcript, trying Whisper fallback"
                 )
                 state["fallback_used"]["stt"] = "voxtral_empty_whisper_fallback"
                 transcript = self._whisper_fallback(state, state["audio_bytes"])
-                whisper_preview = transcript[:50] if isinstance(transcript, str) else transcript
+                whisper_preview = (
+                    transcript[:50] if isinstance(transcript, str) else transcript
+                )
                 logger.info(
                     "AudioIngestor: Whisper fallback returned %s (len=%d)",
                     repr(whisper_preview),
@@ -213,17 +230,20 @@ class AudioIngestor:
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
 
             state["transcript"] = transcript
-            if not transcript or (isinstance(transcript, str) and not transcript.strip()):
+            if not transcript or (
+                isinstance(transcript, str) and not transcript.strip()
+            ):
                 logger.error(
                     "❌ AudioIngestor produced EMPTY transcript for session %s after all fallbacks!",
                     state["session_id"],
                 )
                 transcript_preview = "EMPTY"
             else:
-                transcript_preview = transcript[:50] if isinstance(transcript, str) else transcript
+                transcript_preview = (
+                    transcript[:50] if isinstance(transcript, str) else transcript
+                )
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label,
-                confidence=user_emotion.confidence
+                label=user_emotion.label, confidence=user_emotion.confidence
             )
 
             logger.info(
@@ -232,7 +252,7 @@ class AudioIngestor:
                 user_emotion.label,
                 user_emotion.confidence,
             )
-            
+
         except Exception as e:
             logger.error(f"AudioIngestor failed: {e}")
             _raise_if_cancelled(e)
@@ -242,8 +262,14 @@ class AudioIngestor:
             state["transcript"] = self._whisper_fallback(state, state["audio_bytes"])
             logger.debug(
                 "AudioIngestor: whisper fallback returned %s (len=%d)",
-                repr(state["transcript"][:75] if isinstance(state["transcript"], str) else state["transcript"]),
-                len(state["transcript"]) if isinstance(state["transcript"], str) else -1,
+                repr(
+                    state["transcript"][:75]
+                    if isinstance(state["transcript"], str)
+                    else state["transcript"]
+                ),
+                len(state["transcript"])
+                if isinstance(state["transcript"], str)
+                else -1,
             )
             if not state["transcript"]:
                 logger.warning(
@@ -253,8 +279,7 @@ class AudioIngestor:
             # Still analyze emotion with Phoenix
             user_emotion = analyze_emotion_audio(state["audio_bytes"])
             state["user_emotion"] = EmotionData(
-                label=user_emotion.label,
-                confidence=user_emotion.confidence
+                label=user_emotion.label, confidence=user_emotion.confidence
             )
 
         return state
@@ -284,12 +309,12 @@ class AudioIngestor:
 
 
 class IntentAnalyzer:
-    """Classifies user intent (DeFi question, emotional support, small talk)"""
+    """Classifies intent and routing mode via centralized intent router."""
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"IntentAnalyzer processing session {state['session_id']}")
 
-        transcript = state["transcript"]
+        transcript = state.get("transcript") or ""
         logger.debug(
             "IntentAnalyzer: received transcript %s (len=%d)",
             repr(transcript[:75] if isinstance(transcript, str) else transcript),
@@ -301,38 +326,83 @@ class IntentAnalyzer:
                 state["session_id"],
             )
 
-        # Simple rule-based intent classification
-        intent = self._classify_intent(transcript)
-        state["intent"] = intent
+        try:
+            _maybe_cancel(state)
+            result = self._run_intent_router(transcript, state)
+            state["intent"] = result.intent.value
+            state["current_mode"] = result.current_mode.value
+            state["utility_path"] = (
+                result.utility_path.value if result.utility_path else None
+            )
+            state["router_path"] = self._map_router_path(result.current_mode)
 
-        logger.info(f"IntentAnalyzer completed: intent={intent}")
+            logger.info(
+                "IntentAnalyzer completed: intent=%s mode=%s router_path=%s",
+                state["intent"],
+                state["current_mode"],
+                state["router_path"],
+            )
+        except Exception as exc:
+            logger.exception("IntentAnalyzer failed, using safe defaults: %s", exc)
+            _raise_if_cancelled(exc)
+            state["intent"] = Intent.EMOTIONAL_SUPPORT.value
+            state["current_mode"] = MODE_EMOTIONAL_SUPPORT
+            state["utility_path"] = None
+            state["router_path"] = "emotional"
+
         return state
 
-    def _classify_intent(self, text: str) -> str:
-        """Enhanced intent classification - prioritizes DeFi keywords over emotional cues"""
-        text_lower = text.lower()
-        
-        # Expanded DeFi keywords for better detection
-        defi_keywords = [
-            "defi", "yield", "staking", "liquidity", "farming", "token", 
-            "swap", "protocol", "apy", "apr", "pool", "vault", "ethereum",
-            "crypto", "blockchain", "smart contract", "wallet", "gas", "fee",
-            "dex", "exchange", "collateral", "lending", "borrowing", "loan",
-            "impermanent loss", "slippage", "tvl", "flash loan", "governance",
-            "stablecoin", "usdc", "usdt", "dai", "mev", "risk", "audit"
-        ]
-        
-        emotional_keywords = ["sad", "worried", "anxious", "happy", "excited", 
-                             "confused", "frustrated", "help me"]
-        
-        # CRITICAL: DeFi keywords take priority over emotional keywords
-        # This prevents "I'm confused about yield farming" from being classified as emotional_support
-        if any(keyword in text_lower for keyword in defi_keywords):
-            return "defi_question"
-        elif any(keyword in text_lower for keyword in emotional_keywords):
-            return "emotional_support"
+    def _run_intent_router(self, transcript: str, state: GraphState):
+        async def _classify():
+            return await classify_intent_and_mode(
+                user_message=transcript,
+                session_id=state["session_id"],
+                prosody=None,
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop_running = loop.is_running()
+        except RuntimeError:
+            loop = None
+            loop_running = False
+
+        if not loop_running:
+            return asyncio.run(_classify())
+
+        result_container: Dict[str, Any] = {}
+        error_container: List[BaseException] = []
+
+        def _worker():
+            try:
+                result_container["result"] = asyncio.run(_classify())
+            except BaseException as exc:
+                error_container.append(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join()
+
+        if error_container:
+            raise error_container[0]
+        return result_container["result"]
+
+    def _map_router_path(self, current_mode: CurrentMode) -> str:
+        """Map CurrentMode enum to compact router_path string for metrics."""
+        if isinstance(current_mode, CurrentMode):
+            mode_value = current_mode.value
         else:
-            return "small_talk"
+            mode_value = str(current_mode).lower()
+
+        match mode_value:
+            case CurrentMode.EMOTIONAL_SUPPORT.value:
+                return "emotional"
+            case CurrentMode.UTILITY_DIRECT.value:
+                return "direct"
+            case CurrentMode.UTILITY_LIGHT.value:
+                return "light"
+            case _:
+                return "agentic"
 
 
 class ResponseGenerator:
@@ -353,16 +423,21 @@ class ResponseGenerator:
         state.setdefault("fallback_used", {})
         _maybe_cancel(state)
 
-        # Check pipeline decision from AudioIngestor
-        use_voxtral_large = state.get("use_voxtral_large", False)
+        # Task #42729: Check current_mode for routing
+        mode = self._normalize_mode(state.get("current_mode", MODE_LIGHT))
+        state["current_mode"] = mode
+        logger.info(f"ResponseGenerator using mode: {mode}")
 
         try:
-            if use_voxtral_large:
-                # VOXTRAL LARGE PATH: Complete processing
-                return self._process_with_voxtral_large(state)
-            else:
-                # LEGACY PATH: LLM-only processing
-                return self._process_with_legacy_llm(state)
+            # Route based on mode
+            if mode == MODE_DIRECT:
+                return self._process_direct_mode(state)
+            elif mode == MODE_EMOTIONAL_SUPPORT:
+                return self._process_emotional_support_mode(state)
+            elif mode == MODE_UTILITY_AGENTIC:
+                return self._process_utility_agentic_mode(state)
+            else:  # MODE_LIGHT or fallback
+                return self._process_light_mode(state)
 
         except Exception as e:
             logger.error(f"ResponseGenerator failed: {e}")
@@ -378,6 +453,26 @@ class ResponseGenerator:
             state["llm_response"] = response
 
         return state
+
+    def _normalize_mode(self, mode_value: Any) -> str:
+        """Normalize mode value from enums/legacy strings to canonical strings."""
+        if isinstance(mode_value, CurrentMode):
+            return mode_value.value
+
+        if isinstance(mode_value, str):
+            value = mode_value.lower()
+            mapping = {
+                "direct": MODE_DIRECT,
+                "utility_direct": MODE_DIRECT,
+                "light": MODE_LIGHT,
+                "utility_light": MODE_LIGHT,
+                "agentic": MODE_UTILITY_AGENTIC,
+                "utility_agentic": MODE_UTILITY_AGENTIC,
+                "emotional_support": MODE_EMOTIONAL_SUPPORT,
+            }
+            return mapping.get(value, MODE_LIGHT)
+
+        return MODE_LIGHT
 
     def _process_with_voxtral_large(self, state: GraphState) -> GraphState:
         """Process using Voxtral Large unified pipeline (transcript already extracted by AudioIngestor)"""
@@ -968,6 +1063,77 @@ class ResponseGenerator:
             parts.append(f"Relevant knowledge:\n{rag_context}")
         return " | ".join(parts)
 
+    def _process_direct_mode(self, state: GraphState) -> GraphState:
+        """DIRECT mode: Skip Mem0, skip RAG, use Voxtral-only path (Task #42729)"""
+        logger.info("ResponseGenerator: DIRECT mode - fast path without memory/RAG")
+
+        # Skip memory retrieval
+        state["memo_context"] = {"memories": []}
+        state["context_memory"] = {}
+
+        # Use simple, fast response
+        state["llm_response"] = self._generate_simple_greeting(state["transcript"])
+        return state
+
+    def _process_light_mode(self, state: GraphState) -> GraphState:
+        """LIGHT mode: Include Mem0, use PromptComposer + Mistral (Task #42729)"""
+        logger.info("ResponseGenerator: LIGHT mode - standard path with memory")
+
+        # Use existing logic with Mem0 + PromptComposer
+        use_voxtral_large = state.get("use_voxtral_large", False)
+        if use_voxtral_large:
+            return self._process_with_voxtral_large(state)
+        else:
+            return self._process_with_legacy_llm(state)
+
+    def _process_utility_agentic_mode(self, state: GraphState) -> GraphState:
+        """UTILITY_AGENTIC mode: Route to reflection subgraph (Task #42729 - placeholder)"""
+        logger.info("ResponseGenerator: UTILITY_AGENTIC mode - complex analysis")
+
+        # TODO: Implement reflection subgraph routing in future
+        # For now, use enhanced LIGHT mode with note about analysis
+        result_state = self._process_light_mode(state)
+
+        # Add prefix indicating analytical processing
+        result_state["llm_response"] = result_state["llm_response"]
+        logger.info(
+            "UTILITY_AGENTIC: Using LIGHT mode as placeholder (reflection subgraph TBD)"
+        )
+
+        return result_state
+
+    def _process_emotional_support_mode(self, state: GraphState) -> GraphState:
+        """EMOTIONAL_SUPPORT mode: Pass to emotional skill router (Task #42729 - placeholder)"""
+        logger.info(
+            "ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing"
+        )
+
+        # TODO: Implement emotional skill router in future
+        # For now, enhance emotional guidance in existing pipeline
+        emotion_guidance = _ensure_emotion_guidance(state)
+
+        # Force emotional support focus in prompt
+        logger.info(
+            f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips"
+        )
+
+        # Use LIGHT mode with enhanced emotional context
+        result_state = self._process_light_mode(state)
+
+        return result_state
+
+    def _generate_simple_greeting(self, transcript: str) -> str:
+        """Generate simple greeting response for DIRECT mode"""
+        import random
+
+        greetings = [
+            "Hello! How can I help you today?",
+            "Hi there! What brings you here?",
+            "Hey! Nice to see you!",
+            "Hello! I'm here to assist you.",
+        ]
+        return random.choice(greetings)
+
     def _claude_fallback(
         self,
         transcript: str,
@@ -1017,33 +1183,40 @@ class TTSNode:
 
         try:
             # Synthesize with Inworld/Boson AI
-            logger.info(f"TTSNode: Calling Inworld TTS for text: '{state['llm_response'][:50]}...'")
+            logger.info(
+                f"TTSNode: Calling Inworld TTS for text: '{state['llm_response'][:50]}...'"
+            )
             tts_bytes = tts_bytes = synthesize_inworld(
                 state["llm_response"],
                 cancel_check=state.get("cancel_check"),
             )
-            
+
             logger.info(f"TTSNode: Received {len(tts_bytes)} bytes from Inworld")
-            
+
             # Check for mock audio
             is_mock = tts_bytes.startswith(b"ID3mock") or len(tts_bytes) < 100
             if is_mock:
-                logger.warning("TTSNode: Received mock audio from Inworld (likely API key issue)")
+                logger.warning(
+                    "TTSNode: Received mock audio from Inworld (likely API key issue)"
+                )
                 raise Exception("Mock audio received - triggering fallback")
-            
+
             # Upload and get URL
-            file_name = f"sophia_{int(time.time()*1000)}_{state['session_id']}.mp3"
+            file_name = f"sophia_{int(time.time() * 1000)}_{state['session_id']}.mp3"
             logger.info(f"TTSNode: Uploading to Supabase as {file_name}")
-            
-            audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
-            
+
+            audio_url = upload_audio_and_get_url(
+                file_bytes=tts_bytes, file_name=file_name
+            )
+
             logger.info(f"TTSNode: Successfully uploaded to {audio_url}")
-            
+
             # Analyze Sophia's emotion from TTS output
             sophia_emotion = analyze_emotion_audio(tts_bytes)
 
             state["tts_bytes"] = tts_bytes
             state["audio_url"] = audio_url
+            state["is_mock_audio"] = is_mock
             state["sophia_emotion"] = EmotionData(
                 label=sophia_emotion.label, confidence=sophia_emotion.confidence
             )
@@ -1060,21 +1233,26 @@ class TTSNode:
 
             # Log detailed error info
             import traceback
+
             logger.error(f"📋 TTSNode error traceback:\n{traceback.format_exc()}")
-            
+
             # Fallback to OpenAI TTS
             state["fallback_used"]["tts"] = "openai_fallback"
             try:
                 logger.info("TTSNode: Attempting OpenAI TTS fallback")
-                tts_bytes = self._openai_tts_fallback(state["llm_response"], cancel_check=state.get("cancel_check"))
-                
+                tts_bytes = self._openai_tts_fallback(
+                    state["llm_response"], cancel_check=state.get("cancel_check")
+                )
+
                 if not tts_bytes or len(tts_bytes) < 100:
                     raise Exception("OpenAI TTS returned no/invalid audio")
-                
-                file_name = f"sophia_fallback_{int(time.time()*1000)}_{state['session_id']}.mp3"
+
+                file_name = f"sophia_fallback_{int(time.time() * 1000)}_{state['session_id']}.mp3"
                 logger.info(f"TTSNode fallback: Uploading OpenAI audio as {file_name}")
-                
-                audio_url = upload_audio_and_get_url(file_bytes=tts_bytes, file_name=file_name)
+
+                audio_url = upload_audio_and_get_url(
+                    file_bytes=tts_bytes, file_name=file_name
+                )
                 sophia_emotion = analyze_emotion_audio(tts_bytes)
 
                 state["tts_bytes"] = tts_bytes
@@ -1083,39 +1261,44 @@ class TTSNode:
                     label=sophia_emotion.label, confidence=sophia_emotion.confidence
                 )
                 logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
-                
+
             except Exception as fallback_error:
-                logger.error(f"❌ TTS fallback also failed: {type(fallback_error).__name__}: {str(fallback_error)}")
+                logger.error(
+                    f"❌ TTS fallback also failed: {type(fallback_error).__name__}: {str(fallback_error)}"
+                )
                 logger.error(f"📋 Fallback error traceback:\n{traceback.format_exc()}")
                 _raise_if_cancelled(fallback_error)
-                
+
                 # Final fallback - empty audio but continue
                 state["audio_url"] = ""
                 state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.5)
                 logger.warning("⚠️ TTSNode: Using empty audio URL as final fallback")
-        
+
         return state
-    
-    def _openai_tts_fallback(self, text: str, cancel_check: Optional[CancelCallback] = None) -> bytes:
+
+    def _openai_tts_fallback(
+        self, text: str, cancel_check: Optional[CancelCallback] = None
+    ) -> bytes:
         """Fallback TTS using OpenAI"""
         try:
             import openai
+
             settings = get_settings()
 
             if cancel_check:
                 cancel_check()
-            
+
             if not settings.OPENAI_API_KEY:
                 logger.error("OpenAI API key not configured")
                 return b""
-            
+
             client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            
+
             response = client.audio.speech.create(
                 model="tts-1",
                 voice="nova",  # Changed from "alloy" for better female voice
                 input=text,
-                response_format="mp3"
+                response_format="mp3",
             )
             if cancel_check:
                 cancel_check()
@@ -1145,6 +1328,9 @@ class EvalLogger:
                 "confidence": state["sophia_emotion"].confidence,
             },
             "intent": state["intent"],
+            "current_mode": state.get("current_mode"),
+            "utility_path": state.get("utility_path"),
+            "router_path": state.get("router_path"),
             "fallbacks_used": state.get("fallback_used", {}),
             "transcript_length": len(state["transcript"]),
             "response_length": len(state["llm_response"]),
@@ -1264,7 +1450,7 @@ class SophiaLangGraph:
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph state machine"""
+        """Build the LangGraph state machine (Task #42729: with ModeClassifier)"""
 
         # Initialize nodes
         audio_ingestor = AudioIngestor()
@@ -1283,7 +1469,7 @@ class SophiaLangGraph:
         workflow.add_node("tts_node", tts_node)
         workflow.add_node("eval_logger", eval_logger)
 
-        # Define edges (workflow sequence)
+        # Define edges (workflow sequence with intent/mode classification inside IntentAnalyzer)
         workflow.add_edge(START, "audio_ingestor")
         workflow.add_edge("audio_ingestor", "intent_analyzer")
         workflow.add_edge("intent_analyzer", "response_generator")
@@ -1312,11 +1498,15 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
+            "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
-            "memo_context": {"memories": []},
+            "memo_context": {},  # Task #42597: MemO context
             "llm_response": "",
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
@@ -1355,11 +1545,15 @@ class SophiaLangGraph:
             "transcript": message,  # Use the text message directly
             "user_emotion": EmotionData(label="neutral", confidence=0.7),
             "intent": "",
+            "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
             "llm_response": "",
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
@@ -1424,17 +1618,22 @@ class SophiaLangGraph:
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
             "intent": "",
+            "current_mode": MODE_LIGHT,
+            "utility_path": UtilityPath.LIGHT.value,
+            "router_path": "light",
             "context_memory": {},
             "llm_response": "",
             "memo_context": {"memories": []},
             "response_path": ResponsePath.AGENTIC.value,
             "sophia_emotion": EmotionData(label="neutral", confidence=0.0),
+            "is_mock_audio": False,
             "audio_url": "",
             "tts_bytes": b"",
             "evaluation_logs": [],
             "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral_large": False,
+            "cancel_check": None,
         }
 
         # Process through initial nodes

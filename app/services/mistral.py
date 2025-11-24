@@ -4,7 +4,6 @@ import base64
 import logging
 import mimetypes
 from typing import Callable, List, Dict, Optional, Tuple
-from urllib.parse import urljoin
 
 from mistralai import Mistral
 
@@ -27,9 +26,7 @@ def _audio_file_payload(wav_bytes: bytes) -> Dict[str, object]:
     if header == b"RIFF":
         ext = ".wav"
     elif header[:3] == b"ID3" or (
-        raw_bytes
-        and raw_bytes[0] == 0xFF
-        and (raw_bytes[1] & 0xE0) == 0xE0
+        raw_bytes and raw_bytes[0] == 0xFF and (raw_bytes[1] & 0xE0) == 0xE0
     ):
         ext = ".mp3"
     elif header == b"OggS":
@@ -110,6 +107,7 @@ def _extract_http_details(exc: Exception) -> Tuple[Optional[int], Optional[str]]
         text = text[:497] + "..."
 
     return status, text
+
 
 CancelCallback = Callable[[], None]
 
@@ -222,7 +220,9 @@ def transcribe_audio_with_voxtral(
         resp = getattr(e, "response", None)
         if resp is not None:
             status_code = getattr(resp, "status_code", None)
-            response_body = getattr(resp, "text", None) or getattr(resp, "content", None)
+            response_body = getattr(resp, "text", None) or getattr(
+                resp, "content", None
+            )
             if response_body is None:
                 try:
                     response_body = resp.json()
@@ -277,6 +277,7 @@ def transcribe_audio_with_voxtral(
                 pass
         logger.warning("All transcription methods failed, returning empty string")
         return ""
+
 
 def generate_reply_from_audio(
     wav_bytes: bytes,
@@ -393,7 +394,7 @@ def generate_llm_reply(
                 if isinstance(out, str) and out.strip():
                     return out.strip()
                 return str(r)
-        except Exception as responses_exc:
+        except Exception:
             pass
 
         # Chat API fallback
@@ -436,15 +437,16 @@ def generate_llm_reply(
             return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
         return "Here’s a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
 
+
 def generate_llm_reply_with_context(
-    user_question: str, 
-    rag_context: str = "", 
-    emotion_label: str = "neutral", 
+    user_question: str,
+    rag_context: str = "",
+    emotion_label: str = "neutral",
     memory_context: str = "",
-    intent: str = "small_talk"
+    intent: str = "small_talk",
 ) -> str:
     """Generate LLM reply with proper context separation."""
-    
+
     # Handle empty input first - before any logging that might crash
     if not user_question or not str(user_question).strip():
         logger.warning(f"⚠️ Empty user_question received with intent={intent}")
@@ -454,56 +456,72 @@ def generate_llm_reply_with_context(
             return "I'm here to listen. What's on your mind?"
         else:
             return "I didn't catch that. Could you say that again?"
-    
+
     # Log inputs for debugging (AFTER type guard to prevent crashes)
-    logger.info(f"🎯 generate_llm_reply_with_context called:")
+    logger.info("🎯 generate_llm_reply_with_context called:")
     logger.info(f"   user_question: '{user_question[:100]}'")
     logger.info(f"   intent: {intent}")
     logger.info(f"   emotion: {emotion_label}")
     logger.info(f"   rag_context length: {len(rag_context) if rag_context else 0}")
-    logger.info(f"   memory_context length: {len(memory_context) if memory_context else 0}")
-    
+    logger.info(
+        f"   memory_context length: {len(memory_context) if memory_context else 0}"
+    )
+
     try:
         # Build system message with ALL context
         system_parts = []
-        
-        # Base personality  
-        system_parts.append("You are Sophia, a knowledgeable and supportive DeFi education mentor.")
-        
+
+        # Base personality
+        system_parts.append(
+            "You are Sophia, a knowledgeable and supportive DeFi education mentor."
+        )
+
         # Add emotional context
         if emotion_label and emotion_label != "neutral":
-            system_parts.append(f"\nUser's current emotional state: {emotion_label}. Be aware of this but prioritize factual accuracy.")
-        
+            system_parts.append(
+                f"\nUser's current emotional state: {emotion_label}. Be aware of this but prioritize factual accuracy."
+            )
+
         # Add conversation history
         if memory_context:
             system_parts.append(f"\nConversation history: {memory_context}")
-        
+
         # Add RAG context
         if rag_context:
             system_parts.append(f"\n\nRELEVANT KNOWLEDGE BASE:\n{rag_context}")
             system_parts.append("\n⚠️ IMPORTANT: Use the knowledge base when relevant.")
-        
+
         # Response guidelines based on intent
         system_parts.append("\n\nResponse guidelines:")
         if intent == "defi_question":
-            system_parts.append("- This is a DeFi educational question. Provide accurate answers (50-100 words).")
+            system_parts.append(
+                "- This is a DeFi educational question. Provide accurate answers (50-100 words)."
+            )
         elif intent == "emotional_support":
-            system_parts.append("- Be empathetic while remaining educational (40-80 words).")
+            system_parts.append(
+                "- Be empathetic while remaining educational (40-80 words)."
+            )
         else:  # small_talk
-            system_parts.append("- This is casual conversation. Be friendly, warm, and conversational (20-40 words).")
-            system_parts.append("- You can engage in general conversation, not just DeFi topics.")
-            system_parts.append("- If asked about yourself, share that you're Sophia, an AI assistant for DeFi education.")
-        
+            system_parts.append(
+                "- This is casual conversation. Be friendly, warm, and conversational (20-40 words)."
+            )
+            system_parts.append(
+                "- You can engage in general conversation, not just DeFi topics."
+            )
+            system_parts.append(
+                "- If asked about yourself, share that you're Sophia, an AI assistant for DeFi education."
+            )
+
         system_message = "".join(system_parts)
-        
+
         logger.info(f"📝 System message built: {len(system_message)} chars")
         logger.info(f"📝 System message preview: {system_message[:200]}...")
-        
+
         # User message is JUST the question
         client = _client()
-        
-        logger.info(f"🚀 Calling Mistral API...")
-        
+
+        logger.info("🚀 Calling Mistral API...")
+
         # Try Responses API first
         response_text = None
         try:
@@ -524,17 +542,21 @@ def generate_llm_reply_with_context(
                     ],
                 )
                 out = getattr(r, "output_text", None)
-                logger.info(f"✅ Responses API returned: type={type(out)}, len={len(str(out)) if out else 0}")
+                logger.info(
+                    f"✅ Responses API returned: type={type(out)}, len={len(str(out)) if out else 0}"
+                )
                 logger.info(f"   Response preview: {str(out)[:200] if out else 'None'}")
-                
+
                 if isinstance(out, str) and out.strip():
                     response_text = out.strip()
                 else:
                     response_text = str(r)
-                    logger.warning(f"⚠️ output_text not found, using str(r): {response_text[:100]}")
+                    logger.warning(
+                        f"⚠️ output_text not found, using str(r): {response_text[:100]}"
+                    )
         except Exception as e:
             logger.warning(f"⚠️ Responses API failed: {type(e).__name__}: {str(e)}")
-        
+
         # Chat API fallback
         if not response_text:
             logger.info("   Using Chat API (fallback)")
@@ -549,40 +571,48 @@ def generate_llm_reply_with_context(
             response_text = str(content).strip()
             logger.info(f"✅ Chat API returned: len={len(response_text)}")
             logger.info(f"   Response preview: {response_text[:200]}")
-        
-        logger.info(f"🎉 Mistral API SUCCESS - returning response: '{response_text[:100]}'")
+
+        logger.info(
+            f"🎉 Mistral API SUCCESS - returning response: '{response_text[:100]}'"
+        )
         return response_text
-        
+
     except Exception as e:
         # ✅ ENHANCED ERROR LOGGING
         logger.error(f"❌ LLM with context failed: {type(e).__name__}: {str(e)}")
-        
+
         # Check API key configuration
         settings = get_settings()
-        has_key = bool(getattr(settings, 'MISTRAL_API_KEY', None))
+        has_key = bool(getattr(settings, "MISTRAL_API_KEY", None))
         key_length = len(settings.MISTRAL_API_KEY) if has_key else 0
-        logger.error(f"🔑 MISTRAL_API_KEY status: present={has_key}, length={key_length}")
-        
+        logger.error(
+            f"🔑 MISTRAL_API_KEY status: present={has_key}, length={key_length}"
+        )
+
         # Log API response details if available
-        if hasattr(e, 'response'):
+        if hasattr(e, "response"):
             try:
-                status = getattr(e.response, 'status_code', 'N/A')
-                body = getattr(e.response, 'text', 'N/A')[:500]
+                status = getattr(e.response, "status_code", "N/A")
+                body = getattr(e.response, "text", "N/A")[:500]
                 logger.error(f"📡 API Response Status: {status}")
                 logger.error(f"📡 API Response Body: {body}")
-            except:
+            except Exception:
                 pass
-        
+
         # Log the full traceback for debugging
         import traceback
+
         logger.error(f"📋 Full traceback:\n{traceback.format_exc()}")
-        
+
         # Context-aware rule-based fallback
         lower = user_question.lower()
-        
+
         # Small talk fallbacks (NEW - based on intent)
         if intent == "small_talk":
-            if any(greeting in lower for greeting in ["hello", "hi", "hey", "good morning", "good evening"]):
+            if any(
+                greeting in lower
+                for greeting in ["hello", "hi", "hey", "good morning", "good evening"]
+            ):
                 return "Hello! I'm Sophia, your DeFi education assistant. How can I help you today?"
             if "how are you" in lower or "how're you" in lower:
                 return "I'm doing great, thanks for asking! I'm here to help you learn about DeFi. What would you like to know?"
@@ -591,8 +621,10 @@ def generate_llm_reply_with_context(
             if "your name" in lower or "you called" in lower:
                 return "My name is Sophia. I'm here to help you navigate the world of DeFi!"
             # Generic small talk
-            return "I'm here to help! Feel free to ask me about DeFi, or we can just chat."
-        
+            return (
+                "I'm here to help! Feel free to ask me about DeFi, or we can just chat."
+            )
+
         # DeFi-specific keywords
         if "yield" in lower:
             return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
@@ -600,13 +632,14 @@ def generate_llm_reply_with_context(
             return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
         if "defi" in lower or "crypto" in lower:
             return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-        
+
         # Emotional support fallback
         if intent == "emotional_support":
             return "I understand you're going through something. Remember, it's okay to take a step back. I'm here for you."
-        
+
         # Final generic fallback
         return "I'm here to help! What would you like to know?"
+
 
 def stream_generate_llm_reply(
     text: str,

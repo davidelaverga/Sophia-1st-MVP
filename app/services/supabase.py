@@ -2,7 +2,6 @@
 
 import logging
 import os
-import time
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Optional

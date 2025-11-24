@@ -195,12 +195,20 @@ class MemOClient:
             memories_with_scores = []
             query_vec = np.array(query_embedding)
 
+            query_norm = float(np.linalg.norm(query_vec))
+
             for memory in result.data:
                 if memory.get("embedding"):
                     memory_vec = np.array(memory["embedding"])
+                    memory_norm = float(np.linalg.norm(memory_vec))
+
+                    # Skip zero vectors to avoid invalid divisions.
+                    if query_norm == 0.0 or memory_norm == 0.0:
+                        continue
+
                     # Cosine similarity
                     similarity = np.dot(query_vec, memory_vec) / (
-                        np.linalg.norm(query_vec) * np.linalg.norm(memory_vec)
+                        query_norm * memory_norm
                     )
 
                     if similarity >= self.similarity_threshold:

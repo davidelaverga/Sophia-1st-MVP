@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir websockets httpx pytest pytest-asyncio
+
+# Copy test files
+COPY tests/ /app/tests/
+COPY main.py /app/
+COPY app/ /app/app/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+CMD ["python", "/app/tests/test_real_websocket_integration.py"]
