@@ -392,7 +392,7 @@ class IntentAnalyzer:
             mode_value = current_mode.value
         else:
             mode_value = str(current_mode).lower()
-        
+
         match mode_value:
             case CurrentMode.EMOTIONAL_SUPPORT.value:
                 return "emotional"

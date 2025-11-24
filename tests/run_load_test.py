@@ -10,20 +10,20 @@ Tests all 4 checklist items:
 
 import asyncio
 import time
-import statistics
 import struct
 import sys
 import http.client
 from datetime import datetime
 
 # Add parent directory to path for imports
-sys.path.insert(0, '/app')
+sys.path.insert(0, "/app")
 
 try:
     import websockets
 except ImportError:
     print("❌ websockets not installed. Installing...")
     import subprocess
+
     subprocess.run([sys.executable, "-m", "pip", "install", "websockets"], check=True)
     import websockets
 
@@ -32,12 +32,14 @@ try:
 except ImportError:
     print("❌ PyJWT not installed. Installing...")
     import subprocess
+
     subprocess.run([sys.executable, "-m", "pip", "install", "PyJWT"], check=True)
     import jwt
 
 
 # Authentication token for load test user
 SUPABASE_JWT_SECRET = "YqIRjWsZ7jOodskvZ8rV8Ar7/C57iEMID0lq1fiN89whnkLd0VdWHWjH8oVVJFSsdbakWI4zj/t7uLMOu6S5Og=="
+
 
 def create_jwt_token():
     """Create JWT token for load test user"""
@@ -47,12 +49,9 @@ def create_jwt_token():
         "aud": "authenticated",
         "role": "authenticated",
         "email": "loadtest@example.com",
-        "user_metadata": {
-            "provider_id": "1132301438966566943",
-            "provider": "discord"
-        },
+        "user_metadata": {"provider_id": "1132301438966566943", "provider": "discord"},
         "iat": int(time.time()),
-        "exp": int(time.time()) + 3600
+        "exp": int(time.time()) + 3600,
     }
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
 
@@ -62,7 +61,7 @@ def generate_test_audio(duration_sec: float = 0.5) -> bytes:
     sample_rate = 16000
     num_samples = int(duration_sec * sample_rate)
     # Silence
-    audio = struct.pack(f'{num_samples}h', *([0] * num_samples))
+    audio = struct.pack(f"{num_samples}h", *([0] * num_samples))
     return audio
 
 
@@ -74,7 +73,9 @@ async def test_single_session(session_id: str, ws_url: str, num_messages: int = 
     messages_received = 0
 
     try:
-        async with websockets.connect(ws_url, ping_interval=None, open_timeout=15) as ws:
+        async with websockets.connect(
+            ws_url, ping_interval=None, open_timeout=15
+        ) as ws:
             print(f"  ✅ {session_id}: Connected")
 
             for i in range(num_messages):
@@ -85,15 +86,15 @@ async def test_single_session(session_id: str, ws_url: str, num_messages: int = 
                 messages_sent += 1
 
                 try:
-                    response = await asyncio.wait_for(ws.recv(), timeout=30.0)
+                    await asyncio.wait_for(ws.recv(), timeout=30.0)
                     recv_time = time.time()
                     latency_ms = (recv_time - send_time) * 1000
                     latencies.append(latency_ms)
                     messages_received += 1
-                    print(f"  📊 {session_id}: Message {i+1} - {latency_ms:.0f}ms")
+                    print(f"  📊 {session_id}: Message {i + 1} - {latency_ms:.0f}ms")
 
                 except asyncio.TimeoutError:
-                    error = f"Message {i+1} timeout"
+                    error = f"Message {i + 1} timeout"
                     errors.append(error)
                     print(f"  ⚠️  {session_id}: {error}")
 
@@ -111,7 +112,7 @@ async def test_single_session(session_id: str, ws_url: str, num_messages: int = 
         "messages_received": messages_received,
         "latencies": latencies,
         "errors": errors,
-        "success": len(errors) == 0 and messages_received > 0
+        "success": len(errors) == 0 and messages_received > 0,
     }
 
 
@@ -119,8 +120,8 @@ async def test_parallel_sessions(num_sessions: int = 5):
     """
     TEST 1, 3, 4: Parallel WebSocket sessions + Latency + Monitoring
     """
-    print(f"\n📋 TEST 1, 3, 4: Parallel WebSocket Sessions")
-    print("="*60)
+    print("\n📋 TEST 1, 3, 4: Parallel WebSocket Sessions")
+    print("=" * 60)
     print(f"   Starting {num_sessions} parallel sessions...")
 
     token = create_jwt_token()
@@ -129,7 +130,7 @@ async def test_parallel_sessions(num_sessions: int = 5):
     # Create parallel session tasks
     tasks = []
     for i in range(num_sessions):
-        session_id = f"load_test_{i+1}"
+        session_id = f"load_test_{i + 1}"
         task = test_single_session(session_id, ws_url, num_messages=2)
         tasks.append(task)
 
@@ -139,7 +140,7 @@ async def test_parallel_sessions(num_sessions: int = 5):
     total_duration = time.time() - start_time
 
     # Analyze results
-    print(f"\n📊 Test Results:")
+    print("\n📊 Test Results:")
     print(f"   Total sessions: {num_sessions}")
     print(f"   Duration: {total_duration:.2f}s")
 
@@ -156,11 +157,11 @@ async def test_parallel_sessions(num_sessions: int = 5):
     # TEST 3: P50/P95 latencies
     if all_latencies:
         sorted_lat = sorted(all_latencies)
-        p50 = sorted_lat[len(sorted_lat)//2]
-        p95 = sorted_lat[int(len(sorted_lat)*0.95)]
-        p99 = sorted_lat[int(len(sorted_lat)*0.99)]
+        p50 = sorted_lat[len(sorted_lat) // 2]
+        p95 = sorted_lat[int(len(sorted_lat) * 0.95)]
+        p99 = sorted_lat[int(len(sorted_lat) * 0.99)]
 
-        print(f"\n⏱️  Latencies (P50/P95/P99):")
+        print("\n⏱️  Latencies (P50/P95/P99):")
         print(f"   P50: {p50:.2f}ms")
         print(f"   P95: {p95:.2f}ms")
         print(f"   P99: {p99:.2f}ms")
@@ -170,10 +171,12 @@ async def test_parallel_sessions(num_sessions: int = 5):
         p50 = p95 = p99 = 0
 
     # Session details
-    print(f"\n📝 Session Details:")
+    print("\n📝 Session Details:")
     for r in successful[:5]:
-        print(f"   {r['session_id']}: {r['messages_sent']} sent, "
-              f"{r['messages_received']} recv, Errors: {len(r['errors'])}")
+        print(
+            f"   {r['session_id']}: {r['messages_sent']} sent, "
+            f"{r['messages_received']} recv, Errors: {len(r['errors'])}"
+        )
 
     success_rate = (len(successful) / num_sessions) * 100
 
@@ -183,7 +186,7 @@ async def test_parallel_sessions(num_sessions: int = 5):
         "p95": p95,
         "p99": p99,
         "total_sessions": num_sessions,
-        "successful": len(successful)
+        "successful": len(successful),
     }
 
 
@@ -192,13 +195,13 @@ def test_service_fallback():
     TEST 2: Service crash simulation with graceful fallback
     """
     print("\n📋 TEST 2: Service Fallback Mechanisms")
-    print("="*60)
+    print("=" * 60)
 
     fallback_checks = {
         "STT Fallback (Voxtral -> Whisper)": True,
         "LLM Fallback (Mistral -> Claude)": True,
         "TTS Fallback (Inworld -> OpenAI)": True,
-        "Memory Fallback (Redis -> Supabase -> In-memory)": True
+        "Memory Fallback (Redis -> Supabase -> In-memory)": True,
     }
 
     for check, status in fallback_checks.items():
@@ -223,10 +226,10 @@ def test_service_fallback():
 async def main():
     """Main test runner"""
 
-    print("="*70)
+    print("=" * 70)
     print("COMPREHENSIVE LOAD TEST - Task #42713")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*70)
+    print("=" * 70)
 
     # Health check
     conn = http.client.HTTPConnection("localhost", 8000, timeout=5)
@@ -251,9 +254,9 @@ async def main():
     results = await test_parallel_sessions(num_sessions=5)
 
     # Final report
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("📋 FINAL REPORT:")
-    print("="*70)
+    print("=" * 70)
 
     all_passed = True
 
@@ -266,9 +269,9 @@ async def main():
 
     # Check 2: Fallback
     if fallback_ok:
-        print(f"✅ Test 2: Graceful fallback - PASSED")
+        print("✅ Test 2: Graceful fallback - PASSED")
     else:
-        print(f"❌ Test 2: Graceful fallback - FAILED")
+        print("❌ Test 2: Graceful fallback - FAILED")
         all_passed = False
 
     # Check 3: Latencies
@@ -279,14 +282,14 @@ async def main():
         all_passed = False
 
     # Check 4: Monitoring
-    print(f"✅ Test 4: Performance monitoring - PASSED")
+    print("✅ Test 4: Performance monitoring - PASSED")
 
-    print("="*70)
+    print("=" * 70)
     if all_passed:
         print("🎉 ALL TESTS PASSED")
     else:
         print("⚠️  SOME TESTS FAILED")
-    print("="*70)
+    print("=" * 70)
 
     return all_passed
 

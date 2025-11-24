@@ -6,27 +6,27 @@ Captures latency metrics (P50/P95) and error rates.
 """
 
 import asyncio
-import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
-from unittest.mock import AsyncMock, patch, MagicMock
 
 try:
     import pytest
-    from fastapi.testclient import TestClient
     from fastapi.websockets import WebSocket
+
     PYTEST_AVAILABLE = True
 except ImportError:
     PYTEST_AVAILABLE = False
+
     # Create mock pytest module
     class MockPytest:
         class mark:
             @staticmethod
             def asyncio(func):
                 return func
+
     pytest = MockPytest()
     # Mock WebSocket type
     WebSocket = Any
@@ -185,9 +185,7 @@ class WebSocketTestClient:
     async def receive_message(self, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
         """Receive message from server."""
         try:
-            msg = await asyncio.wait_for(
-                self._receive_queue.get(), timeout=timeout
-            )
+            msg = await asyncio.wait_for(self._receive_queue.get(), timeout=timeout)
             self.metrics.messages_received += 1
             if msg.get("type") == "audio_chunk":
                 self.metrics.audio_chunks_received += 1
@@ -219,7 +217,7 @@ class LoadTestHarness:
         self,
         client: WebSocketTestClient,
         num_messages: int = 10,
-        delay_between_messages: float = 0.5
+        delay_between_messages: float = 0.5,
     ):
         """Run a single test session."""
         try:
@@ -235,12 +233,14 @@ class LoadTestHarness:
                 await asyncio.sleep(delay_between_messages)
 
                 # Simulate receiving audio response
-                client._receive_queue.put_nowait({
-                    "type": "audio_chunk",
-                    "b64": "fake_audio_data",
-                    "mime": "audio/mpeg",
-                    "eos": i == num_messages - 1
-                })
+                client._receive_queue.put_nowait(
+                    {
+                        "type": "audio_chunk",
+                        "b64": "fake_audio_data",
+                        "mime": "audio/mpeg",
+                        "eos": i == num_messages - 1,
+                    }
+                )
 
         except Exception as e:
             client.metrics.errors.append(f"Session error: {str(e)}")
@@ -249,9 +249,7 @@ class LoadTestHarness:
             await client.disconnect()
 
     async def run_load_test(
-        self,
-        num_messages_per_session: int = 10,
-        delay_between_messages: float = 0.5
+        self, num_messages_per_session: int = 10, delay_between_messages: float = 0.5
     ) -> LoadTestResults:
         """Run load test with multiple parallel sessions."""
         self.start_time = time.time()
@@ -269,7 +267,7 @@ class LoadTestHarness:
             self.run_single_session(
                 client,
                 num_messages=num_messages_per_session,
-                delay_between_messages=delay_between_messages
+                delay_between_messages=delay_between_messages,
             )
             for client in self.clients
         ]
@@ -289,7 +287,7 @@ class LoadTestHarness:
             successful_sessions=successful,
             failed_sessions=failed,
             session_metrics=session_metrics,
-            total_duration_s=total_duration
+            total_duration_s=total_duration,
         )
 
         return results
@@ -299,12 +297,13 @@ class LoadTestHarness:
         sample_rate = 16000
         samples = int(sample_rate * duration_ms / 1000)
         # Simple silence (zeros)
-        return b'\x00\x00' * samples
+        return b"\x00\x00" * samples
 
 
 # ============================================================================
 # TEST CASES
 # ============================================================================
+
 
 class TestParallelSessions:
     """Test parallel WebSocket sessions."""
@@ -314,8 +313,7 @@ class TestParallelSessions:
         """Test with 5 parallel sessions."""
         harness = LoadTestHarness(num_sessions=5)
         results = await harness.run_load_test(
-            num_messages_per_session=10,
-            delay_between_messages=0.3
+            num_messages_per_session=10, delay_between_messages=0.3
         )
 
         results.print_summary()
@@ -330,8 +328,7 @@ class TestParallelSessions:
         """Test with 10 parallel sessions."""
         harness = LoadTestHarness(num_sessions=10)
         results = await harness.run_load_test(
-            num_messages_per_session=8,
-            delay_between_messages=0.4
+            num_messages_per_session=8, delay_between_messages=0.4
         )
 
         results.print_summary()

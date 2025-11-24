@@ -10,20 +10,22 @@ Verifies fallback mechanisms work correctly under load.
 
 import asyncio
 import logging
-from typing import Optional
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch
 
 try:
     import pytest
+
     PYTEST_AVAILABLE = True
 except ImportError:
     PYTEST_AVAILABLE = False
+
     # Create mock pytest module
     class MockPytest:
         class mark:
             @staticmethod
             def asyncio(func):
                 return func
+
     pytest = MockPytest()
 
 logger = logging.getLogger(__name__)
@@ -34,8 +36,7 @@ class ServiceFailureSimulator:
 
     @staticmethod
     async def simulate_database_failure(
-        failure_rate: float = 0.3,
-        timeout_ms: int = 5000
+        failure_rate: float = 0.3, timeout_ms: int = 5000
     ):
         """Simulate database connection failures.
 
@@ -51,8 +52,7 @@ class ServiceFailureSimulator:
 
     @staticmethod
     async def simulate_llm_failure(
-        failure_rate: float = 0.2,
-        error_type: str = "timeout"
+        failure_rate: float = 0.2, error_type: str = "timeout"
     ):
         """Simulate LLM API failures.
 
@@ -73,8 +73,7 @@ class ServiceFailureSimulator:
 
     @staticmethod
     async def simulate_tts_failure(
-        failure_rate: float = 0.15,
-        return_fallback: bool = True
+        failure_rate: float = 0.15, return_fallback: bool = True
     ):
         """Simulate TTS service failures.
 
@@ -88,7 +87,7 @@ class ServiceFailureSimulator:
             if return_fallback:
                 logger.warning("TTS failed, using fallback")
                 # Return silent audio as fallback
-                return b'\x00' * 1000
+                return b"\x00" * 1000
             else:
                 raise Exception("TTS service unavailable")
 
@@ -102,7 +101,7 @@ class TestDatabaseFallback:
         simulator = ServiceFailureSimulator()
 
         # Mock Supabase client
-        with patch('app.services.supabase.get_supabase_client') as mock_client:
+        with patch("app.services.supabase.get_supabase_client") as mock_client:
             mock_client.side_effect = simulator.simulate_database_failure
 
             try:
@@ -119,7 +118,7 @@ class TestDatabaseFallback:
         logger.info("Testing memory system fallback chain...")
 
         # Simulate Redis failure
-        with patch('app.services.memory.redis_client') as mock_redis:
+        with patch("app.services.memory.redis_client") as mock_redis:
             mock_redis.get.side_effect = Exception("Redis connection failed")
 
             # Should fall back to Supabase
@@ -155,10 +154,7 @@ class TestLLMFallback:
 
         # Simulate Mistral timeout
         try:
-            await simulator.simulate_llm_failure(
-                failure_rate=1.0,
-                error_type="timeout"
-            )
+            await simulator.simulate_llm_failure(failure_rate=1.0, error_type="timeout")
             assert False, "Should have raised TimeoutError"
         except TimeoutError as e:
             logger.info(f"✓ Mistral timeout detected: {e}")
@@ -171,8 +167,7 @@ class TestLLMFallback:
 
         try:
             await simulator.simulate_llm_failure(
-                failure_rate=1.0,
-                error_type="rate_limit"
+                failure_rate=1.0, error_type="rate_limit"
             )
             assert False, "Should have raised rate limit error"
         except Exception as e:
@@ -198,8 +193,7 @@ class TestTTSFallback:
 
         # Simulate Inworld failure with fallback
         result = await simulator.simulate_tts_failure(
-            failure_rate=1.0,
-            return_fallback=True
+            failure_rate=1.0, return_fallback=True
         )
 
         assert result is not None
@@ -213,8 +207,7 @@ class TestTTSFallback:
 
         try:
             await simulator.simulate_tts_failure(
-                failure_rate=1.0,
-                return_fallback=False
+                failure_rate=1.0, return_fallback=False
             )
             assert False, "Should have raised TTS exception"
         except Exception as e:
@@ -255,24 +248,20 @@ class TestCombinedFailures:
         # Simulate 10 concurrent requests with various failures
         for i in range(10):
             if i % 3 == 0:
-                tasks.append(
-                    simulator.simulate_database_failure(failure_rate=0.5)
-                )
+                tasks.append(simulator.simulate_database_failure(failure_rate=0.5))
             elif i % 3 == 1:
-                tasks.append(
-                    simulator.simulate_llm_failure(failure_rate=0.5)
-                )
+                tasks.append(simulator.simulate_llm_failure(failure_rate=0.5))
             else:
-                tasks.append(
-                    simulator.simulate_tts_failure(failure_rate=0.5)
-                )
+                tasks.append(simulator.simulate_tts_failure(failure_rate=0.5))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         failures = sum(1 for r in results if isinstance(r, Exception))
         successes = len(results) - failures
 
-        logger.info(f"Cascading failure test: {failures} failures, {successes} successes")
+        logger.info(
+            f"Cascading failure test: {failures} failures, {successes} successes"
+        )
         assert successes > 0, "Some requests should succeed"
 
 

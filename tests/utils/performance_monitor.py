@@ -81,9 +81,7 @@ class PerformanceMonitor:
         elapsed_time = time.time() - (self._start_time or time.time())
         rps = self._request_count / elapsed_time if elapsed_time > 0 else 0.0
         error_rate = (
-            self._error_count / self._request_count
-            if self._request_count > 0
-            else 0.0
+            self._error_count / self._request_count if self._request_count > 0 else 0.0
         )
 
         # Try to get system metrics
@@ -111,6 +109,7 @@ class PerformanceMonitor:
         """Get current memory usage in MB."""
         try:
             import psutil
+
             process = psutil.Process()
             return process.memory_info().rss / 1024 / 1024
         except ImportError:
@@ -120,6 +119,7 @@ class PerformanceMonitor:
         """Get current CPU usage percentage."""
         try:
             import psutil
+
             return psutil.cpu_percent(interval=0.1)
         except ImportError:
             return None
@@ -141,9 +141,7 @@ class PerformanceMonitor:
         logger.info("=" * 60)
 
         # Overall stats
-        total_duration = (
-            self.snapshots[-1].timestamp - self.snapshots[0].timestamp
-        )
+        total_duration = self.snapshots[-1].timestamp - self.snapshots[0].timestamp
         avg_rps = statistics.mean([s.requests_per_second for s in self.snapshots])
         avg_latency = statistics.mean([s.avg_latency_ms for s in self.snapshots])
         max_p95 = max([s.p95_latency_ms for s in self.snapshots])
@@ -158,8 +156,12 @@ class PerformanceMonitor:
         logger.info(f"Average error rate: {avg_error_rate * 100:.2f}%")
 
         # System resource usage (if available)
-        memory_samples = [s.memory_usage_mb for s in self.snapshots if s.memory_usage_mb]
-        cpu_samples = [s.cpu_usage_percent for s in self.snapshots if s.cpu_usage_percent]
+        memory_samples = [
+            s.memory_usage_mb for s in self.snapshots if s.memory_usage_mb
+        ]
+        cpu_samples = [
+            s.cpu_usage_percent for s in self.snapshots if s.cpu_usage_percent
+        ]
 
         if memory_samples:
             avg_memory = statistics.mean(memory_samples)
@@ -177,41 +179,43 @@ class PerformanceMonitor:
         """Export snapshots to CSV file."""
         import csv
 
-        with open(filename, 'w', newline='') as f:
+        with open(filename, "w", newline="") as f:
             if not self.snapshots:
                 return
 
             fieldnames = [
-                'timestamp',
-                'active_sessions',
-                'total_requests',
-                'requests_per_second',
-                'avg_latency_ms',
-                'p50_latency_ms',
-                'p95_latency_ms',
-                'p99_latency_ms',
-                'error_rate',
-                'memory_usage_mb',
-                'cpu_usage_percent',
+                "timestamp",
+                "active_sessions",
+                "total_requests",
+                "requests_per_second",
+                "avg_latency_ms",
+                "p50_latency_ms",
+                "p95_latency_ms",
+                "p99_latency_ms",
+                "error_rate",
+                "memory_usage_mb",
+                "cpu_usage_percent",
             ]
 
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
             for snapshot in self.snapshots:
-                writer.writerow({
-                    'timestamp': snapshot.timestamp,
-                    'active_sessions': snapshot.active_sessions,
-                    'total_requests': snapshot.total_requests,
-                    'requests_per_second': snapshot.requests_per_second,
-                    'avg_latency_ms': snapshot.avg_latency_ms,
-                    'p50_latency_ms': snapshot.p50_latency_ms,
-                    'p95_latency_ms': snapshot.p95_latency_ms,
-                    'p99_latency_ms': snapshot.p99_latency_ms,
-                    'error_rate': snapshot.error_rate,
-                    'memory_usage_mb': snapshot.memory_usage_mb or '',
-                    'cpu_usage_percent': snapshot.cpu_usage_percent or '',
-                })
+                writer.writerow(
+                    {
+                        "timestamp": snapshot.timestamp,
+                        "active_sessions": snapshot.active_sessions,
+                        "total_requests": snapshot.total_requests,
+                        "requests_per_second": snapshot.requests_per_second,
+                        "avg_latency_ms": snapshot.avg_latency_ms,
+                        "p50_latency_ms": snapshot.p50_latency_ms,
+                        "p95_latency_ms": snapshot.p95_latency_ms,
+                        "p99_latency_ms": snapshot.p99_latency_ms,
+                        "error_rate": snapshot.error_rate,
+                        "memory_usage_mb": snapshot.memory_usage_mb or "",
+                        "cpu_usage_percent": snapshot.cpu_usage_percent or "",
+                    }
+                )
 
         logger.info(f"Performance data exported to {filename}")
 
@@ -230,10 +234,7 @@ class MetricsCollector:
         self.session_metrics[key].append(value)
 
     def get_percentile(
-        self,
-        session_id: str,
-        metric_name: str,
-        percentile: float
+        self, session_id: str, metric_name: str, percentile: float
     ) -> Optional[float]:
         """Get percentile value for a metric."""
         key = f"{session_id}:{metric_name}"
@@ -246,9 +247,7 @@ class MetricsCollector:
         return sorted_values[min(idx, len(sorted_values) - 1)]
 
     def get_aggregate_percentile(
-        self,
-        metric_name: str,
-        percentile: float
+        self, metric_name: str, percentile: float
     ) -> Optional[float]:
         """Get aggregate percentile across all sessions."""
         all_values = []

@@ -1,6 +1,5 @@
 """Tests for skill routing models."""
 
-import pytest
 from app.routing.skills import SkillId, SkillRouteResult
 
 

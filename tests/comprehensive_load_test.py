@@ -10,39 +10,34 @@ Tests all 4 checklist items:
 
 import asyncio
 import websockets
-import json
 import time
 import statistics
 import struct
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List
 from datetime import datetime
 import psutil
 import os
-import hmac
-import hashlib
-import base64
 
 # Authentication token for load test user
 # user_id: 3e76a701-083f-46aa-be0c-f932c93971b6 (loadtest@example.com)
 # discord_id: 1132301438966566943 (has consent)
 SUPABASE_JWT_SECRET = "YqIRjWsZ7jOodskvZ8rV8Ar7/C57iEMID0lq1fiN89whnkLd0VdWHWjH8oVVJFSsdbakWI4zj/t7uLMOu6S5Og=="
 
+
 def create_jwt_token():
     """Create JWT token for load test user"""
     import jwt
+
     payload = {
         "iss": "https://tajkzblqwwvuudpeshzz.supabase.co/auth/v1",
         "sub": "3e76a701-083f-46aa-be0c-f932c93971b6",
         "aud": "authenticated",
         "role": "authenticated",
         "email": "loadtest@example.com",
-        "user_metadata": {
-            "provider_id": "1132301438966566943",
-            "provider": "discord"
-        },
+        "user_metadata": {"provider_id": "1132301438966566943", "provider": "discord"},
         "iat": int(time.time()),
-        "exp": int(time.time()) + 3600
+        "exp": int(time.time()) + 3600,
     }
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
 
@@ -50,6 +45,7 @@ def create_jwt_token():
 @dataclass
 class SessionMetrics:
     """Метрики для одной WebSocket сессии"""
+
     session_id: str
     start_time: float
     end_time: float = 0.0
@@ -80,6 +76,7 @@ class SessionMetrics:
 @dataclass
 class PerformanceSnapshot:
     """Снимок метрик производительности"""
+
     timestamp: float
     cpu_percent: float
     memory_mb: float
@@ -104,7 +101,7 @@ class PerformanceMonitor:
             memory_mb=process.memory_info().rss / 1024 / 1024,
             active_connections=active_conns,
             total_requests=total_reqs,
-            avg_latency_ms=avg_lat
+            avg_latency_ms=avg_lat,
         )
         self.snapshots.append(snapshot)
 
@@ -113,10 +110,12 @@ class PerformanceMonitor:
         if not self.snapshots:
             return
 
-        print(f"\n📊 Мониторинг производительности:")
+        print("\n📊 Мониторинг производительности:")
         print(f"   CPU usage: {max(s.cpu_percent for s in self.snapshots):.1f}% peak")
         print(f"   Memory: {max(s.memory_mb for s in self.snapshots):.1f} MB peak")
-        print(f"   Max connections: {max(s.active_connections for s in self.snapshots)}")
+        print(
+            f"   Max connections: {max(s.active_connections for s in self.snapshots)}"
+        )
 
 
 def generate_test_audio(duration_sec: float = 0.5, amplitude: int = 600) -> bytes:
@@ -125,11 +124,12 @@ def generate_test_audio(duration_sec: float = 0.5, amplitude: int = 600) -> byte
     IMPORTANT: amplitude must be > 300 to trigger Voice Activity Detection (VAD)
     """
     import random
+
     sample_rate = 16000
     num_samples = int(duration_sec * sample_rate)
     # Generate noise with amplitude > SILENCE_THRESHOLD (300) to trigger VAD
     samples = [random.randint(-amplitude, amplitude) for _ in range(num_samples)]
-    audio = struct.pack(f'{num_samples}h', *samples)
+    audio = struct.pack(f"{num_samples}h", *samples)
     return audio
 
 
@@ -140,28 +140,29 @@ def generate_silence(duration_sec: float = 0.7) -> bytes:
     """
     sample_rate = 16000
     num_samples = int(duration_sec * sample_rate)
-    audio = struct.pack(f'{num_samples}h', *([0] * num_samples))
+    audio = struct.pack(f"{num_samples}h", *([0] * num_samples))
     return audio
 
 
 async def test_websocket_session(
-    ws_url: str,
-    session_id: str,
-    num_messages: int,
-    monitor: PerformanceMonitor
+    ws_url: str, session_id: str, num_messages: int, monitor: PerformanceMonitor
 ) -> SessionMetrics:
     """Тест одной WebSocket сессии с voice pipeline"""
 
     metrics = SessionMetrics(session_id=session_id, start_time=time.time())
 
     try:
-        async with websockets.connect(ws_url, ping_interval=None, open_timeout=15) as ws:
+        async with websockets.connect(
+            ws_url, ping_interval=None, open_timeout=15
+        ) as ws:
             print(f"  ✅ {session_id}: Connected")
 
             for i in range(num_messages):
                 # Генерируем тестовое аудио (speech + silence для VAD)
                 speech_audio = generate_test_audio(0.6, amplitude=600)  # 600ms speech
-                silence_audio = generate_silence(0.7)  # 700ms silence to trigger endpoint
+                silence_audio = generate_silence(
+                    0.7
+                )  # 700ms silence to trigger endpoint
 
                 send_time = time.time()
 
@@ -176,7 +177,7 @@ async def test_websocket_session(
                 # Ждем ответ (увеличен timeout для voice pipeline)
                 try:
                     # Wait for any response (tier0_result, token, or audio)
-                    response = await asyncio.wait_for(ws.recv(), timeout=45.0)
+                    await asyncio.wait_for(ws.recv(), timeout=45.0)
                     recv_time = time.time()
                     latency_ms = (recv_time - send_time) * 1000
                     metrics.latencies_ms.append(latency_ms)
@@ -186,10 +187,10 @@ async def test_websocket_session(
                     avg_lat = statistics.mean(metrics.latencies_ms)
                     monitor.capture_snapshot(1, metrics.messages_received, avg_lat)
 
-                    print(f"  📊 {session_id}: Message {i+1} - {latency_ms:.0f}ms")
+                    print(f"  📊 {session_id}: Message {i + 1} - {latency_ms:.0f}ms")
 
                 except asyncio.TimeoutError:
-                    error = f"Message {i+1} timeout after 45s"
+                    error = f"Message {i + 1} timeout after 45s"
                     metrics.errors.append(error)
                     print(f"  ⚠️  {session_id}: {error}")
 
@@ -200,6 +201,7 @@ async def test_websocket_session(
         metrics.errors.append(error)
         print(f"  ❌ {session_id}: {error}")
         import traceback
+
         traceback.print_exc()
 
     finally:
@@ -214,14 +216,14 @@ async def test_service_fallback():
     Проверяем что система продолжает работать при сбоях
     """
     print("\n📋 ТЕСТ 2: Имитация краха сервисов")
-    print("="*60)
+    print("=" * 60)
 
     # Проверяем что есть fallback механизмы
     fallback_checks = {
         "STT Fallback (Voxtral -> Whisper)": True,
         "LLM Fallback (Mistral -> Claude)": True,
         "TTS Fallback (Inworld -> OpenAI)": True,
-        "Memory Fallback (Redis -> Supabase -> In-memory)": True
+        "Memory Fallback (Redis -> Supabase -> In-memory)": True,
     }
 
     for check, status in fallback_checks.items():
@@ -230,6 +232,7 @@ async def test_service_fallback():
 
     # Проверяем что сервер отвечает даже при проблемах
     import http.client
+
     conn = http.client.HTTPConnection("localhost", 8000, timeout=5)
     try:
         conn.request("GET", "/health")
@@ -250,8 +253,8 @@ async def test_parallel_websockets(num_sessions: int = 10):
     ТЕСТ 3: Захват и проверка латентностей P50/P95
     ТЕСТ 4: Мониторинг метрик производительности
     """
-    print(f"\n📋 ТЕСТ 1, 3, 4: Параллельные WebSocket сессии")
-    print("="*60)
+    print("\n📋 ТЕСТ 1, 3, 4: Параллельные WebSocket сессии")
+    print("=" * 60)
     print(f"   Запуск {num_sessions} параллельных сессий...")
 
     # Create JWT token for authentication
@@ -262,8 +265,10 @@ async def test_parallel_websockets(num_sessions: int = 10):
     # Создаем параллельные сессии
     tasks = []
     for i in range(num_sessions):
-        session_id = f"load_test_{i+1}"
-        task = test_websocket_session(ws_url, session_id, num_messages=2, monitor=monitor)
+        session_id = f"load_test_{i + 1}"
+        task = test_websocket_session(
+            ws_url, session_id, num_messages=2, monitor=monitor
+        )
         tasks.append(task)
 
     # Запускаем все параллельно
@@ -272,7 +277,7 @@ async def test_parallel_websockets(num_sessions: int = 10):
     total_duration = time.time() - start_time
 
     # Анализ результатов
-    print(f"\n📊 Результаты тестирования:")
+    print("\n📊 Результаты тестирования:")
     print(f"   Всего сессий: {num_sessions}")
     print(f"   Время выполнения: {total_duration:.2f}s")
 
@@ -293,11 +298,11 @@ async def test_parallel_websockets(num_sessions: int = 10):
     # ТЕСТ 3: P50/P95 латентности
     if all_latencies:
         sorted_lat = sorted(all_latencies)
-        p50 = sorted_lat[len(sorted_lat)//2]
-        p95 = sorted_lat[int(len(sorted_lat)*0.95)]
-        p99 = sorted_lat[int(len(sorted_lat)*0.99)]
+        p50 = sorted_lat[len(sorted_lat) // 2]
+        p95 = sorted_lat[int(len(sorted_lat) * 0.95)]
+        p99 = sorted_lat[int(len(sorted_lat) * 0.99)]
 
-        print(f"\n⏱️  Латентности (P50/P95/P99):")
+        print("\n⏱️  Латентности (P50/P95/P99):")
         print(f"   P50: {p50:.2f}ms")
         print(f"   P95: {p95:.2f}ms")
         print(f"   P99: {p99:.2f}ms")
@@ -308,13 +313,15 @@ async def test_parallel_websockets(num_sessions: int = 10):
     monitor.print_summary()
 
     # Детали по каждой сессии
-    print(f"\n📝 Детали сессий:")
+    print("\n📝 Детали сессий:")
     for session in successful_sessions[:5]:  # Показываем первые 5
-        print(f"   {session.session_id}: "
-              f"{session.messages_sent} sent, "
-              f"{session.messages_received} recv, "
-              f"P95: {session.p95_latency:.2f}ms, "
-              f"Errors: {len(session.errors)}")
+        print(
+            f"   {session.session_id}: "
+            f"{session.messages_sent} sent, "
+            f"{session.messages_received} recv, "
+            f"P95: {session.p95_latency:.2f}ms, "
+            f"Errors: {len(session.errors)}"
+        )
 
     # Проверка успешности
     success_rate = (len(successful_sessions) / num_sessions) * 100
@@ -324,20 +331,21 @@ async def test_parallel_websockets(num_sessions: int = 10):
         "p50": p50 if all_latencies else 0,
         "p95": p95 if all_latencies else 0,
         "total_sessions": num_sessions,
-        "successful": len(successful_sessions)
+        "successful": len(successful_sessions),
     }
 
 
 async def main():
     """Главная функция - запуск всех тестов"""
 
-    print("="*70)
+    print("=" * 70)
     print("COMPREHENSIVE LOAD TEST - Task #42713")
     print(f"Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*70)
+    print("=" * 70)
 
     # Проверка доступности сервера
     import http.client
+
     conn = http.client.HTTPConnection("localhost", 8000, timeout=5)
     try:
         conn.request("GET", "/health")
@@ -361,42 +369,48 @@ async def main():
     results = await test_parallel_websockets(num_sessions=5)
 
     # Итоговый отчет
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("📋 ИТОГОВЫЙ ОТЧЕТ:")
-    print("="*70)
+    print("=" * 70)
 
     all_passed = True
 
     # Проверка 1: Параллельные сессии (5-10 потоков)
     if results["success_rate"] >= 60:  # 60% threshold for load testing
-        print(f"✅ Тест 1: Параллельные сессии (5-10 потоков) - PASSED ({results['success_rate']:.0f}%)")
+        print(
+            f"✅ Тест 1: Параллельные сессии (5-10 потоков) - PASSED ({results['success_rate']:.0f}%)"
+        )
     else:
-        print(f"❌ Тест 1: Параллельные сессии - FAILED ({results['success_rate']:.0f}%)")
+        print(
+            f"❌ Тест 1: Параллельные сессии - FAILED ({results['success_rate']:.0f}%)"
+        )
         all_passed = False
 
     # Проверка 2: Graceful Fallback
     if fallback_ok:
-        print(f"✅ Тест 2: Graceful fallback механизмы - PASSED")
+        print("✅ Тест 2: Graceful fallback механизмы - PASSED")
     else:
-        print(f"❌ Тест 2: Graceful fallback - FAILED")
+        print("❌ Тест 2: Graceful fallback - FAILED")
         all_passed = False
 
     # Проверка 3: Латентности P50/P95
     if results["p95"] > 0 and results["p95"] < 10000:  # P95 < 10s for voice pipeline
-        print(f"✅ Тест 3: Захват P50/P95 латентности - PASSED (P95: {results['p95']:.2f}ms)")
+        print(
+            f"✅ Тест 3: Захват P50/P95 латентности - PASSED (P95: {results['p95']:.2f}ms)"
+        )
     else:
         print(f"❌ Тест 3: P50/P95 латентность - FAILED (P95: {results['p95']:.2f}ms)")
         all_passed = False
 
     # Проверка 4: Мониторинг метрик
-    print(f"✅ Тест 4: Мониторинг метрик производительности - PASSED")
+    print("✅ Тест 4: Мониторинг метрик производительности - PASSED")
 
-    print("="*70)
+    print("=" * 70)
     if all_passed:
         print("🎉 ВСЕ ТЕСТЫ ПРОЙДЕНЫ УСПЕШНО")
     else:
         print("⚠️  НЕКОТОРЫЕ ТЕСТЫ ПРОВАЛЕНЫ")
-    print("="*70)
+    print("=" * 70)
 
     return all_passed
 
