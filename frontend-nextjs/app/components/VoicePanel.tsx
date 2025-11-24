@@ -3,7 +3,6 @@
 import { useRef } from "react"
 import { Mic, Square, Zap } from "lucide-react"
 import { useVoiceLoop } from "../hooks/useVoiceLoop"
-import { usePresenceStore } from "../stores/presence-store"
 import { Waveform } from "./Waveform"
 
 const stageLabel: Record<string, string> = {
@@ -18,9 +17,16 @@ const stageLabel: Record<string, string> = {
 export function VoicePanel() {
   const { stage, partialReply, finalReply, error, path, needsUnlock, stream, startTalking, stopTalking, bargeIn, unlockAudio } =
     useVoiceLoop()
-  const presenceStatus = usePresenceStore((state) => state.status)
   const holdRef = useRef(false)
   const pointerIdRef = useRef<number | null>(null)
+  
+  // Map voice stage to presence state for waveform
+  const getWaveformState = () => {
+    if (stage === "listening") return "listening"
+    if (stage === "thinking") return "thinking"
+    if (stage === "speaking") return "speaking"
+    return "resting"
+  }
 
   const handlePressStart = async () => {
     if (holdRef.current) return
@@ -81,7 +87,7 @@ export function VoicePanel() {
         <div className="w-full max-w-xs">
           <Waveform
             stream={stream ?? undefined}
-            presenceState={presenceStatus}
+            presenceState={getWaveformState()}
           />
         </div>
 

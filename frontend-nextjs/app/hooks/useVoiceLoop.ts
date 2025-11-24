@@ -288,6 +288,29 @@ export function useVoiceLoop() {
         } else if (typeof data.detail === "string") {
           setPresenceDetail(data.detail)
         }
+        // Handle progressive usage alerts from backend
+        if (data.usage_info) {
+          const usageInfo = data.usage_info
+          const usagePercent = (usageInfo.used / usageInfo.limit) * 100
+          
+          if (usagePercent >= 80 && usagePercent < 100) {
+            // Show gentle toast at 80-99%
+            useUsageLimitStore.getState().showToast({
+              reason: usageInfo.reason,
+              plan_tier: usageInfo.plan_tier,
+              limit: usageInfo.limit,
+              used: usageInfo.used,
+            })
+          } else if (usagePercent >= 50 && usagePercent < 80) {
+            // Show subtle hint at 50-79%
+            useUsageLimitStore.getState().showHint({
+              reason: usageInfo.reason,
+              plan_tier: usageInfo.plan_tier,
+              limit: usageInfo.limit,
+              used: usageInfo.used,
+            })
+          }
+        }
         break
       case "token": {
         const text = typeof data.text === "string" ? data.text : ""

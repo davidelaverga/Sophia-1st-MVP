@@ -126,7 +126,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       }, {
         onUsageLimit: (error) => {
-          // Show usage limit modal
+          // Only show modal when limit is reached (100%)
+          // Progressive alerts (hints/toasts) are handled by backend meta events
           useUsageLimitStore.getState().showModal({
             reason: error.reason,
             plan_tier: error.plan_tier,
@@ -163,6 +164,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               allowed: meta.feedback_allowed,
               emotionalWeight: meta.emotional_weight ?? null,
             })
+          }
+          // Handle progressive usage alerts from backend
+          if (meta?.usage_info) {
+            const usageInfo = meta.usage_info
+            const usagePercent = (usageInfo.used / usageInfo.limit) * 100
+            
+            if (usagePercent >= 80 && usagePercent < 100) {
+              // Show gentle toast at 80-99%
+              useUsageLimitStore.getState().showToast({
+                reason: usageInfo.reason,
+                plan_tier: usageInfo.plan_tier,
+                limit: usageInfo.limit,
+                used: usageInfo.used,
+              })
+            } else if (usagePercent >= 50 && usagePercent < 80) {
+              // Show subtle hint at 50-79%
+              useUsageLimitStore.getState().showHint({
+                reason: usageInfo.reason,
+                plan_tier: usageInfo.plan_tier,
+                limit: usageInfo.limit,
+                used: usageInfo.used,
+              })
+            }
           }
         },
         onToken: (token) => {

@@ -5,6 +5,8 @@ import { Header } from "./Header"
 import { ConsentGate } from "./ConsentGate"
 import { SettingsSheet } from "./SettingsSheet"
 import { UsageLimitModal } from "./UsageLimitModal"
+import { GentleUsageToast } from "./GentleUsageToast"
+import { UsageDemoControls } from "./UsageDemoControls"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 
 type AppShellProps = {
@@ -15,7 +17,9 @@ type AppShellProps = {
 export function AppShell({ children, actionBar }: AppShellProps) {
   const [showSettings, setShowSettings] = useState(false)
   const [isConsentReady, setIsConsentReady] = useState(false)
-  const { isOpen: limitModalOpen, limitInfo, closeModal: closeLimitModal } = useUsageLimitStore()
+  const limitModalOpen = useUsageLimitStore((state) => state.isOpen)
+  const limitInfo = useUsageLimitStore((state) => state.limitInfo)
+  const closeLimitModal = useUsageLimitStore((state) => state.closeModal)
 
   return (
     <div className="grid min-h-[100svh] grid-rows-[auto_1fr_auto] bg-sophia-bg text-sophia-text">
@@ -33,6 +37,8 @@ export function AppShell({ children, actionBar }: AppShellProps) {
       {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
 
       <UsageLimitModal open={limitModalOpen} onClose={closeLimitModal} info={limitInfo} />
+      <GentleUsageToast />
+      <UsageDemoControls />
     </div>
   )
 }

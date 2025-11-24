@@ -207,6 +207,18 @@ export const copy = {
     ctaPrimary: "Become a Founding Supporter",
     ctaSecondary: "I'll come back tomorrow",
     footerHint: "Free daily usage resets every 24 hours • Founding Supporters get higher limits",
+    
+    // Subtle footer hints (50-79% usage)
+    hintVoice: "You have about {remaining} minutes of voice chat left today.",
+    hintText: "You have about {remaining} minutes of text chat left today.",
+    hintReflections: "You have {remaining} Reflection Cards left this month.",
+    
+    // Gentle toast (80-99% usage)
+    toastTitle: "Just a heads up",
+    toastVoice: "You have about {remaining} minutes of voice chat left for today. If you'd like more time with Sophia, consider becoming a Founding Supporter.",
+    toastText: "You have about {remaining} minutes of text chat left for today. If you'd like more time with Sophia, consider becoming a Founding Supporter.",
+    toastReflections: "You have {remaining} Reflection Cards left this month. Founding Supporters get 30 per month.",
+    toastCta: "Learn more about Founding Supporter",
   },
   foundingSupporter: {
     title: "Why Founding Supporters Matter",
