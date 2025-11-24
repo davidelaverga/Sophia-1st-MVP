@@ -17,26 +17,27 @@ import wave
 import io
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch
 
 try:
     import pytest
-    from httpx import AsyncClient
-    from fastapi.testclient import TestClient
+
     PYTEST_AVAILABLE = True
 except ImportError:
     PYTEST_AVAILABLE = False
+
     class MockPytest:
         class mark:
             @staticmethod
             def asyncio(func):
                 return func
+
     pytest = MockPytest()
 
 # Import the actual FastAPI app
 import sys
-sys.path.insert(0, '.')
-from main import app
+
+sys.path.insert(0, ".")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +54,7 @@ def generate_pcm16_audio(duration_ms: int = 1000, sample_rate: int = 16000) -> b
     for i in range(num_samples):
         # Generate low-amplitude noise to simulate silence with minimal activity
         sample = random.randint(-100, 100)  # Very quiet noise
-        audio_data.extend(struct.pack('<h', sample))  # PCM16 little-endian
+        audio_data.extend(struct.pack("<h", sample))  # PCM16 little-endian
 
     return bytes(audio_data)
 
@@ -64,7 +65,7 @@ def generate_wav_audio(duration_ms: int = 1000, sample_rate: int = 16000) -> byt
 
     # Create WAV file in memory
     wav_buffer = io.BytesIO()
-    with wave.open(wav_buffer, 'wb') as wav_file:
+    with wave.open(wav_buffer, "wb") as wav_file:
         wav_file.setnchannels(1)  # Mono
         wav_file.setsampwidth(2)  # 16-bit
         wav_file.setframerate(sample_rate)
@@ -119,7 +120,9 @@ class RealSessionMetrics:
 class RealWebSocketClient:
     """Real WebSocket client for integration testing."""
 
-    def __init__(self, base_url: str = "ws://localhost:8000", api_key: str = "test_token"):
+    def __init__(
+        self, base_url: str = "ws://localhost:8000", api_key: str = "test_token"
+    ):
         self.base_url = base_url
         self.api_key = api_key
         self.ws = None
@@ -144,7 +147,9 @@ class RealWebSocketClient:
             # Start background receive task
             self._receive_task = asyncio.create_task(self._receive_loop())
 
-            logger.info(f"✓ Connected to {url} in {self.metrics.connection_time_ms:.1f}ms")
+            logger.info(
+                f"✓ Connected to {url} in {self.metrics.connection_time_ms:.1f}ms"
+            )
 
         except Exception as e:
             self.metrics.errors.append(f"Connection error: {str(e)}")
@@ -214,8 +219,7 @@ class RealWebSocketClient:
         """Receive message from server."""
         try:
             message = await asyncio.wait_for(
-                self._received_messages.get(),
-                timeout=timeout
+                self._received_messages.get(), timeout=timeout
             )
             return message
         except asyncio.TimeoutError:
@@ -244,7 +248,7 @@ class RealLoadTestHarness:
         self,
         num_sessions: int = 5,
         base_url: str = "ws://localhost:8000",
-        api_key: str = "test_token"
+        api_key: str = "test_token",
     ):
         self.num_sessions = num_sessions
         self.base_url = base_url
@@ -258,7 +262,7 @@ class RealLoadTestHarness:
         client: RealWebSocketClient,
         num_audio_chunks: int = 10,
         chunk_duration_ms: int = 500,
-        delay_between_chunks: float = 0.5
+        delay_between_chunks: float = 0.5,
     ):
         """Run a single real test session."""
         try:
@@ -275,7 +279,7 @@ class RealLoadTestHarness:
 
                 logger.info(
                     f"Session {client.metrics.session_id[:8]}: "
-                    f"Sent chunk {i+1}/{num_audio_chunks} ({len(audio_data)} bytes)"
+                    f"Sent chunk {i + 1}/{num_audio_chunks} ({len(audio_data)} bytes)"
                 )
 
                 # Wait for response (with timeout)
@@ -300,7 +304,7 @@ class RealLoadTestHarness:
         self,
         num_audio_chunks_per_session: int = 10,
         chunk_duration_ms: int = 500,
-        delay_between_chunks: float = 0.5
+        delay_between_chunks: float = 0.5,
     ) -> List[RealSessionMetrics]:
         """Run REAL load test with multiple parallel sessions."""
 
@@ -322,7 +326,7 @@ class RealLoadTestHarness:
                 client,
                 num_audio_chunks=num_audio_chunks_per_session,
                 chunk_duration_ms=chunk_duration_ms,
-                delay_between_chunks=delay_between_chunks
+                delay_between_chunks=delay_between_chunks,
             )
             for client in self.clients
         ]
@@ -340,7 +344,9 @@ class RealLoadTestHarness:
 
         return all_metrics
 
-    def _print_summary(self, metrics_list: List[RealSessionMetrics], total_duration: float):
+    def _print_summary(
+        self, metrics_list: List[RealSessionMetrics], total_duration: float
+    ):
         """Print test summary."""
         logger.info("\n" + "=" * 70)
         logger.info("REAL WEBSOCKET LOAD TEST RESULTS")
@@ -388,6 +394,7 @@ class RealLoadTestHarness:
 # REAL INTEGRATION TESTS
 # ============================================================================
 
+
 class TestRealWebSocketIntegration:
     """Real WebSocket integration tests with actual server."""
 
@@ -396,10 +403,11 @@ class TestRealWebSocketIntegration:
         """Test single real WebSocket connection."""
 
         # Mock authentication and external services
-        with patch('main.verify_api_key') as mock_verify, \
-             patch('main.extract_identity_from_token') as mock_extract, \
-             patch('main.require_consent') as mock_consent:
-
+        with (
+            patch("main.verify_api_key") as mock_verify,
+            patch("main.extract_identity_from_token") as mock_extract,
+            patch("main.require_consent") as mock_consent,
+        ):
             # Setup mocks
             mock_verify.return_value = "mock_token"
             mock_extract.return_value = (str(uuid.uuid4()), "test_discord_id")
@@ -413,7 +421,9 @@ class TestRealWebSocketIntegration:
                 # Note: This requires server to be running!
                 # For CI/CD, we'll need to start server in fixture
 
-                logger.info("⚠️  This test requires server to be running on localhost:8000")
+                logger.info(
+                    "⚠️  This test requires server to be running on localhost:8000"
+                )
                 logger.info("⚠️  Run: uv run python main.py")
 
                 # await client.connect()
@@ -440,9 +450,10 @@ class TestRealWebSocketIntegration:
         logger.info("⚠️  Skipping actual execution, showing test structure...")
 
         # Mock services
-        with patch('main.verify_api_key') as mock_verify, \
-             patch('main.extract_identity_from_token') as mock_extract:
-
+        with (
+            patch("main.verify_api_key") as mock_verify,
+            patch("main.extract_identity_from_token") as mock_extract,
+        ):
             mock_verify.return_value = "mock_token"
             mock_extract.return_value = (str(uuid.uuid4()), "test_discord_id")
 
@@ -462,6 +473,7 @@ class TestRealWebSocketIntegration:
 
 # Standalone test runner
 if __name__ == "__main__":
+
     async def run_manual_test():
         """Manual test runner for development."""
 
@@ -484,7 +496,7 @@ if __name__ == "__main__":
             for i in range(3):
                 audio = generate_pcm16_audio(duration_ms=500)
                 await client.send_audio_chunk(audio)
-                print(f"✓ Sent chunk {i+1} ({len(audio)} bytes)")
+                print(f"✓ Sent chunk {i + 1} ({len(audio)} bytes)")
 
                 response = await client.receive_message(timeout=3.0)
                 if response:
@@ -492,7 +504,7 @@ if __name__ == "__main__":
 
                 await asyncio.sleep(0.5)
 
-            print(f"\n✓ Session completed:")
+            print("\n✓ Session completed:")
             print(f"  - Chunks sent: {client.metrics.audio_chunks_sent}")
             print(f"  - Chunks received: {client.metrics.audio_chunks_received}")
             print(f"  - Avg latency: {client.metrics.avg_response_latency:.1f}ms")
@@ -505,10 +517,10 @@ if __name__ == "__main__":
         # Test 2: Parallel sessions
         print("\n--- Test 2: 3 Parallel WebSocket Sessions ---")
         harness = RealLoadTestHarness(num_sessions=3)
-        metrics = await harness.run_load_test(
+        await harness.run_load_test(
             num_audio_chunks_per_session=5,
             chunk_duration_ms=500,
-            delay_between_chunks=0.4
+            delay_between_chunks=0.4,
         )
 
         print("\n✅ Manual tests completed!")

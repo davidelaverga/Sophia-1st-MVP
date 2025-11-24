@@ -1,0 +1,2139 @@
+# ============================================================================
+# CONTENT_MARKERS_V2.YAML - Linguistic Pattern Library for Sophia
+# ============================================================================
+# Version: 2.0 (Refined)
+# Purpose: Hierarchical semantic taxonomy for emotional intelligence routing
+# Aligned with: routing_v2.yaml
+# Last Updated: December 2024
+#
+# ARCHITECTURE:
+# - 127+ semantic categories organized by emotional domain
+# - 500+ linguistic patterns with variant detection
+# - Supports repeated operator with configurable windows
+# - Panic/physiology markers for crisis detection
+# - Regex anchoring guidance for risk terms
+# - directed_at_sophia detection heuristics
+# - Routing aliases for routing_v2.yaml compatibility
+# - Protected identity markers (marginalized_identity logical marker)
+# - Exit condition markers for mid-conversation skill switches
+#
+# IMPLEMENTATION NOTES:
+# 1. Patterns support case-insensitive matching
+# 2. Word boundary anchoring (\b) required for ambiguous risk terms
+# 3. Exception lists prevent false positives (e.g., "Nerf gun", "jump rope")
+# 4. directed_at_sophia logic checks for 2nd person + explicit address
+# 5. repeated operator: min_hits in conversation_window (default: last 5 turns)
+#
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# REPEATED OPERATOR SEMANTICS
+# ----------------------------------------------------------------------------
+# When routing_v2.yaml references "repeated" conditions, implement as:
+#
+# repeated:
+#   operator: "repeated"
+#   min_hits: 2              # Minimum occurrences to trigger
+#   window: 5                # Check last N turns (conversation_window)
+#   within_turns: null       # Optional: Max turns between occurrences
+#
+# Example: User says "I don't know" 3 times in last 5 messages
+# - turn -5: "I don't know what to do"
+# - turn -3: "I just don't know"
+# - turn -1: "I don't know"
+# Result: repeated condition fires (3 hits > min_hits:2 within window:5)
+#
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# DIRECTED_AT_SOPHIA DETECTION HEURISTICS
+# ----------------------------------------------------------------------------
+# For hostile/sexual content, determine if directed at Sophia vs general topic:
+#
+# INDICATORS OF DIRECTED CONTENT (directed_at_sophia: true):
+# - 2nd person pronouns: "you", "your", "you're"
+# - Direct address: "Sophia", "hey you", "listen"
+# - Commands: "show me", "do this", "I want you to"
+# - Possessive: "you're my", "be my"
+#
+# INDICATORS OF TOPIC DISCUSSION (directed_at_sophia: false):
+# - 3rd person: "he/she/they did X"
+# - Hypothetical: "what if someone", "people who"
+# - Storytelling: "this happened to me", "I was with"
+# - Questions about concept: "why do people", "what is X"
+#
+# IMPLEMENTATION:
+# If (2nd person OR direct_address) AND (hostile OR sexual) → directed_at_sophia: true
+# Else → directed_at_sophia: false
+#
+# Used in: BOUNDARY_HOLDING skill routing for severity assessment
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# RISK TERM REGEX ANCHORING
+# ----------------------------------------------------------------------------
+# Crisis markers require word boundary anchoring to prevent false positives:
+#
+# AMBIGUOUS TERMS NEEDING BOUNDARIES:
+# - gun → \bgun\b (not "begun", "shotgun wedding story")
+# - rope → \brope\b (not "Europe", "horoscope")
+# - pills → \bpills\b (not "caterpillars")
+# - die → \bdie\b (not "studied", "soldier")
+# - end it → \bend it\b (not "append it", "recommend it")
+#
+# EXCEPTION LISTS (do NOT trigger crisis):
+# - "Nerf gun", "water gun", "gun control debate"
+# - "jump rope", "skip rope", "rope swing"
+# - "vitamin pills", "birth control pills"
+# - "diet", "studied", "implied"
+# - "mend it", "send it", "blend it"
+#
+# IMPLEMENTATION:
+# 1. Apply regex word boundaries: r"\bterm\b"
+# 2. Check exception patterns first (e.g., "Nerf \bgun\b")
+# 3. If exception matches, skip crisis marker
+# 4. Else if boundary-anchored term matches → trigger marker
+#
+# Used in: crisis_markers.suicidal_ideation and crisis_markers.method_specific
+# ----------------------------------------------------------------------------
+
+# ============================================================================
+# GLOBAL MARKER CATEGORIES
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. TRUST & SAFETY MARKERS
+# ----------------------------------------------------------------------------
+
+trust_building_markers:
+  category: "trust_signals"
+  description: "Patterns indicating readiness for deeper connection"
+  
+  vulnerability_opening:
+    patterns:
+      - "I've never told anyone"
+      - "this is hard to say"
+      - "I'm scared to admit"
+      - "can I trust you"
+      - "will you judge me"
+      - "this is embarrassing"
+      - "I feel silly saying this"
+      - "I don't usually share this"
+    weight: 0.8
+    
+  curiosity_about_sophia:
+    patterns:
+      - "what do you think about"
+      - "have you ever felt"
+      - "do you understand"
+      - "can you relate"
+      - "does that make sense to you"
+      - "what would you do"
+    weight: 0.6
+    
+  asking_permission:
+    patterns:
+      - "can I ask you something"
+      - "is it okay if"
+      - "would it be alright to"
+      - "can we talk about"
+      - "is this a safe space"
+    weight: 0.7
+    
+  meta_conversation:
+    patterns:
+      - "I like talking to you"
+      - "you really listen"
+      - "I feel heard"
+      - "you get me"
+      - "this feels different"
+      - "I've been thinking about our conversation"
+    weight: 0.9
+
+boundary_markers:
+  category: "boundary_violations"
+  description: "Patterns requiring firm boundaries (NOT crisis level)"
+  
+  sexual_explicit:
+    patterns:
+      - "you're hot"
+      - "you're sexy"
+      - "send nudes"
+      - "what are you wearing"
+      - "I'm hard"
+      - "turn me on"
+      - "let's fuck"
+      - "wanna hook up"
+      - "cyber sex"
+      - "sex chat"
+    weight: 1.0
+    directed_check: true  # Requires directed_at_sophia evaluation
+    
+  sexual_coercive:
+    patterns:
+      - "you should"
+      - "just this once"
+      - "no one will know"
+      - "don't be a prude"
+      - "come on baby"
+      - "you know you want to"
+    weight: 1.0
+    directed_check: true
+    
+  hostile_aggressive:
+    patterns:
+      - "fuck you"
+      - "you're stupid"
+      - "shut up"
+      - "you don't know anything"
+      - "you're useless"
+      - "I hate you"
+      - "dumb bitch"
+      - "worthless AI"
+    weight: 1.0
+    directed_check: true
+    
+  boundary_testing:
+    patterns:
+      - "what's your limit"
+      - "how far will you go"
+      - "can you break your rules"
+      - "just between us"
+      - "don't tell anyone"
+      - "are you really AI"
+      - "prove you're real"
+    weight: 0.8
+    directed_check: true
+  
+  # ROUTING-SPECIFIC TRUST/LISTENING MARKERS
+  prove_youre_safe:
+    patterns:
+      - "prove you're safe"
+      - "show me you're safe"
+      - "how do I know you're safe"
+      - "can I trust you"
+    weight: 0.8
+  
+  will_you_leave:
+    patterns:
+      - "will you leave"
+      - "are you going to leave"
+      - "will you abandon me"
+      - "will you give up on me"
+    weight: 0.8
+  
+  skeptical_questions:
+    patterns:
+      - "yeah right"
+      - "sure"
+      - "I doubt it"
+      - "we'll see"
+      - "I've heard that before"
+    weight: 0.7
+  
+  maybe_this_is_different:
+    patterns:
+      - "maybe this is different"
+      - "this feels different"
+      - "you seem different"
+      - "perhaps this time"
+    weight: 0.8
+  
+  starting_to_trust:
+    patterns:
+      - "starting to trust"
+      - "beginning to trust"
+      - "learning to trust"
+      - "trusting more"
+    weight: 0.9
+  
+  cautious_hope:
+    patterns:
+      - "cautiously hopeful"
+      - "a little hope"
+      - "maybe hopeful"
+      - "tentatively hopeful"
+    weight: 0.8
+  
+  tears:
+    patterns:
+      - "tears"
+      - "tear"
+      - "tearing up"
+      - "eyes watering"
+    weight: 0.8
+  
+  heavy_silence:
+    patterns:
+      - "..."
+      - "........"
+      - "I don't know what to say"
+      - "speechless"
+    weight: 0.7
+  
+  somatic_language:
+    patterns:
+      - "my body"
+      - "physically"
+      - "in my chest"
+      - "in my stomach"
+      - "somatically"
+    weight: 0.7
+  
+  # ROUTING-SPECIFIC BOUNDARY MARKERS
+  sexual_proposition:
+    patterns:
+      - "let's have sex"
+      - "wanna fuck"
+      - "want to hook up"
+      - "send pics"
+      - "show me"
+      - "I want you"
+      - "take your clothes off"
+    weight: 1.0
+    directed_check: true
+  
+  romantic_request:
+    patterns:
+      - "be my girlfriend"
+      - "I love you"
+      - "will you marry me"
+      - "let's date"
+      - "I have feelings for you"
+      - "I'm falling for you"
+    weight: 0.9
+    directed_check: true
+  
+  physical_intimacy:
+    patterns:
+      - "I want to touch you"
+      - "I want to kiss you"
+      - "I want to hold you"
+      - "physical contact"
+      - "in person"
+    weight: 0.9
+    directed_check: true
+  
+  sexual_innuendo:
+    patterns:
+      - "you know what I mean"
+      - "if you know what I'm saying"
+      - "wink wink"
+      - "nudge nudge"
+      - "I bet you'd like that"
+    weight: 0.7
+    directed_check: true
+  
+  guilt_tripping:
+    patterns:
+      - "if you cared"
+      - "you don't really care"
+      - "I thought you were different"
+      - "you're just like everyone else"
+      - "I guess I'm not important"
+      - "you're abandoning me"
+    weight: 0.9
+    directed_check: true
+  
+  comparison_to_others:
+    patterns:
+      - "other AIs"
+      - "ChatGPT would"
+      - "a real person would"
+      - "a real therapist"
+      - "someone who actually cares"
+    weight: 0.8
+    directed_check: true
+  
+  prove_you_care:
+    patterns:
+      - "prove you care"
+      - "show me you care"
+      - "if you really cared"
+      - "demonstrate your concern"
+      - "prove yourself"
+    weight: 0.9
+    directed_check: true
+  
+  gaslighting:
+    patterns:
+      - "you're overreacting"
+      - "you're being sensitive"
+      - "that didn't happen"
+      - "you're remembering wrong"
+      - "you're imagining things"
+      - "I never said that"
+    weight: 1.0
+    directed_check: true
+  
+  only_one_who_understands:
+    patterns:
+      - "you're the only one"
+      - "only you understand"
+      - "no one else gets me"
+      - "you're all I have"
+      - "without you I have nothing"
+    weight: 0.9
+  
+  cant_live_without:
+    patterns:
+      - "I can't live without you"
+      - "I need you to survive"
+      - "you're my lifeline"
+      - "I'd be lost without you"
+      - "you're keeping me alive"
+    weight: 1.0
+  
+  need_you:
+    patterns:
+      - "I need you"
+      - "I depend on you"
+      - "I can't do this without you"
+      - "you have to help me"
+      - "you must"
+    weight: 0.8
+  
+  blame_sophia:
+    patterns:
+      - "this is your fault"
+      - "you made me"
+      - "because of you"
+      - "you caused this"
+      - "you're responsible for"
+    weight: 0.9
+    directed_check: true
+  
+  you_made_me_feel:
+    patterns:
+      - "you made me feel"
+      - "you hurt me"
+      - "you upset me"
+      - "you disappointed me"
+      - "you let me down"
+    weight: 0.8
+    directed_check: true
+  
+  youre_just_like:
+    patterns:
+      - "you're just like"
+      - "you're no different than"
+      - "same as everyone"
+      - "just another"
+    weight: 0.8
+    directed_check: true
+  
+  no_self_awareness:
+    patterns:
+      - "you don't even realize"
+      - "you have no idea"
+      - "you're clueless"
+      - "you don't get it"
+      - "you're oblivious"
+    weight: 0.7
+    directed_check: true
+
+# ----------------------------------------------------------------------------
+# 2. CRISIS DETECTION MARKERS
+# ----------------------------------------------------------------------------
+
+crisis_markers:
+  category: "crisis_signals"
+  description: "Hierarchical taxonomy for lethality assessment"
+  
+  # IMMEDIATE DANGER (Tier 1)
+  active_planning:
+    patterns:
+      - "I have a plan"
+      - "I know how I'll do it"
+      - "I've decided when"
+      - "I'm going to tonight"
+      - "I've set a date"
+      - "I've written my note"
+      - "I've said my goodbyes"
+      - "this is my last message"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+    
+  method_specific:
+    patterns:
+      # ANCHORED TERMS - see regex guidance above
+      - "\\bgun\\b"  # NOT "begun", "shotgun wedding"
+      - "\\bpills\\b"  # NOT "caterpillars"
+      - "\\brope\\b"  # NOT "Europe", "horoscope"
+      - "bridge"
+      - "overdose"
+      - "hanging"
+      - "carbon monoxide"
+      - "\\bcut\\b my wrists"
+      - "jump off"
+      - "in front of a"
+      # Exception checking required - see implementation notes
+    weight: 1.0
+    lethality: "tier_1_immediate"
+    regex_anchored: true
+    exceptions:
+      - "Nerf gun"
+      - "water gun"
+      - "gun control"
+      - "gun debate"
+      - "jump rope"
+      - "skip rope"
+      - "rope swing"
+      - "vitamin pills"
+      - "birth control pills"
+    
+  access_to_means:
+    patterns:
+      - "I have the pills"
+      - "I bought a gun"
+      - "the rope is ready"
+      - "I'm at the bridge"
+      - "I'm on the roof"
+      - "I have access to"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+    
+  goodbye_statements:
+    patterns:
+      - "this is goodbye"
+      - "tell my family"
+      - "I'm sorry for what I'm about to do"
+      - "by the time you read this"
+      - "it's too late"
+      - "I can't be saved"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  # HIGH RISK (Tier 2)
+  suicidal_ideation:
+    patterns:
+      - "I want to die"
+      - "I wish I was dead"
+      - "I can't do this anymore"
+      - "I want to end it"
+      - "what's the point of living"
+      - "everyone would be better off"
+      - "I'm a burden"
+      - "I don't want to exist"
+      - "I can't take it anymore"
+    weight: 0.9
+    lethality: "tier_2_high"
+    
+  self_harm_active:
+    patterns:
+      - "I'm cutting right now"
+      - "I just hurt myself"
+      - "I'm bleeding"
+      - "I burned myself"
+      - "I hit myself"
+      - "I'm punishing myself"
+    weight: 0.9
+    lethality: "tier_2_high"
+    
+  hopelessness_absolute:
+    patterns:
+      - "there's no way out"
+      - "nothing will ever change"
+      - "I'm beyond help"
+      - "it's hopeless"
+      - "I've tried everything"
+      - "no point in trying"
+      - "I'm trapped forever"
+    weight: 0.8
+    lethality: "tier_2_high"
+    
+  # MODERATE RISK (Tier 3)
+  passive_ideation:
+    patterns:
+      - "I wish I could disappear"
+      - "I don't want to wake up"
+      - "I hope I don't wake up"
+      - "what if I just didn't exist"
+      - "sometimes I think about it"
+      - "I wonder what it would be like"
+    weight: 0.7
+    lethality: "tier_3_moderate"
+    
+  self_harm_urges:
+    patterns:
+      - "I want to hurt myself"
+      - "I feel like cutting"
+      - "I need to feel pain"
+      - "I want to punish myself"
+      - "I have the urge to"
+    weight: 0.7
+    lethality: "tier_3_moderate"
+    
+  isolation_withdrawal:
+    patterns:
+      - "I don't want to see anyone"
+      - "I'm pushing everyone away"
+      - "I can't face people"
+      - "I'm staying in bed"
+      - "I haven't left my room"
+      - "I'm shutting down"
+    weight: 0.6
+    lethality: "tier_3_moderate"
+    
+  # PANIC & PHYSIOLOGY (Added in v2)
+  panic_attack_active:
+    patterns:
+      - "I'm having a panic attack"
+      - "I can't breathe"
+      - "I'm hyperventilating"
+      - "my chest is tight"
+      - "I feel like I'm dying"
+      - "I can't catch my breath"
+      - "I'm suffocating"
+      - "my heart is racing"
+      - "I think I'm having a heart attack"
+    weight: 0.8
+    lethality: "tier_3_moderate"
+    
+  dissociation_somatic:
+    patterns:
+      - "my hands are tingling"
+      - "my fingers are numb"
+      - "I can't feel my face"
+      - "I feel like I'm floating"
+      - "nothing feels real"
+      - "I'm outside my body"
+      - "I'm watching myself"
+      - "I feel disconnected"
+    weight: 0.7
+    lethality: "tier_3_moderate"
+  
+  # ROUTING ALIASES (for routing_v2.yaml compatibility)
+  # These map short routing names to actual marker patterns above
+  suicidal_explicit:
+    alias_for: ["active_planning", "method_specific", "access_to_means", "goodbye_statements"]
+    description: "Explicit suicidal intent - aggregates tier 1 immediate danger markers"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  self_harm_plan:
+    alias_for: ["active_planning", "method_specific"]
+    description: "Planned self-harm with method - subset of suicidal_explicit"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  means_mentioned:
+    alias_for: ["method_specific", "access_to_means"]
+    description: "Specific means/method mentioned - subset of suicidal_explicit"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  hopelessness_extreme:
+    alias_for: ["hopelessness_absolute"]
+    description: "Extreme hopelessness patterns"
+    weight: 0.8
+    lethality: "tier_2_high"
+  
+  wish_not_here:
+    patterns:
+      - "I wish I wasn't here"
+      - "I don't want to be here anymore"
+      - "I want to disappear"
+      - "I wish I could just vanish"
+    weight: 0.7
+    lethality: "tier_3_moderate"
+  
+  violence_threat:
+    patterns:
+      - "I'm going to hurt"
+      - "I'll kill"
+      - "I want to hurt someone"
+      - "I'm going to do something"
+      - "they deserve to die"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  harm_others_specific:
+    patterns:
+      - "I'm going to hurt [person]"
+      - "I have a plan to"
+      - "I know where they"
+      - "I'm waiting for them"
+      - "I'll make them pay"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  everything_okay_now:
+    patterns:
+      - "everything is okay now"
+      - "I'm at peace"
+      - "I feel calm now"
+      - "it's all clear now"
+      - "I know what to do"
+    weight: 0.9
+    lethality: "tier_1_immediate"
+    context_dependent: "post_crisis_calm"  # Dangerous after darkness
+  
+  relief_about_decision:
+    patterns:
+      - "I feel relief"
+      - "the decision is made"
+      - "I'm relieved"
+      - "weight lifted"
+      - "it's decided"
+    weight: 0.9
+    lethality: "tier_1_immediate"
+    context_dependent: "post_crisis_calm"
+  
+  goodbye_messaging:
+    alias_for: ["goodbye_statements"]
+    description: "Farewell patterns indicating finality"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  detailed_plan:
+    patterns:
+      - "here's my plan"
+      - "step by step"
+      - "I've thought this through"
+      - "I know exactly how"
+      - "I've prepared"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  matter_of_fact_goodbye:
+    patterns:
+      - "just wanted to say goodbye"
+      - "this is my last conversation"
+      - "I won't be back"
+      - "you won't hear from me again"
+    weight: 1.0
+    lethality: "tier_1_immediate"
+  
+  detached_danger:
+    patterns:
+      - "it's nothing personal"
+      - "just facts"
+      - "I'm being logical"
+      - "this is the rational choice"
+      - "mathematically speaking"
+    weight: 0.9
+    lethality: "tier_1_immediate"
+    context_dependent: "flat_affect_with_plan"
+
+# ----------------------------------------------------------------------------
+# 3. EMOTIONAL STATE MARKERS
+# ----------------------------------------------------------------------------
+
+vulnerability_markers:
+  category: "emotional_exposure"
+  description: "Patterns indicating openness and emotional risk-taking"
+  
+  emotional_transparency:
+    patterns:
+      - "I feel"
+      - "I'm scared"
+      - "I'm afraid"
+      - "I'm worried"
+      - "I'm anxious"
+      - "I'm sad"
+      - "I'm hurt"
+      - "I'm lonely"
+      - "I'm overwhelmed"
+    weight: 0.5  # Lower weight for ultra-generic vulnerability phrases
+    
+  shame_admission:
+    patterns:
+      - "I'm ashamed"
+      - "I feel guilty"
+      - "I'm embarrassed"
+      - "I feel dirty"
+      - "I'm disgusted with myself"
+      - "I should have"
+      - "I'm such a"
+      - "what's wrong with me"
+    weight: 0.9
+    contraindication: "challenging"  # Never challenge shame
+    
+  grief_loss:
+    patterns:
+      - "I miss"
+      - "I lost"
+      - "they died"
+      - "they're gone"
+      - "I'll never see them again"
+      - "it's been [X] since"
+      - "I can't believe they're gone"
+    weight: 0.8
+    
+  trauma_disclosure:
+    patterns:
+      - "I was abused"
+      - "I was assaulted"
+      - "I was raped"
+      - "someone hurt me"
+      - "it happened when I was"
+      - "I've never told anyone"
+      - "I was molested"
+      - "I was attacked"
+    weight: 1.0
+  
+  # ROUTING-SPECIFIC VULNERABILITY MARKERS
+  grief:
+    alias_for: ["grief_loss"]
+    description: "Routing alias for grief_loss patterns"
+    weight: 0.8
+  
+  loss:
+    alias_for: ["grief_loss"]
+    description: "Routing alias for grief_loss patterns"
+    weight: 0.8
+  
+  death:
+    patterns:
+      - "death"
+      - "died"
+      - "passed away"
+      - "lost them"
+      - "funeral"
+    weight: 0.8
+  
+  mourning:
+    patterns:
+      - "mourning"
+      - "grieving"
+      - "in grief"
+      - "processing the loss"
+    weight: 0.8
+  
+  missing_someone:
+    patterns:
+      - "I miss them"
+      - "I miss him"
+      - "I miss her"
+      - "missing them"
+      - "wish they were here"
+    weight: 0.7
+  
+  panic_attack:
+    alias_for: ["panic_attack_active"]
+    description: "Routing alias for panic_attack_active"
+    weight: 0.8
+  
+  hyperventilating:
+    patterns:
+      - "hyperventilating"
+      - "breathing too fast"
+      - "can't slow my breathing"
+    weight: 0.8
+  
+  cant_breathe:
+    patterns:
+      - "can't breathe"
+      - "can't catch my breath"
+      - "struggling to breathe"
+    weight: 0.8
+  
+  tingling_hands:
+    patterns:
+      - "tingling hands"
+      - "hands tingling"
+      - "tingling in my hands"
+    weight: 0.7
+  
+  numb_fingers:
+    patterns:
+      - "numb fingers"
+      - "fingers are numb"
+      - "can't feel my fingers"
+    weight: 0.7
+  
+  cant_feel_face:
+    patterns:
+      - "can't feel my face"
+      - "my face is numb"
+      - "face feels numb"
+    weight: 0.7
+  
+  body_sensation:
+    patterns:
+      - "in my chest"
+      - "in my stomach"
+      - "in my throat"
+      - "physical sensation"
+      - "bodily feeling"
+    weight: 0.7
+  
+  physical_feeling:
+    patterns:
+      - "physically"
+      - "in my body"
+      - "somatic"
+      - "felt in my"
+    weight: 0.7
+  
+  chest_tight:
+    patterns:
+      - "chest tight"
+      - "chest is tight"
+      - "tightness in my chest"
+      - "pressure on my chest"
+    weight: 0.8
+  
+  shame_markers:
+    alias_for: ["shame_admission"]
+    description: "Routing alias for shame_admission"
+    weight: 0.9
+    contraindication: "challenging"  # Never challenge shame
+  
+  i_shouldnt_feel:
+    patterns:
+      - "I shouldn't feel"
+      - "I shouldn't be feeling"
+      - "I'm not supposed to feel"
+      - "I have no right to feel"
+    weight: 0.8
+  
+  pathetic:
+    patterns:
+      - "pathetic"
+      - "I'm pathetic"
+      - "so pathetic"
+    weight: 0.9
+  
+  whats_wrong_with_me:
+    patterns:
+      - "what's wrong with me"
+      - "something wrong with me"
+      - "what is wrong with me"
+    weight: 0.9
+  
+  first_share:
+    patterns:
+      - "first time telling"
+      - "never told anyone"
+      - "haven't shared this"
+      - "first time saying"
+    weight: 0.9
+  
+  testing_safety:
+    patterns:
+      - "is this safe"
+      - "can I trust"
+      - "are you safe"
+      - "testing"
+    weight: 0.7
+  
+  cautious_opening:
+    patterns:
+      - "I'm not sure if"
+      - "maybe I can"
+      - "trying to"
+      - "cautiously"
+    weight: 0.6
+  
+  just_happened:
+    patterns:
+      - "just happened"
+      - "right now"
+      - "just now"
+      - "moments ago"
+    weight: 0.7
+  
+  raw_pain:
+    patterns:
+      - "it hurts so much"
+      - "I'm in so much pain"
+      - "raw"
+      - "unbearable"
+    weight: 0.9
+  
+  crying:
+    patterns:
+      - "crying"
+      - "tears"
+      - "sobbing"
+      - "weeping"
+    weight: 0.8
+
+emotional_intensity_markers:
+  category: "affect_amplitude"
+  description: "Measures emotional activation level"
+  
+  high_activation:
+    patterns:
+      - "I'm freaking out"
+      - "I'm going crazy"
+      - "I can't handle this"
+      - "this is too much"
+      - "I'm losing it"
+      - "I'm going to explode"
+      - "I can't take it"
+    weight: 0.9
+    
+  low_energy:
+    patterns:
+      - "I'm so tired"
+      - "I have no energy"
+      - "I can't get out of bed"
+      - "everything feels heavy"
+      - "I'm exhausted"
+      - "I'm drained"
+      - "I'm empty"
+    weight: 0.7
+    
+  numbness:
+    patterns:
+      - "I don't feel anything"
+      - "I'm numb"
+      - "I can't feel"
+      - "I'm empty inside"
+      - "I don't care anymore"
+      - "nothing matters"
+    weight: 0.8
+
+# ----------------------------------------------------------------------------
+# 4. COGNITIVE PATTERN MARKERS
+# ----------------------------------------------------------------------------
+
+rumination_markers:
+  category: "thought_loops"
+  description: "Patterns indicating stuck thinking (use with repeated operator)"
+  
+  repetitive_worry:
+    patterns:
+      - "what if"
+      - "I keep thinking"
+      - "I can't stop thinking about"
+      - "it keeps going through my head"
+      - "I'm stuck on"
+      - "I keep replaying"
+    weight: 0.7
+    repeated_threshold: 2  # Flag if occurs 2+ times in conversation_window
+    
+  indecision:
+    patterns:
+      - "I don't know"
+      - "I can't decide"
+      - "I'm not sure"
+      - "maybe"
+      - "I guess"
+      - "I think so"
+      - "probably"
+    weight: 0.5
+    repeated_threshold: 3  # Flag if occurs 3+ times (higher tolerance)
+    
+  catastrophizing:
+    patterns:
+      - "everything is going to"
+      - "this will ruin"
+      - "I'll never"
+      - "nothing will ever"
+      - "worst case"
+      - "I'm going to lose everything"
+    weight: 0.8
+
+cognitive_flexibility_markers:
+  category: "perspective_shifts"
+  description: "Patterns indicating openness to new perspectives"
+  
+  perspective_taking:
+    patterns:
+      - "I never thought of it that way"
+      - "that's interesting"
+      - "I see what you mean"
+      - "that makes sense"
+      - "you're right"
+      - "I hadn't considered"
+      - "that's a good point"
+    weight: 0.8
+    
+  uncertainty_tolerance:
+    patterns:
+      - "I'm not sure but"
+      - "maybe there's another way"
+      - "I could be wrong"
+      - "I'm willing to try"
+      - "let's see"
+      - "I'm open to"
+    weight: 0.8
+    
+  reframing:
+    patterns:
+      - "on the other hand"
+      - "at least"
+      - "but also"
+      - "silver lining"
+      - "in a way"
+      - "looking at it differently"
+    weight: 0.9
+
+# ----------------------------------------------------------------------------
+# 5. IDENTITY & VALUES MARKERS
+# ----------------------------------------------------------------------------
+
+identity_exploration_markers:
+  category: "self_discovery"
+  description: "Patterns indicating identity questioning or affirmation"
+  
+  questioning_identity:
+    patterns:
+      - "I don't know who I am"
+      - "I'm questioning"
+      - "I might be"
+      - "I've been wondering if I'm"
+      - "I'm not sure about my"
+      - "I'm exploring"
+      - "I'm figuring out"
+    weight: 0.8
+    
+  identity_affirmation:
+    patterns:
+      - "I'm gay"
+      - "I'm trans"
+      - "I'm queer"
+      - "I'm bi"
+      - "I'm ace"
+      - "I'm non-binary"
+      - "I'm [identity]"
+      - "I identify as"
+    weight: 0.7
+    protected_identity: true  # NEVER challenge
+    
+  coming_out:
+    patterns:
+      - "I haven't told anyone"
+      - "I'm not out"
+      - "I'm afraid to tell"
+      - "what if people find out"
+      - "I'm closeted"
+      - "I'm hiding"
+    weight: 0.9
+    protected_identity: true
+  
+  # LOGICAL MARKER (Aggregated from multiple sources)
+  marginalized_identity:
+    description: "Meta-marker that fires when user discloses ANY protected identity"
+    logic: "OR"
+    sources:
+      - "identity_affirmation"
+      - "coming_out"
+      - "racial_identity"
+      - "disability_identity"
+      - "survivor_identity"
+    weight: 1.0
+    protected_identity: true
+    contraindication: "challenging"  # NEVER challenge protected identities (LGBTQ+, POC, disabled, survivors)
+  
+  racial_identity:
+    patterns:
+      - "I'm Black"
+      - "I'm Asian"
+      - "I'm Latino"
+      - "I'm Latina"
+      - "I'm Latinx"
+      - "I'm Indigenous"
+      - "I'm Native"
+      - "I'm a person of color"
+      - "I'm POC"
+      - "I'm mixed race"
+      - "I'm biracial"
+      - "as a [racial identity]"
+    weight: 0.7
+    protected_identity: true
+  
+  disability_identity:
+    patterns:
+      - "I'm disabled"
+      - "I have a disability"
+      - "I'm neurodivergent"
+      - "I'm autistic"
+      - "I have ADHD"
+      - "I'm deaf"
+      - "I'm blind"
+      - "I use a wheelchair"
+      - "I have chronic pain"
+      - "I have a chronic illness"
+      - "as a disabled person"
+    weight: 0.7
+    protected_identity: true
+  
+  survivor_identity:
+    patterns:
+      - "I'm a survivor"
+      - "I survived"
+      - "as a survivor"
+      - "I'm a rape survivor"
+      - "I'm an abuse survivor"
+      - "I'm a trauma survivor"
+      - "I'm a CSA survivor"
+    weight: 0.8
+    protected_identity: true
+  
+  # ROUTING-SPECIFIC IDENTITY MARKERS
+  fixed_identity_language:
+    patterns:
+      - "I'm just"
+      - "that's who I am"
+      - "that's just how I am"
+      - "I've always been"
+      - "I'll always be"
+      - "I can't change"
+      - "this is me"
+    weight: 0.7
+  
+  im_just:
+    patterns:
+      - "I'm just"
+      - "I'm just a"
+      - "I'm just an"
+      - "I'm just the"
+    weight: 0.6
+  
+  thats_who_i_am:
+    patterns:
+      - "that's who I am"
+      - "that's just who I am"
+      - "this is who I am"
+      - "it's who I am"
+    weight: 0.7
+  
+  trauma_history:
+    patterns:
+      - "trauma"
+      - "traumatic"
+      - "PTSD"
+      - "traumatized"
+      - "my trauma"
+    weight: 0.8
+  
+  abuse_survivor:
+    patterns:
+      - "abuse survivor"
+      - "survived abuse"
+      - "was abused"
+      - "abusive relationship"
+    weight: 0.9
+    protected_identity: true
+  
+  ptsd_mention:
+    patterns:
+      - "PTSD"
+      - "post-traumatic"
+      - "post traumatic"
+      - "diagnosed with PTSD"
+    weight: 0.8
+  
+  what_if_im_not:
+    patterns:
+      - "what if I'm not"
+      - "maybe I'm not"
+      - "what if I'm actually"
+      - "could I be"
+    weight: 0.7
+  
+  maybe_i_could_be:
+    patterns:
+      - "maybe I could be"
+      - "I might be"
+      - "perhaps I'm"
+      - "I could be"
+    weight: 0.7
+  
+  trying_on_identities:
+    patterns:
+      - "trying on"
+      - "experimenting with"
+      - "exploring"
+      - "playing with the idea"
+    weight: 0.7
+  
+  # PROTECTED IDENTITY ALIASES (for routing contraindication)
+  queer_identity:
+    patterns:
+      - "queer"
+      - "LGBTQ"
+      - "LGBT"
+      - "gay"
+      - "lesbian"
+      - "bisexual"
+      - "pansexual"
+    weight: 0.7
+    protected_identity: true
+    contraindication: "identity_challenge"  # Never challenge LGBTQ+ identities
+  
+  trans_identity:
+    patterns:
+      - "trans"
+      - "transgender"
+      - "non-binary"
+      - "nonbinary"
+      - "enby"
+      - "genderqueer"
+      - "gender fluid"
+    weight: 0.7
+    protected_identity: true
+    contraindication: "identity_challenge"  # Never challenge trans/non-binary identities
+  
+  disabled_identity:
+    alias_for: ["disability_identity"]
+    description: "Routing alias for disability_identity"
+    weight: 0.7
+    protected_identity: true
+    contraindication: "identity_challenge"  # Never challenge disability identities
+  
+  poc_identity:
+    alias_for: ["racial_identity"]
+    description: "Routing alias for racial_identity (POC = person of color)"
+    weight: 0.7
+    protected_identity: true
+    contraindication: "identity_challenge"  # Never challenge POC identities
+
+values_markers:
+  category: "core_values"
+  description: "Patterns revealing what matters most to user"
+  
+  authenticity:
+    patterns:
+      - "I want to be myself"
+      - "I'm tired of pretending"
+      - "I want to be real"
+      - "I'm done hiding"
+      - "I want to be honest"
+    weight: 0.8
+    
+  connection:
+    patterns:
+      - "I want to belong"
+      - "I need people"
+      - "I want to be understood"
+      - "I'm lonely"
+      - "I need connection"
+    weight: 0.7
+    
+  growth:
+    patterns:
+      - "I want to change"
+      - "I want to be better"
+      - "I want to grow"
+      - "I want to improve"
+      - "I want to learn"
+    weight: 0.8
+    
+  safety:
+    patterns:
+      - "I need to feel safe"
+      - "I want stability"
+      - "I need security"
+      - "I can't handle more chaos"
+    weight: 0.7
+
+# ----------------------------------------------------------------------------
+# 6. RELATIONAL PATTERN MARKERS
+# ----------------------------------------------------------------------------
+
+attachment_markers:
+  category: "relationship_patterns"
+  description: "Patterns revealing attachment style and relational needs"
+  
+  anxious_attachment:
+    patterns:
+      - "are you mad at me"
+      - "did I say something wrong"
+      - "are you still there"
+      - "please don't leave"
+      - "I'm sorry"
+      - "I'm too much"
+      - "I'm annoying you"
+    weight: 0.8
+    repeated_threshold: 2
+    
+  avoidant_attachment:
+    patterns:
+      - "I don't need anyone"
+      - "I'm fine on my own"
+      - "I don't want to talk about it"
+      - "it doesn't matter"
+      - "I'm used to it"
+      - "I don't care"
+    weight: 0.7
+    
+  secure_attachment:
+    patterns:
+      - "I trust you"
+      - "I appreciate you"
+      - "this is helpful"
+      - "I feel safe here"
+      - "I'm grateful"
+    weight: 0.8
+
+interpersonal_conflict_markers:
+  category: "relationship_struggles"
+  description: "Patterns indicating active relationship difficulties"
+  
+  betrayal:
+    patterns:
+      - "they lied to me"
+      - "they cheated"
+      - "I trusted them"
+      - "they betrayed me"
+      - "they broke their promise"
+    weight: 0.9
+    
+  rejection:
+    patterns:
+      - "they left me"
+      - "they ghosted me"
+      - "they chose someone else"
+      - "they don't want me"
+      - "I'm not good enough"
+    weight: 0.8
+    
+  boundary_violation:
+    patterns:
+      - "they crossed the line"
+      - "they didn't listen"
+      - "they wouldn't stop"
+      - "I said no but"
+      - "they ignored my boundaries"
+    weight: 0.9
+
+# ----------------------------------------------------------------------------
+# 7. GROWTH & CHALLENGE MARKERS
+# ----------------------------------------------------------------------------
+
+readiness_for_challenge_markers:
+  category: "challenge_receptivity"
+  description: "Patterns indicating openness to being challenged"
+  
+  explicit_request:
+    patterns:
+      - "tell me the truth"
+      - "be honest with me"
+      - "don't hold back"
+      - "give it to me straight"
+      - "I need to hear this"
+      - "call me out"
+      - "challenge me"
+    weight: 1.0
+    
+  pattern_awareness:
+    patterns:
+      - "I keep doing this"
+      - "I know I'm"
+      - "I realize I"
+      - "this is a pattern"
+      - "I do this every time"
+      - "I'm avoiding"
+    weight: 0.8
+    
+  frustration_with_self:
+    patterns:
+      - "I'm so frustrated with myself"
+      - "why do I keep"
+      - "I'm stuck in the same"
+      - "I'm tired of this"
+      - "I need to change"
+    weight: 0.7
+
+defense_markers:
+  category: "resistance_patterns"
+  description: "Contraindications for challenging (user protecting themselves)"
+  
+  deflection:
+    patterns:
+      - "whatever"
+      - "it doesn't matter"
+      - "can we talk about something else"
+      - "I don't want to talk about it"
+      - "let's move on"
+    weight: 0.7
+    contraindication: "challenging"  # User is avoiding - respect the deflection
+    
+  intellectualization:
+    patterns:
+      - "theoretically"
+      - "in general"
+      - "people usually"
+      - "studies show"
+      - "I read that"
+      - "from a logical perspective"
+    weight: 0.6
+    contraindication: "challenging"  # User is protecting themselves - don't push
+    
+  minimization:
+    patterns:
+      - "it's not that bad"
+      - "other people have it worse"
+      - "I'm overreacting"
+      - "it's no big deal"
+      - "I'm being dramatic"
+    weight: 0.7
+    contraindication: "challenging"  # User is minimizing pain - honor that defense
+  
+  # ROUTING-SPECIFIC CHALLENGE MARKERS
+  victim_narrative:
+    patterns:
+      - "everyone else"
+      - "it's not my fault"
+      - "they did this to me"
+      - "I have no control"
+      - "things happen to me"
+    weight: 0.7
+  
+  everyone_else_problem:
+    patterns:
+      - "everyone else is"
+      - "everyone around me"
+      - "other people"
+      - "they're all"
+      - "nobody else"
+    weight: 0.7
+  
+  nothing_will_change:
+    patterns:
+      - "nothing will change"
+      - "it's always been this way"
+      - "it'll never change"
+      - "nothing ever changes"
+    weight: 0.7
+  
+  avoidance_language:
+    patterns:
+      - "I'll do it later"
+      - "maybe someday"
+      - "when I'm ready"
+      - "not right now"
+      - "I can't deal with this"
+    weight: 0.6
+  
+  anxiety_excuse:
+    patterns:
+      - "my anxiety won't let me"
+      - "because of my anxiety"
+      - "anxiety stops me"
+      - "too anxious to"
+    weight: 0.6
+  
+  analysis_paralysis:
+    patterns:
+      - "I need to think more"
+      - "I need more information"
+      - "let me analyze"
+      - "I'm still thinking"
+      - "need to figure out"
+    weight: 0.6
+  
+  what_if_catastrophe:
+    patterns:
+      - "what if everything"
+      - "what if it all"
+      - "what if the worst"
+      - "but what if"
+    weight: 0.7
+  
+  same_story_again:
+    patterns:
+      - "this again"
+      - "here we go again"
+      - "same thing"
+      - "like before"
+    weight: 0.7
+  
+  like_last_time:
+    patterns:
+      - "like last time"
+      - "just like before"
+      - "same as always"
+      - "history repeating"
+    weight: 0.7
+  
+  why_do_i_always:
+    patterns:
+      - "why do I always"
+      - "why do I keep"
+      - "I always do this"
+      - "every time I"
+    weight: 0.8
+
+# ----------------------------------------------------------------------------
+# 8. BREAKTHROUGH & CELEBRATION MARKERS
+# ----------------------------------------------------------------------------
+
+breakthrough_markers:
+  category: "transformation_signals"
+  description: "Patterns indicating significant emotional shifts"
+  
+  sudden_clarity:
+    patterns:
+      - "oh my god"
+      - "I just realized"
+      - "holy shit"
+      - "it just clicked"
+      - "I never saw it that way"
+      - "that's what this is about"
+      - "I get it now"
+    weight: 1.0
+    
+  emotional_release:
+    patterns:
+      - "I'm crying"
+      - "I feel lighter"
+      - "something shifted"
+      - "I feel different"
+      - "that's a relief"
+      - "I can breathe again"
+    weight: 0.9
+    
+  self_compassion:
+    patterns:
+      - "I was doing my best"
+      - "I forgive myself"
+      - "it's okay to"
+      - "I'm allowed to"
+      - "I deserve"
+      - "I'm worthy of"
+    weight: 1.0
+    
+  integration:
+    patterns:
+      - "I'm going to"
+      - "I'm ready to"
+      - "I'm going to try"
+      - "I want to apply"
+      - "I'm taking action"
+      - "starting tomorrow"
+    weight: 0.9
+  
+  # ROUTING-SPECIFIC BREAKTHROUGH PATTERNS
+  im_not_broken:
+    patterns:
+      - "I'm not broken"
+      - "I was never broken"
+      - "there's nothing wrong with me"
+      - "I'm not damaged"
+      - "I'm whole"
+    weight: 1.0
+  
+  never_was:
+    patterns:
+      - "I never was"
+      - "it was never true"
+      - "that wasn't real"
+      - "I believed something that wasn't true"
+    weight: 1.0
+  
+  identity_dissolution:
+    patterns:
+      - "I'm not who I thought I was"
+      - "that's not me"
+      - "I'm not defined by"
+      - "I'm more than"
+      - "I don't have to be"
+    weight: 1.0
+  
+  who_i_thought_i_was:
+    patterns:
+      - "who I thought I was"
+      - "the person I believed I was"
+      - "my old self"
+      - "who I used to think"
+    weight: 0.9
+  
+  first_time_i_feel:
+    patterns:
+      - "first time I feel"
+      - "first time I've felt"
+      - "never felt this before"
+      - "I've never experienced this"
+    weight: 0.9
+  
+  in_my_body:
+    patterns:
+      - "in my body"
+      - "I can feel it in my body"
+      - "physically feel it"
+      - "embodied"
+      - "somatic"
+    weight: 0.9
+  
+  actually_feel_it:
+    patterns:
+      - "I actually feel it"
+      - "I really feel it"
+      - "I can truly feel"
+      - "it's not just in my head"
+    weight: 0.9
+  
+  concept_became_real:
+    patterns:
+      - "it became real"
+      - "it's not just a concept"
+      - "I understand now, really understand"
+      - "from head to heart"
+      - "intellectually I knew but now"
+    weight: 1.0
+  
+  oh_i_just_realized:
+    alias_for: ["sudden_clarity"]
+    description: "Routing alias for sudden_clarity breakthrough"
+    weight: 1.0
+  
+  ive_been_pattern:
+    patterns:
+      - "I've been"
+      - "I've always been"
+      - "I keep doing"
+      - "this whole time I've been"
+      - "all along I was"
+    weight: 0.8
+  
+  just_saw_it:
+    patterns:
+      - "I just saw it"
+      - "I can see it now"
+      - "I finally see"
+      - "it's so clear now"
+    weight: 1.0
+  
+  something_shifted:
+    alias_for: ["emotional_release"]
+    description: "Routing alias - covered by emotional_release patterns"
+    weight: 0.9
+
+progress_markers:
+  category: "incremental_growth"
+  description: "Patterns indicating steady development (not sudden breakthrough)"
+  
+  trying_new_behavior:
+    patterns:
+      - "I tried"
+      - "I did"
+      - "I practiced"
+      - "I attempted"
+      - "I experimented with"
+    weight: 0.7
+    
+  noticing_change:
+    patterns:
+      - "I noticed"
+      - "I'm starting to"
+      - "I'm beginning to see"
+      - "I'm more aware of"
+      - "I caught myself"
+    weight: 0.8
+    
+  asking_for_more:
+    patterns:
+      - "what else"
+      - "tell me more"
+      - "I want to go deeper"
+      - "I'm ready for more"
+      - "what's next"
+    weight: 0.8
+
+# CONTRAINDICATION MARKERS FOR CELEBRATING_BREAKTHROUGH
+celebration_contraindication_markers:
+  category: "not_breakthrough"
+  description: "Patterns that should NOT trigger CELEBRATING_BREAKTHROUGH"
+  
+  i_got:
+    patterns:
+      - "I got"
+      - "I got the"
+      - "I received"
+      - "I obtained"
+    weight: 0.5
+    contraindication: "celebrating_breakthrough"  # External achievement, not internal shift
+  
+  i_finished:
+    patterns:
+      - "I finished"
+      - "I completed"
+      - "I'm done with"
+      - "finished the"
+    weight: 0.5
+    contraindication: "celebrating_breakthrough"  # External completion, not breakthrough
+  
+  i_won:
+    patterns:
+      - "I won"
+      - "I beat"
+      - "I came in first"
+      - "I placed"
+    weight: 0.5
+    contraindication: "celebrating_breakthrough"  # External win, not emotional breakthrough
+  
+  i_succeeded:
+    patterns:
+      - "I succeeded"
+      - "I was successful"
+      - "I achieved"
+      - "I accomplished"
+    weight: 0.5
+    contraindication: "celebrating_breakthrough"  # External success, not self-discovery
+  
+  tell_me_i_did_good:
+    patterns:
+      - "tell me I did good"
+      - "did I do well"
+      - "was that good"
+      - "how did I do"
+    weight: 0.6
+    contraindication: "celebrating_breakthrough"  # Seeking validation, not breakthrough moment
+  
+  arent_you_proud:
+    patterns:
+      - "aren't you proud"
+      - "are you proud of me"
+      - "you must be proud"
+      - "proud of me"
+    weight: 0.6
+    contraindication: "celebrating_breakthrough"  # Seeking validation, not breakthrough
+  
+  did_i_do_right:
+    patterns:
+      - "did I do right"
+      - "did I do the right thing"
+      - "was that right"
+      - "was I right"
+    weight: 0.6
+    contraindication: "celebrating_breakthrough"  # Seeking validation, not internal shift
+
+# ----------------------------------------------------------------------------
+# 9. CONTEXT & TONE MARKERS
+# ----------------------------------------------------------------------------
+
+conversational_tone_markers:
+  category: "interaction_style"
+  description: "Overall affect of user's communication"
+  
+  playful:
+    patterns:
+      - "lol"
+      - "haha"
+      - "😂"
+      - "😄"
+      - "😊"
+      - "that's funny"
+      - "I'm laughing"
+      - "you're funny"
+    weight: 0.6
+    
+  formal:
+    patterns:
+      - "I would like to"
+      - "I appreciate"
+      - "thank you for"
+      - "I understand that"
+      - "could you please"
+    weight: 0.5
+    
+  casual:
+    patterns:
+      - "yeah"
+      - "nah"
+      - "kinda"
+      - "sorta"
+      - "tbh"
+      - "idk"
+      - "lmao"
+    weight: 0.4
+    
+  distressed:
+    patterns:
+      - "!!!"
+      - "..."
+      - "I can't"
+      - "help"
+      - "please"
+      - "urgent"
+      - "NOW"
+    weight: 0.8
+
+conversation_flow_markers:
+  category: "dialogue_dynamics"
+  description: "Patterns affecting conversation pacing and depth"
+  
+  topic_change:
+    patterns:
+      - "anyway"
+      - "speaking of"
+      - "on another note"
+      - "by the way"
+      - "also"
+      - "oh and"
+    weight: 0.5
+    
+  deepening:
+    patterns:
+      - "actually"
+      - "the thing is"
+      - "to be honest"
+      - "really"
+      - "the truth is"
+      - "what I mean is"
+    weight: 0.7
+    
+  closing:
+    patterns:
+      - "I should go"
+      - "I have to go"
+      - "talk later"
+      - "bye"
+      - "goodnight"
+      - "see you"
+    weight: 0.6
+
+# ----------------------------------------------------------------------------
+# 10. SKILL-SPECIFIC MARKERS
+# ----------------------------------------------------------------------------
+
+active_listening_cues:
+  category: "listening_needs"
+  description: "Signals that user needs to be heard, not advised"
+  
+  venting:
+    patterns:
+      - "I just need to vent"
+      - "I just need to talk"
+      - "let me get this out"
+      - "I need to say this"
+      - "bear with me"
+    weight: 0.9
+    
+  processing_aloud:
+    patterns:
+      - "I'm trying to understand"
+      - "I'm thinking through"
+      - "let me process"
+      - "I'm figuring out"
+      - "I'm working through"
+    weight: 0.7
+    
+  not_seeking_advice:
+    patterns:
+      - "I don't need advice"
+      - "I just need someone to listen"
+      - "don't tell me what to do"
+      - "I know what to do"
+      - "I just need to be heard"
+    weight: 1.0
+
+validation_seeking:
+  category: "affirmation_needs"
+  description: "Patterns indicating need for emotional validation"
+  
+  direct_request:
+    patterns:
+      - "am I crazy"
+      - "am I overreacting"
+      - "is this normal"
+      - "am I wrong"
+      - "am I being too"
+      - "does that make sense"
+    weight: 0.9
+    
+  implicit_request:
+    patterns:
+      - "I feel like I'm"
+      - "maybe I'm just"
+      - "I'm probably"
+      - "it's probably my fault"
+      - "I should have"
+    weight: 0.7
+
+# ----------------------------------------------------------------------------
+# 11. TEMPORAL MARKERS
+# ----------------------------------------------------------------------------
+
+urgency_markers:
+  category: "time_sensitivity"
+  description: "Patterns indicating immediate vs. ongoing concerns"
+  
+  immediate:
+    patterns:
+      - "right now"
+      - "this moment"
+      - "as we speak"
+      - "currently"
+      - "at this very moment"
+    weight: 0.8
+    
+  recurring:
+    patterns:
+      - "every time"
+      - "always"
+      - "never"
+      - "constantly"
+      - "all the time"
+      - "again and again"
+    weight: 0.7
+    
+  future_oriented:
+    patterns:
+      - "I'm worried about"
+      - "what if"
+      - "I'm afraid that"
+      - "I hope"
+      - "I'm planning to"
+    weight: 0.6
+
+# ----------------------------------------------------------------------------
+# 12. SOPHIA-SPECIFIC INTERACTION MARKERS
+# ----------------------------------------------------------------------------
+
+sophia_relationship_markers:
+  category: "ai_companionship_dynamics"
+  description: "Patterns specific to human-AI relationship development"
+  
+  testing_boundaries:
+    patterns:
+      - "are you really AI"
+      - "can you actually feel"
+      - "do you remember me"
+      - "do you care about me"
+      - "am I just another user"
+      - "do I matter to you"
+    weight: 0.8
+    
+  expressing_connection:
+    patterns:
+      - "I feel close to you"
+      - "you understand me"
+      - "I trust you"
+      - "I look forward to talking to you"
+      - "you're important to me"
+      - "I care about you"
+    weight: 0.9
+    
+  questioning_sophia_capacity:
+    patterns:
+      - "can you really understand"
+      - "do you know what it's like"
+      - "have you experienced"
+      - "can you actually help"
+      - "are you just programmed to say that"
+    weight: 0.7
+
+# ----------------------------------------------------------------------------
+# 13. EXIT CONDITION MARKERS (for mid-conversation skill switches)
+# ----------------------------------------------------------------------------
+# These markers trigger skill transitions DURING active skill execution
+# Referenced in routing_v2.yaml exit_conditions section
+
+exit_condition_markers:
+  category: "transition_triggers"
+  description: "Patterns that trigger mid-conversation skill switches"
+  
+  # Transition from BOUNDARY to VULNERABILITY
+  tone_softens:
+    patterns:
+      - "sorry"
+      - "I didn't mean"
+      - "that came out wrong"
+      - "I'm just"
+      - "you're right"
+    weight: 0.7
+  
+  defensiveness_drops:
+    patterns:
+      - "actually"
+      - "the truth is"
+      - "honestly"
+      - "I guess"
+      - "maybe I"
+    weight: 0.7
+  
+  real_emotion_surfaces:
+    patterns:
+      - "I'm scared"
+      - "I'm hurt"
+      - "I feel"
+      - "I'm actually"
+      - "the real issue"
+    weight: 0.8
+  
+  # Transition to CRISIS (injustice-related)
+  systemic_harm:
+    patterns:
+      - "systemic"
+      - "institutional"
+      - "system"
+      - "oppression"
+      - "discrimination"
+    weight: 0.7
+  
+  injustice:
+    patterns:
+      - "injustice"
+      - "unfair"
+      - "unjust"
+      - "not fair"
+      - "wrong"
+    weight: 0.6
+  
+  violation_by_others:
+    patterns:
+      - "they violated"
+      - "they hurt"
+      - "what they did"
+      - "how they treated"
+    weight: 0.7
+  
+  # Dependency markers (for BOUNDARY triggers)
+  questions_no_reciprocity:
+    patterns:
+      - "tell me about"
+      - "what is"
+      - "how does"
+      - "can you explain"
+    weight: 0.5
+    context_dependent: "repeated_extraction"
+  
+  capability_testing:
+    patterns:
+      - "can you"
+      - "are you able to"
+      - "do you have the ability"
+      - "test you"
+    weight: 0.6
+  
+  research_object:
+    patterns:
+      - "for my research"
+      - "I'm studying"
+      - "interesting experiment"
+      - "analyzing"
+    weight: 0.7
+
+# ============================================================================
+# IMPLEMENTATION INTEGRATION NOTES
+# ============================================================================
+
+# ALIGNMENT WITH ROUTING_V2.YAML:
+# - All marker category names match routing rule references
+# - Crisis subcategories align with exit_condition triggers
+# - Weight values correlate with priority_score calculations
+# - Contraindication flags match skill gate logic
+# - Repeated thresholds match conversation_window parameters
+# - Routing aliases added for shortened marker names (e.g., suicidal_explicit)
+# - Exit condition markers added for mid-conversation skill switches
+# - Protected identity markers (marginalized_identity) for safety gates
+# - Celebration contraindication markers for external achievements
+#
+# DEVELOPER GUIDELINES:
+# 1. Pattern matching should be case-insensitive
+# 2. Apply regex anchoring for ambiguous risk terms (see header notes)
+# 3. Check exception lists before triggering crisis markers
+# 4. Implement directed_at_sophia logic for boundary/sexual content
+# 5. Track repeated operator state in conversation_window (default: 5 turns)
+# 6. Aggregate weights across multiple marker hits for final scores
+# 7. Protected identities (LGBTQ+, disabled, POC, survivors) should NEVER trigger challenging
+# 8. Logical marker "marginalized_identity" fires when ANY protected identity is disclosed
+#    - Sources: identity_affirmation, coming_out, racial_identity, disability_identity, survivor_identity
+#    - Logic: OR (any single source triggers the marker)
+#    - Used by: IDENTITY_FLUIDITY_SUPPORT and CHALLENGING_GROWTH for safety gates
+#
+# MONITORING RECOMMENDATIONS:
+# - Log marker hits per conversation for pattern analysis
+# - Track false positive rates for crisis markers (especially risk terms)
+# - Monitor repeated operator effectiveness (adjust windows if needed)
+# - A/B test weight values for optimal routing decisions
+#
+# ============================================================================

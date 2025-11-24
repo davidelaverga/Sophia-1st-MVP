@@ -10,8 +10,6 @@ import json
 import time
 import statistics
 import struct
-import wave
-import io
 from dataclasses import dataclass, field
 from typing import List
 from datetime import datetime
@@ -20,6 +18,7 @@ from datetime import datetime
 @dataclass
 class SessionMetrics:
     """Metrics for a single WebSocket session"""
+
     session_id: str
     start_time: float
     end_time: float = 0.0
@@ -53,18 +52,18 @@ class SessionMetrics:
         return sorted_latencies[index]
 
 
-def generate_pcm16_audio(duration_seconds: float = 1.0, sample_rate: int = 16000) -> bytes:
+def generate_pcm16_audio(
+    duration_seconds: float = 1.0, sample_rate: int = 16000
+) -> bytes:
     """Generate PCM16 audio data (silence) for testing"""
     num_samples = int(duration_seconds * sample_rate)
     # Generate silence (zeros)
-    audio_data = struct.pack(f'{num_samples}h', *([0] * num_samples))
+    audio_data = struct.pack(f"{num_samples}h", *([0] * num_samples))
     return audio_data
 
 
 async def run_websocket_session(
-    server_url: str,
-    session_id: str,
-    num_messages: int = 3
+    server_url: str, session_id: str, num_messages: int = 3
 ) -> SessionMetrics:
     """Run a single WebSocket session with real audio messages"""
     metrics = SessionMetrics(session_id=session_id, start_time=time.time())
@@ -82,7 +81,7 @@ async def run_websocket_session(
                 message = {
                     "type": "audio",
                     "data": audio_data.hex(),  # Convert bytes to hex string
-                    "session_id": session_id
+                    "session_id": session_id,
                 }
 
                 send_start = time.time()
@@ -91,16 +90,18 @@ async def run_websocket_session(
 
                 # Wait for response
                 try:
-                    response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                    await asyncio.wait_for(websocket.recv(), timeout=10.0)
                     recv_time = time.time()
                     latency_ms = (recv_time - send_start) * 1000
                     metrics.latencies_ms.append(latency_ms)
                     metrics.messages_received += 1
 
-                    print(f"  Session {session_id} msg {i+1}: {latency_ms:.2f}ms latency")
+                    print(
+                        f"  Session {session_id} msg {i + 1}: {latency_ms:.2f}ms latency"
+                    )
 
                 except asyncio.TimeoutError:
-                    error_msg = f"Message {i+1} timeout"
+                    error_msg = f"Message {i + 1} timeout"
                     metrics.errors.append(error_msg)
                     print(f"  ⚠️ Session {session_id}: {error_msg}")
 
@@ -121,10 +122,10 @@ async def run_websocket_session(
 async def run_load_test(
     server_url: str = "ws://localhost:8000/ws/voice",
     num_sessions: int = 5,
-    messages_per_session: int = 3
+    messages_per_session: int = 3,
 ):
     """Run parallel load test with multiple WebSocket sessions"""
-    print(f"\n🚀 Starting Load Test")
+    print("\n🚀 Starting Load Test")
     print(f"   Server: {server_url}")
     print(f"   Parallel sessions: {num_sessions}")
     print(f"   Messages per session: {messages_per_session}")
@@ -133,7 +134,7 @@ async def run_load_test(
     # Create parallel sessions
     tasks = []
     for i in range(num_sessions):
-        session_id = f"load_test_session_{i+1}"
+        session_id = f"load_test_session_{i + 1}"
         task = run_websocket_session(server_url, session_id, messages_per_session)
         tasks.append(task)
 
@@ -143,9 +144,9 @@ async def run_load_test(
     total_duration = time.time() - start_time
 
     # Analyze results
-    print(f"\n📊 Load Test Results")
+    print("\n📊 Load Test Results")
     print(f"   Total duration: {total_duration:.2f}s")
-    print(f"   ─" * 40)
+    print("   ─" * 40)
 
     successful_sessions = []
     failed_sessions = []
@@ -160,7 +161,9 @@ async def run_load_test(
             status = "✅" if not result.errors else "⚠️"
             print(f"   {status} {result.session_id}:")
             print(f"      Duration: {result.duration_ms:.2f}ms")
-            print(f"      Messages: {result.messages_sent} sent, {result.messages_received} received")
+            print(
+                f"      Messages: {result.messages_sent} sent, {result.messages_received} received"
+            )
             print(f"      P50 latency: {result.p50_latency:.2f}ms")
             print(f"      P95 latency: {result.p95_latency:.2f}ms")
             print(f"      P99 latency: {result.p99_latency:.2f}ms")
@@ -180,34 +183,38 @@ async def run_load_test(
             total_messages_received += session.messages_received
             total_errors += len(session.errors)
 
-        print(f"\n📈 Overall Statistics")
+        print("\n📈 Overall Statistics")
         print(f"   Successful sessions: {len(successful_sessions)}/{num_sessions}")
         print(f"   Failed sessions: {len(failed_sessions)}")
         print(f"   Total messages sent: {total_messages_sent}")
         print(f"   Total messages received: {total_messages_received}")
-        print(f"   Success rate: {(total_messages_received/total_messages_sent*100):.1f}%")
+        print(
+            f"   Success rate: {(total_messages_received / total_messages_sent * 100):.1f}%"
+        )
         print(f"   Total errors: {total_errors}")
 
         if all_latencies:
-            print(f"\n⏱️  Latency Metrics (all sessions)")
+            print("\n⏱️  Latency Metrics (all sessions)")
             print(f"   P50: {statistics.median(all_latencies):.2f}ms")
             sorted_all = sorted(all_latencies)
-            print(f"   P95: {sorted_all[int(len(sorted_all)*0.95)]:.2f}ms")
-            print(f"   P99: {sorted_all[int(len(sorted_all)*0.99)]:.2f}ms")
+            print(f"   P95: {sorted_all[int(len(sorted_all) * 0.95)]:.2f}ms")
+            print(f"   P99: {sorted_all[int(len(sorted_all) * 0.99)]:.2f}ms")
             print(f"   Min: {min(all_latencies):.2f}ms")
             print(f"   Max: {max(all_latencies):.2f}ms")
             print(f"   Mean: {statistics.mean(all_latencies):.2f}ms")
 
     # Check if test passed
-    success_rate = (len(successful_sessions) / num_sessions) * 100 if num_sessions > 0 else 0
+    success_rate = (
+        (len(successful_sessions) / num_sessions) * 100 if num_sessions > 0 else 0
+    )
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     if success_rate >= 80:
-        print(f"✅ LOAD TEST PASSED")
+        print("✅ LOAD TEST PASSED")
         print(f"   {success_rate:.1f}% sessions successful (threshold: 80%)")
         return True
     else:
-        print(f"❌ LOAD TEST FAILED")
+        print("❌ LOAD TEST FAILED")
         print(f"   {success_rate:.1f}% sessions successful (threshold: 80%)")
         return False
 
@@ -215,14 +222,15 @@ async def run_load_test(
 async def main():
     """Main entry point"""
     # Test with different load levels
-    print("="*60)
+    print("=" * 60)
     print("REAL LOAD TESTING - Sophia Voice Pipeline")
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*60)
+    print("=" * 60)
 
     # Check if server is accessible
     try:
         import aiohttp
+
         async with aiohttp.ClientSession() as session:
             async with session.get("http://localhost:8000/health") as resp:
                 if resp.status == 200:
@@ -237,15 +245,15 @@ async def main():
     test_passed = await run_load_test(
         server_url="ws://localhost:8000/ws/voice",
         num_sessions=5,
-        messages_per_session=2
+        messages_per_session=2,
     )
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     if test_passed:
         print("🎉 ALL TESTS PASSED")
     else:
         print("⚠️ SOME TESTS FAILED - Review results above")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     return test_passed
 
