@@ -18,6 +18,7 @@ from app.services.tier0_classifier import (
     INTENT_KNOWLEDGE,
     classify_tier0_fast,
 )
+from app.obs.metrics import track_intent, track_mode, track_utility_path
 
 logger = logging.getLogger("sophia-backend")
 
@@ -136,6 +137,11 @@ async def classify_intent_and_mode(
 
     if chosen_intent == Intent.EMOTIONAL_SUPPORT:
         reasoning = " ".join(reason_chunks)
+
+        # Track metrics
+        track_intent(Intent.EMOTIONAL_SUPPORT.value)
+        track_mode(CurrentMode.EMOTIONAL_SUPPORT.value)
+
         return IntentResult(
             intent=Intent.EMOTIONAL_SUPPORT,
             current_mode=CurrentMode.EMOTIONAL_SUPPORT,
@@ -155,6 +161,11 @@ async def classify_intent_and_mode(
 
     reasoning = " ".join(reason_chunks + [utility_path_result.reasoning])
     combined_confidence = max(final_confidence, utility_path_result.confidence)
+
+    # Track metrics
+    track_intent(Intent.UTILITY.value)
+    track_mode(current_mode.value)
+    track_utility_path(utility_path.value)
 
     return IntentResult(
         intent=Intent.UTILITY,
