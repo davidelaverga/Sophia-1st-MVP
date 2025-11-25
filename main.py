@@ -18,7 +18,11 @@ from app.config_validation import validate_settings
 from app.deps import verify_api_key, limiter
 from app.services import supabase as supabase_service
 from app.tracing import setup_tracer
-from app.routers import chat as chat_router, admin as admin_router, evaluation as evaluation_router
+from app.routers import (
+    chat as chat_router,
+    admin as admin_router,
+    evaluation as evaluation_router,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -145,6 +149,7 @@ def root(request: Request):
         else "backend-only",
         "docs_url": "/docs",
     }
+
 
 logger.info(
     "Startup initialization completed in %.2f s", time.perf_counter() - _START_TIME

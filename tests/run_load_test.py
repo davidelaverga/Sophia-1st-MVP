@@ -65,7 +65,9 @@ def generate_test_audio(duration_sec: float = 0.5) -> bytes:
     return audio
 
 
-async def test_single_session(session_id: str, ws_url: str, num_messages: int = 2):
+async def _run_single_websocket_session(
+    session_id: str, ws_url: str, num_messages: int = 2
+):
     """Test a single WebSocket session"""
     latencies = []
     errors = []
@@ -131,7 +133,7 @@ async def test_parallel_sessions(num_sessions: int = 5):
     tasks = []
     for i in range(num_sessions):
         session_id = f"load_test_{i + 1}"
-        task = test_single_session(session_id, ws_url, num_messages=2)
+        task = _run_single_websocket_session(session_id, ws_url, num_messages=2)
         tasks.append(task)
 
     # Run all in parallel

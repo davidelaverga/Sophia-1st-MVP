@@ -18,7 +18,9 @@ intent_total = Counter(
 mode_total = Counter(
     "mode_total",
     "Total number of mode routings",
-    ["mode"],  # Values: EMOTIONAL_SUPPORT, UTILITY_DIRECT, UTILITY_LIGHT, UTILITY_AGENTIC
+    [
+        "mode"
+    ],  # Values: EMOTIONAL_SUPPORT, UTILITY_DIRECT, UTILITY_LIGHT, UTILITY_AGENTIC
 )
 
 # Utility path selection metrics

@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
 from fastapi import (
     APIRouter,
@@ -21,10 +21,9 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from app.routers.audio_receiver import receive_audio_chunks
 from opentelemetry import trace
-from slowapi.errors import RateLimitExceeded
 
 from app.helpers import extract_audio, sse_event, validate_audio_upload
-from app.audio_utils import avg_abs_pcm16, pcm16_to_wav, wav_header_pcm16
+from app.audio_utils import pcm16_to_wav
 from app.deps import (
     verify_api_key,
     limiter,
@@ -46,7 +45,6 @@ from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.langgraph_service import langgraph_service
 from app.services.shared_services import shared_services
-from app.services.emotional_guidance import build_emotion_guided_prompt
 from app.services.memory import memory_manager, ConversationTurn
 from app import chat as chat_service
 from app.config import get_settings
@@ -54,7 +52,6 @@ from app.config import get_settings
 router = APIRouter()
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 
 async def _ws_send_json(ws: WebSocket, obj: dict) -> None:
@@ -120,11 +117,6 @@ async def ws_voice(websocket: WebSocket):
 
     logger.info("🎉 WebSocket connection accepted!")
     await websocket.accept()
-    SAMPLE_RATE = 16000
-    BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
-    SILENCE_THRESHOLD = 300
-    SILENCE_MS = 600
-    SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
     last_final_text = ""
     last_reply_text = ""
     last_audio_url: Optional[str] = None
@@ -169,7 +161,9 @@ async def ws_voice(websocket: WebSocket):
 
     await audio_queue.start_playback(session_id, send_audio_callback)
 
-    async def barge_in_calback(barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id):
+    async def barge_in_calback(
+        barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id
+    ):
         try:
             await _ws_send_json(
                 websocket,
@@ -181,23 +175,16 @@ async def ws_voice(websocket: WebSocket):
                     "interrupted_turn_id": interrupted_turn_id,
                 },
             )
-        except:
-            logger.warning('Failed to send barge-in notification')
+        except Exception:
+            logger.warning("Failed to send barge-in notification")
 
     try:
         in_speech = asyncio.Event()
         async for wav_utter in receive_audio_chunks(
-            websocket,
-            session_id,
-            in_speech,
-            manager,
-            audio_queue,
-            barge_in_calback
+            websocket, session_id, in_speech, manager, audio_queue, barge_in_calback
         ):
-            logger.info(f'Got {len(wav_utter)} audio bytes')
-            async with manage_session_turn(
-                session_id, metadata=metadata
-            ) as turn_state:
+            logger.info(f"Got {len(wav_utter)} audio bytes")
+            async with manage_session_turn(session_id, metadata=metadata) as turn_state:
 
                 def cancel_check():
                     manager.raise_if_cancelled(turn_state.turn_id)
@@ -206,9 +193,7 @@ async def ws_voice(websocket: WebSocket):
                 tokens_sent = 0
                 turn_state.set_status("streaming")
                 try:
-                    async for (
-                        tok
-                    ) in langgraph_service.stream_conversation_response(
+                    async for tok in langgraph_service.stream_conversation_response(
                         wav_utter
                     ):
                         cancel_check()
@@ -296,9 +281,7 @@ async def ws_voice(websocket: WebSocket):
                             (
                                 audio_bytes,
                                 audio_url_last,
-                            ) = chat_service.synthesize_reply(
-                                sent, cancel_check
-                            )
+                            ) = chat_service.synthesize_reply(sent, cancel_check)
                             cancel_check()
                             await audio_queue.enqueue(
                                 session_id=session_id,
@@ -320,9 +303,7 @@ async def ws_voice(websocket: WebSocket):
                                 },
                             )
                         except Exception:
-                            logger.exception(
-                                "WS: fallback TTS synthesis failed"
-                            )
+                            logger.exception("WS: fallback TTS synthesis failed")
 
                 await audio_queue.enqueue(
                     session_id=session_id,
@@ -886,13 +867,26 @@ async def text_chat_stream(
                 yield sse_event('meta', {
                     'session_id': session_identifier
                 })
-
                 result = langgraph_service.process_text_conversation(
                     body.message,
                     session_identifier,
                     collect_evaluation_data=True,
                     supabase_token=supabase_token,
-                    cancel_check=cancel_check
+                    cancel_check=cancel_check,
+                )
+                yield sse_event("token", result["reply"].replace("\n", " "))
+                yield sse_event(
+                    "reply_done",
+                    {"reply": result["reply"], "user_emotion": result["user_emotion"]},
+                )
+                yield sse_event(
+                    "audio_url",
+                    {
+                        "audio_url": result.get("audio_url"),
+                        "sophia_emotion": result["sophia_emotion"],
+                        "mock_audio": result["is_mock_audio"],
+                        "user_emotion": result["user_emotion"],
+                    },
                 )
                 yield sse_event('token', result['reply'].replace('\n', ' '))
                 yield sse_event('reply_done', {
@@ -907,7 +901,6 @@ async def text_chat_stream(
                     "user_emotion": result['user_emotion'],
                     'session_id': session_identifier
                 })
-
                 # user_emotion = chat_service.analyze_emotion_by_text(body.message)
                 # flash_context = memory_manager.get_context_for_llm(
                 #     session_identifier, access_token=supabase_token
@@ -958,9 +951,9 @@ async def text_chat_stream(
                 _record_text_stream_turn(
                     session_identifier,
                     body.message,
-                    result['reply'],
-                    result['user_emotion'],
-                    result['sophia_emotion'],
+                    result["reply"],
+                    result["user_emotion"],
+                    result["sophia_emotion"],
                     supabase_token,
                 )
 
