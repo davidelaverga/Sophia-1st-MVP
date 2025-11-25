@@ -88,7 +88,7 @@ class Settings:
 
     _public_raw = os.getenv(
         "API_PUBLIC_PATHS",
-        "/,/health,/docs,/openapi.json,/api",
+        "/,/health,/metrics,/docs,/openapi.json,/api",
     )
     API_PUBLIC_PATHS: List[str] = [
         path.strip() for path in _public_raw.split(",") if path.strip()
