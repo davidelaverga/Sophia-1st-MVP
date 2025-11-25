@@ -26,11 +26,12 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("user_id", sa.Text(), nullable=False),
         sa.Column("session_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("memory_text", sa.Text(), nullable=False),
         # Vector embedding for semantic search (384 dimensions for all-MiniLM-L6-v2)
-        sa.Column("embedding", postgresql.ARRAY(sa.Float), nullable=True),
+        # Note: pgvector's vector type is created via raw SQL below
+        sa.Column("embedding", sa.Text(), nullable=True),  # Will be altered to vector(384)
         sa.Column(
             "memory_type",
             sa.Text(),
@@ -68,6 +69,12 @@ def upgrade() -> None:
         ),
     )
 
+    # Alter embedding column to use pgvector's vector type (384 dimensions)
+    op.execute("""
+        ALTER TABLE user_memories
+        ALTER COLUMN embedding TYPE vector(384) USING embedding::vector(384);
+    """)
+
     # Create indices for fast lookups
     op.create_index(
         "idx_user_memories_user_id",
@@ -98,17 +105,81 @@ def upgrade() -> None:
         WITH (lists = 100);
     """)
 
-    # Add foreign key to users table (references auth.users in Supabase)
-    # Note: In Supabase, auth.users is managed separately, so we may need to handle this manually
-    # For now, we'll add a comment indicating the relationship
+    # Create trigger for auto-updating updated_at
     op.execute("""
-        COMMENT ON COLUMN user_memories.user_id IS 'References auth.users(id) - managed by Supabase Auth';
+        CREATE OR REPLACE FUNCTION update_user_memories_updated_at()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    op.execute("""
+        CREATE TRIGGER trigger_user_memories_updated_at
+            BEFORE UPDATE ON user_memories
+            FOR EACH ROW
+            EXECUTE FUNCTION update_user_memories_updated_at();
+    """)
+
+    # Enable Row Level Security (RLS)
+    op.execute("ALTER TABLE user_memories ENABLE ROW LEVEL SECURITY;")
+
+    # RLS Policies
+    op.execute("""
+        CREATE POLICY "Users can view own memories"
+            ON user_memories FOR SELECT
+            USING (true);
+    """)
+
+    op.execute("""
+        CREATE POLICY "Service role can insert memories"
+            ON user_memories FOR INSERT
+            WITH CHECK (true);
+    """)
+
+    op.execute("""
+        CREATE POLICY "Service role can update memories"
+            ON user_memories FOR UPDATE
+            USING (true);
+    """)
+
+    op.execute("""
+        CREATE POLICY "Service role can delete memories"
+            ON user_memories FOR DELETE
+            USING (true);
+    """)
+
+    # Grant permissions
+    op.execute("GRANT ALL ON user_memories TO authenticated;")
+    op.execute("GRANT ALL ON user_memories TO service_role;")
+
+    # Add comment for documentation
+    op.execute("""
+        COMMENT ON TABLE user_memories IS 'MemO: Intelligent semantic memory storage with pgvector (Task #42597)';
+    """)
+    op.execute("""
+        COMMENT ON COLUMN user_memories.embedding IS 'Sentence embedding vector (384-dim from all-MiniLM-L6-v2)';
     """)
 
 
 def downgrade() -> None:
-    op.drop_index("idx_user_memories_embedding_ivfflat", table_name="user_memories")
+    # Drop RLS policies
+    op.execute('DROP POLICY IF EXISTS "Users can view own memories" ON user_memories;')
+    op.execute('DROP POLICY IF EXISTS "Service role can insert memories" ON user_memories;')
+    op.execute('DROP POLICY IF EXISTS "Service role can update memories" ON user_memories;')
+    op.execute('DROP POLICY IF EXISTS "Service role can delete memories" ON user_memories;')
+
+    # Drop trigger and function
+    op.execute("DROP TRIGGER IF EXISTS trigger_user_memories_updated_at ON user_memories;")
+    op.execute("DROP FUNCTION IF EXISTS update_user_memories_updated_at();")
+
+    # Drop indexes
+    op.execute("DROP INDEX IF EXISTS idx_user_memories_embedding_ivfflat;")
     op.drop_index("idx_user_memories_created_at", table_name="user_memories")
     op.drop_index("idx_user_memories_session_id", table_name="user_memories")
     op.drop_index("idx_user_memories_user_id", table_name="user_memories")
+
+    # Drop table
     op.drop_table("user_memories")

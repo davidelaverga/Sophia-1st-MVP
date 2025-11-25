@@ -219,9 +219,9 @@ class LangGraphService:
                 transcript = transcribe_audio_with_voxtral(audio_bytes)
                 logger.info(f"📝 Transcript ({len(transcript)} chars): '{transcript}'")
 
-                # Tier-0 classification (500ms timeout)
+                # Tier-0 classification (2000ms timeout - increased for better accuracy)
                 result = await classify_tier0_fast(
-                    transcript, prosody=None, timeout_ms=500
+                    transcript, prosody=None, timeout_ms=2000
                 )
 
                 logger.info(

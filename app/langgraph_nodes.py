@@ -623,11 +623,28 @@ class ResponseGenerator:
         try:
             # Extract user_id from session (assuming session_id format or use default)
             user_id = state.get("user_id", state["session_id"])
-            memo_memories = asyncio.run(
-                memo_client.search_memories(
-                    user_id=user_id, query_text=state["transcript"], top_k=3
+
+            # Use asyncio.get_event_loop() to avoid "event loop already running" error
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If event loop is running, create a task and get result synchronously
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    memo_memories = pool.submit(
+                        lambda: asyncio.run(
+                            memo_client.search_memories(
+                                user_id=user_id, query_text=state["transcript"], top_k=3
+                            )
+                        )
+                    ).result()
+            else:
+                # If no event loop is running, use asyncio.run()
+                memo_memories = asyncio.run(
+                    memo_client.search_memories(
+                        user_id=user_id, query_text=state["transcript"], top_k=3
+                    )
                 )
-            )
+
             if memo_memories:
                 logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
         except Exception as e:
@@ -1357,16 +1374,37 @@ class EvalLogger:
         # Task #42597: Extract and store important information in MemO
         try:
             user_id = state.get("user_id", state["session_id"])
-            asyncio.run(
-                self._extract_and_store_memories(
-                    user_id=user_id,
-                    session_id=state["session_id"],
-                    transcript=state["transcript"],
-                    response=state["llm_response"],
-                    intent=state["intent"],
-                    user_emotion=state["user_emotion"].label,
+
+            # Use asyncio.get_event_loop() to avoid "event loop already running" error
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If event loop is running, create a task and get result synchronously
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    pool.submit(
+                        lambda: asyncio.run(
+                            self._extract_and_store_memories(
+                                user_id=user_id,
+                                session_id=state["session_id"],
+                                transcript=state["transcript"],
+                                response=state["llm_response"],
+                                intent=state["intent"],
+                                user_emotion=state["user_emotion"].label,
+                            )
+                        )
+                    ).result()
+            else:
+                # If no event loop is running, use asyncio.run()
+                asyncio.run(
+                    self._extract_and_store_memories(
+                        user_id=user_id,
+                        session_id=state["session_id"],
+                        transcript=state["transcript"],
+                        response=state["llm_response"],
+                        intent=state["intent"],
+                        user_emotion=state["user_emotion"].label,
+                    )
                 )
-            )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
 
