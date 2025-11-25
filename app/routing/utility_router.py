@@ -42,6 +42,48 @@ CONTEXT_HEAVY_CUES = (
     r"\bwrite\b",
 )
 
+# Questions that require session context (not factual lookups)
+CONTEXT_REQUIRING_QUESTIONS = (
+    r"\bcan we\b",
+    r"\bshould we\b",
+    r"\bwhat can we\b",
+    r"\bwhat should we\b",
+    r"\bwhat (?:shall|will) we\b",
+    r"\bwhat.*(?:today|now|next)\b",
+    r"\bwhere (?:are|were) we\b",
+    r"\bwhat else\b",
+    r"\bwhat about\b",
+    r"\btell me (?:more|about)\b",
+    # Questions about conversation history/memory
+    r"\bwhat (?:did|was) (?:i|we)\b",
+    r"\bdo you remember\b",
+    r"\bremind me\b",
+    r"\bwhat (?:have|did) we (?:discuss|talk)\b",
+    r"\bfirst (?:thing|question|topic)\b",
+    r"\bearlier\b",
+    r"\bbefore\b.*\b(?:ask|discuss|talk)\b",
+)
+
+# DeFi-related keywords that need RAG/LLM context (not DIRECT path)
+DEFI_KEYWORDS = (
+    r"\bdefi\b",
+    r"\byield\b",
+    r"\bfarming\b",
+    r"\bliquidity\b",
+    r"\bstaking\b",
+    r"\bimpermanent loss\b",
+    r"\bpool\b",
+    r"\bswap\b",
+    r"\bdex\b",
+    r"\bprotocol\b",
+    r"\btoken\b",
+    r"\bcrypto\b",
+    r"\bblockchain\b",
+    r"\bsmart contract\b",
+    r"\bapy\b",
+    r"\bapr\b",
+)
+
 
 def _has_pattern(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
@@ -82,6 +124,20 @@ def classify_utility_path(user_message: str) -> UtilityPathResult:
                 "Context-heavy utility cue (plan/explain/write); using light path."
             )
             return UtilityPathResult(UtilityPath.LIGHT, 0.7, reasoning)
+
+        # Check for DeFi-related questions that need RAG/LLM
+        if _has_pattern(normalized, DEFI_KEYWORDS):
+            reasoning = (
+                "DeFi-related question detected; needs RAG/LLM context, using light path."
+            )
+            return UtilityPathResult(UtilityPath.LIGHT, 0.75, reasoning)
+
+        # Check for questions that require conversation context
+        if _has_pattern(normalized, CONTEXT_REQUIRING_QUESTIONS):
+            reasoning = (
+                "Context-requiring question detected (what can we/should we/today); using light path."
+            )
+            return UtilityPathResult(UtilityPath.LIGHT, 0.72, reasoning)
 
         is_question_like = "?" in normalized or _has_pattern(
             normalized, SHORT_FACTUAL_CUES

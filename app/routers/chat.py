@@ -882,6 +882,10 @@ async def text_chat_stream(
                 manager.raise_if_cancelled(turn_state.turn_id)
 
             try:
+                # Send meta event with session_id first
+                yield sse_event('meta', {
+                    'session_id': session_identifier
+                })
 
                 result = langgraph_service.process_text_conversation(
                     body.message,
@@ -893,13 +897,15 @@ async def text_chat_stream(
                 yield sse_event('token', result['reply'].replace('\n', ' '))
                 yield sse_event('reply_done', {
                     'reply': result['reply'],
-                    'user_emotion': result['user_emotion']
+                    'user_emotion': result['user_emotion'],
+                    'session_id': session_identifier
                 })
                 yield sse_event('audio_url', {
                     "audio_url": result.get('audio_url'),
                     "sophia_emotion": result['sophia_emotion'],
                     "mock_audio": result['is_mock_audio'],
                     "user_emotion": result['user_emotion'],
+                    'session_id': session_identifier
                 })
 
                 # user_emotion = chat_service.analyze_emotion_by_text(body.message)
