@@ -256,7 +256,9 @@ class LangGraphService:
 
             # Step 2: Process through FULL LangGraph pipeline
             # This executes: AudioIngestor → IntentAnalyzer nodes
-            logger.info("🔄 Processing through LangGraph nodes (Phoenix emotion, Memory, RAG)...")
+            logger.info(
+                "🔄 Processing through LangGraph nodes (Phoenix emotion, Memory, RAG)..."
+            )
             state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
 
             logger.info(
@@ -268,13 +270,16 @@ class LangGraphService:
             )
 
             # Step 3: Stream LLM response with full context (memory + RAG + emotion guidance)
-            logger.info("💬 Streaming LLM response with memory, RAG, and emotion guidance...")
+            logger.info(
+                "💬 Streaming LLM response with memory, RAG, and emotion guidance..."
+            )
             for token in self.sophia_graph.stream_llm_response(state):
                 yield token
 
         except Exception as e:
             logger.error(f"❌ LangGraph streaming failed: {e}")
             import traceback
+
             traceback.print_exc()
             # Fallback to rule-based response
             yield "I'm having trouble processing your request. Could you please try again?"

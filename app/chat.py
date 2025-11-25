@@ -6,13 +6,13 @@ from typing import Callable, Optional, Dict, Any
 from fastapi import HTTPException
 from opentelemetry import trace
 
-from app.services import mistral, supabase
+from app.services import mistral, supabase, tts as tts_service
 from app.services.emotion import Emotion, analyze_emotion_audio, infer_text_emotion
 from app.services.emotional_guidance import build_emotion_guided_prompt, get_guidance
-from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("sophia.chat")
+
 
 def transcript_audio(wav_bytes: bytes, cancel_check: Optional[Callable] = None):
     try:
@@ -26,7 +26,8 @@ def transcript_audio(wav_bytes: bytes, cancel_check: Optional[Callable] = None):
     except Exception:
         logger.exception("Transcription failed in chat")
         raise HTTPException(status_code=500, detail="Transcription failed")
-    
+
+
 def analyze_emotion_by_audio(
     wav_bytes: bytes,
     cancel_check: Optional[Callable] = None,
@@ -34,7 +35,7 @@ def analyze_emotion_by_audio(
 ):
     is_mock_audio = False
     try:
-        is_mock_audio = (wav_bytes.startswith(b'ID3mock') or len(wav_bytes) < 2048)
+        is_mock_audio = wav_bytes.startswith(b"ID3mock") or len(wav_bytes) < 2048
     except Exception:
         is_mock_audio = False
     try:
@@ -42,7 +43,8 @@ def analyze_emotion_by_audio(
         with tracer.start_as_current_span(span_name) as emotion_span:
             user_emotion = analyze_emotion_audio(wav_bytes)
             emotion_span.set_attribute(
-                f"phoenix_{role}_emotion.label", getattr(user_emotion, "label", "unknown")
+                f"phoenix_{role}_emotion.label",
+                getattr(user_emotion, "label", "unknown"),
             )
             emotion_span.set_attribute(
                 f"phoenix_{role}_emotion.confidence",
@@ -55,20 +57,20 @@ def analyze_emotion_by_audio(
         logger.exception("Emotion analysis failed in chat")
         raise HTTPException(status_code=500, detail="Emotion analysis failed")
 
+
 def analyze_emotion_by_text(text: str, cancel_check=None):
     return infer_text_emotion(text)
-        
+
 
 def get_emotional_guidance(emotion: Emotion):
     emotional_guidance = []
     try:
         emotional_guidance = get_guidance(emotion.label)
     except Exception as error:
-        logger.warning(
-            "Text chat stream guidance lookup failed: %s", error
-        )
+        logger.warning("Text chat stream guidance lookup failed: %s", error)
     finally:
         return emotional_guidance
+
 
 def _format_memory_context_for_prompt(context: Optional[Dict[str, Any]]) -> str:
     if not context:
@@ -104,6 +106,7 @@ def _format_memory_context_for_prompt(context: Optional[Dict[str, Any]]) -> str:
 
     return "\n".join(parts)
 
+
 def get_enriched_prompt(text: str, emotion: Emotion, flash_context):
     emotional_guidance = []
     try:
@@ -115,18 +118,12 @@ def get_enriched_prompt(text: str, emotion: Emotion, flash_context):
             "..." if len(emotional_guidance) > 2 else "",
         )
     except Exception as error:
-        logger.warning(
-            "Text chat stream guidance lookup failed: %s", error
-        )
+        logger.warning("Text chat stream guidance lookup failed: %s", error)
     memory_context_text = ""
     try:
-        memory_context_text = _format_memory_context_for_prompt(
-            flash_context
-        )
+        memory_context_text = _format_memory_context_for_prompt(flash_context)
     except Exception as context_error:
-        logger.warning(
-            "Text chat stream memory lookup failed: %s", context_error
-        )
+        logger.warning("Text chat stream memory lookup failed: %s", context_error)
     return build_emotion_guided_prompt(
         text,
         emotion.label,
@@ -134,6 +131,7 @@ def get_enriched_prompt(text: str, emotion: Emotion, flash_context):
         emotional_guidance,
         conversation_context=memory_context_text,
     )
+
 
 def generate_llm_reply(transcript: str, cancel_check: Optional[Callable] = None):
     cancel = cancel_check or (lambda: None)
@@ -148,6 +146,7 @@ def generate_llm_reply(transcript: str, cancel_check: Optional[Callable] = None)
     except Exception:
         logger.exception("LLM generation failed in chat")
         raise HTTPException(status_code=500, detail="Response generation failed")
+
 
 def generate_streamed_llm_reply(prompt: str, cancel_check: Optional[Callable] = None):
     try:
@@ -166,17 +165,16 @@ def generate_streamed_llm_reply(prompt: str, cancel_check: Optional[Callable] = 
         logger.exception("Streamed LLM generation failed in chat")
         raise HTTPException(status_code=500, detail="Response generation failed")
 
+
 def synthesize_reply(reply: str, cancel_check: Optional[Callable] = None):
     try:
         with tracer.start_as_current_span("tts_synthesis_upload") as tts_span:
-            audio_bytes = synthesize_inworld(
+            audio_bytes = tts_service.synthesize_inworld(
                 reply,
                 cancel_check=cancel_check,
             )
             file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-            audio_url = supabase.upload_audio_and_get_url(
-                audio_bytes, file_name
-            )
+            audio_url = supabase.upload_audio_and_get_url(audio_bytes, file_name)
             tts_span.set_attribute("tts.audio_url", audio_url)
             tts_span.set_attribute("tts.audio_bytes", len(audio_bytes or b""))
         return audio_bytes, audio_url
@@ -184,9 +182,14 @@ def synthesize_reply(reply: str, cancel_check: Optional[Callable] = None):
         logger.exception("Synthesis or upload failed in chat")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
-def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional[Callable] = None):
+
+def synthesize_streamed_reply(
+    text: str, samplerate: int, cancel_check: Optional[Callable] = None
+):
     try:
-        for pcm_chunk in synthesize_inworld_stream(text, sample_rate_hz=samplerate, cancel_check=cancel_check):
+        for pcm_chunk in tts_service.synthesize_inworld_stream(
+            text, sample_rate_hz=samplerate, cancel_check=cancel_check
+        ):
             if cancel_check:
                 cancel_check()
             yield pcm_chunk
@@ -194,15 +197,16 @@ def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional
         logger.exception("Streamed synthesis failed in chat")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
+
 def persist_conversation_session(
     supabase_token: str,
     user_id: str,
-    session_id: uuid.UUID=None,
-    transcript: str=None,
-    reply: str=None,
-    user_emotion: Emotion=None,
-    sophia_emotion: Emotion=None,
-    reply_audio_url: str=None,
+    session_id: uuid.UUID = None,
+    transcript: str = None,
+    reply: str = None,
+    user_emotion: Emotion = None,
+    sophia_emotion: Emotion = None,
+    reply_audio_url: str = None,
     intent=None,
     context_memory=None,
 ):

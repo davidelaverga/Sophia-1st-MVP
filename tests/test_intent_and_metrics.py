@@ -10,8 +10,6 @@ Tests:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
-from prometheus_client import REGISTRY
 
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.utility_router import classify_utility_path
@@ -267,9 +265,7 @@ class TestMetricsIncremented:
         initial_emotional = self.get_metric_value(
             mode_total, {"mode": "emotional_support"}
         )
-        initial_direct = self.get_metric_value(
-            mode_total, {"mode": "utility_direct"}
-        )
+        initial_direct = self.get_metric_value(mode_total, {"mode": "utility_direct"})
 
         track_mode("emotional_support")
         track_mode("utility_direct")
@@ -287,9 +283,7 @@ class TestMetricsIncremented:
         """Verify track_utility_path() increments utility_path_total counter."""
         initial_direct = self.get_metric_value(utility_path_total, {"path": "direct"})
         initial_light = self.get_metric_value(utility_path_total, {"path": "light"})
-        initial_agentic = self.get_metric_value(
-            utility_path_total, {"path": "agentic"}
-        )
+        initial_agentic = self.get_metric_value(utility_path_total, {"path": "agentic"})
 
         track_utility_path("direct")
         track_utility_path("light")
@@ -315,9 +309,7 @@ class TestMetricsIncremented:
         )
 
         # Classify an emotional message
-        await classify_intent_and_mode(
-            "I feel so anxious", session_id="metrics-test"
-        )
+        await classify_intent_and_mode("I feel so anxious", session_id="metrics-test")
 
         final_intent_emotional = self.get_metric_value(
             intent_total, {"intent": "emotional_support"}

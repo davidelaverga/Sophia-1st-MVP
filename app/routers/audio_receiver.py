@@ -3,7 +3,6 @@ import logging
 import time
 from typing import Callable
 
-from starlette.websockets import WebSocketDisconnect
 
 from app.audio_utils import avg_abs_pcm16, wav_header_pcm16
 
@@ -16,13 +15,14 @@ SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
 
 logger = logging.getLogger(__name__)
 
+
 async def receive_audio_chunks(
     websocket,
     session_id,
     in_speech: asyncio.Event,
     manager,
     audio_queue,
-    barge_in_callback: Callable
+    barge_in_callback: Callable,
 ):
     pcm_buffer = bytearray()
     last_voice_activity = 0
@@ -45,9 +45,7 @@ async def receive_audio_chunks(
                     utter_start_pos = max(0, len(pcm_buffer) - len(recent))
                     barge_in_start = time.time()
                     active_turn = manager.get_active_turn(session_id)
-                    interrupted_turn_id = (
-                        active_turn.turn_id if active_turn else None
-                    )
+                    interrupted_turn_id = active_turn.turn_id if active_turn else None
                     if interrupted_turn_id:
                         manager.request_cancel(turn_id=interrupted_turn_id)
                     current_cancelled, queue_cleared = audio_queue.cancel_all(
@@ -59,7 +57,7 @@ async def receive_audio_chunks(
                         barge_in_ms,
                         current_cancelled,
                         queue_cleared,
-                        interrupted_turn_id
+                        interrupted_turn_id,
                     )
                     if barge_in_ms > 200:
                         logger.warning(
@@ -73,5 +71,5 @@ async def receive_audio_chunks(
                 yield wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                 pcm_buffer.clear()
                 last_voice_activity = 0
-        elif 'type' in msg and msg['type'] == 'websocket.disconnect':
+        elif "type" in msg and msg["type"] == "websocket.disconnect":
             break

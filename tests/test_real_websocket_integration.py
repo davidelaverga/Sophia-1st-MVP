@@ -405,8 +405,8 @@ class TestRealWebSocketIntegration:
         # Mock authentication and external services
         with (
             patch("main.verify_api_key") as mock_verify,
-            patch("main.extract_identity_from_token") as mock_extract,
-            patch("main.require_consent") as mock_consent,
+            patch("app.deps.extract_identity_from_token") as mock_extract,
+            patch("app.deps.require_consent") as mock_consent,
         ):
             # Setup mocks
             mock_verify.return_value = "mock_token"
@@ -452,7 +452,7 @@ class TestRealWebSocketIntegration:
         # Mock services
         with (
             patch("main.verify_api_key") as mock_verify,
-            patch("main.extract_identity_from_token") as mock_extract,
+            patch("app.deps.extract_identity_from_token") as mock_extract,
         ):
             mock_verify.return_value = "mock_token"
             mock_extract.return_value = (str(uuid.uuid4()), "test_discord_id")
