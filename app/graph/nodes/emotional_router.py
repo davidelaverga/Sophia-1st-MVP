@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional
 from app.routing.emotional_router import (
     ConversationMeta,
     EmotionalRoutingResult,
+    EmotionalSkill,
     route_emotional_skill,
 )
 from app.routing.models import CurrentMode
@@ -26,6 +27,10 @@ class EmotionalSkillRouterNode:
 
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Route to an emotional skill when current_mode is EMOTIONAL_SUPPORT."""
+        # Ensure downstream nodes always see explicit flags
+        state.setdefault("had_crisis", False)
+        state.setdefault("had_boundary", False)
+
         if not self._is_emotional_mode(state.get("current_mode")):
             return state
 
@@ -39,10 +44,18 @@ class EmotionalSkillRouterNode:
 
         result = self._router(message, meta, tier0_label=tier0_label)
 
-        state["skill_id"] = result.skill.value
+        skill = result.skill
+
+        state["skill_id"] = skill.value
         state["skill_variant"] = result.tier0_label
         state["skill_reasoning"] = result.reasoning
-        state["last_skill"] = result.skill.value
+        state["last_skill"] = skill.value
+        state["had_crisis"] = state["had_crisis"] or (
+            skill == EmotionalSkill.CRISIS_REDIRECT
+        )
+        state["had_boundary"] = state["had_boundary"] or (
+            skill == EmotionalSkill.BOUNDARY_HOLDING
+        )
 
         logger.info(
             "EmotionalSkillRouterNode routed to %s (variant=%s)",

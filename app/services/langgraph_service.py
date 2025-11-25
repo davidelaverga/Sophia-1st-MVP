@@ -76,6 +76,8 @@ class LangGraphService:
                 "current_mode": final_state.get("current_mode"),
                 "utility_path": final_state.get("utility_path"),
                 "router_path": final_state.get("router_path"),
+                "had_crisis": final_state.get("had_crisis", False),
+                "had_boundary": final_state.get("had_boundary", False),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
@@ -168,6 +170,8 @@ class LangGraphService:
                 "current_mode": final_state.get("current_mode"),
                 "utility_path": final_state.get("utility_path"),
                 "router_path": final_state.get("router_path"),
+                "had_crisis": final_state.get("had_crisis", False),
+                "had_boundary": final_state.get("had_boundary", False),
                 "user_emotion": {
                     "label": final_state["user_emotion"].label,
                     "confidence": final_state["user_emotion"].confidence,
