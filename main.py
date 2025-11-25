@@ -6,12 +6,13 @@ import logging
 from typing import Sequence
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.config import get_settings
 from app.config_validation import validate_settings
@@ -129,6 +130,19 @@ app.include_router(evaluation_router.router)
 def health():
     """Basic liveness endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus metrics endpoint for monitoring.
+
+    Exposes metrics including:
+    - memo_write_success_rate: Memory write success rate (%)
+    - memo_writes_total: Total memory write attempts (by status)
+    - memo_searches_total: Total memory search attempts (by status)
+    - memo_search_latency_seconds: Memory search latency (avg, p95)
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/")
