@@ -193,8 +193,10 @@ async def ws_voice(websocket: WebSocket):
                 tokens_sent = 0
                 turn_state.set_status("streaming")
                 try:
-                    async for tok in langgraph_service.stream_conversation_response(
-                        wav_utter
+                    async for (
+                        tok
+                    ) in langgraph_service.stream_conversation_response(
+                        wav_utter, session_id=session_id, supabase_token=supabase_token
                     ):
                         cancel_check()
                         if not tok:
