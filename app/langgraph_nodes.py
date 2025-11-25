@@ -1049,10 +1049,8 @@ class ResponseGenerator:
         parts = [
             f"The user currently feels {user_emotion.label} (confidence {user_emotion.confidence:.2f})."
         ]
-        if flash_context.get("last_topics"):
-            parts.append(
-                f"They were previously discussing: {', '.join(flash_context['last_topics'])}."
-            )
+        # Don't explicitly mention "they were previously discussing" to avoid
+        # the model repeating "you asked earlier" - let conversation history speak for itself
         history_block = self._format_recent_turns_for_prompt(
             flash_context.get("recent_turns"), max_turns=2
         )
