@@ -66,6 +66,31 @@ class MemOClient:
                 return None
         return self._embedding_model
 
+    def _parse_vector_from_db(self, vector_str: any) -> Optional[List[float]]:
+        """Parse vector from database (handles both string and list formats)"""
+        if vector_str is None:
+            return None
+
+        # If already a list, return as-is
+        if isinstance(vector_str, list):
+            return vector_str
+
+        # If it's a string representation, parse it
+        if isinstance(vector_str, str):
+            try:
+                # Remove 'np.str_(' prefix and ')' suffix if present
+                if vector_str.startswith("np.str_('") or vector_str.startswith("np.str_(\""):
+                    vector_str = vector_str[9:-2]
+
+                # Parse as JSON array
+                import json
+                return json.loads(vector_str)
+            except Exception as e:
+                logger.warning(f"Failed to parse vector string: {e}")
+                return None
+
+        return None
+
     def _generate_embedding(self, text: str) -> Optional[List[float]]:
         """Generate embedding vector for text"""
         if not self.enabled:
@@ -198,8 +223,14 @@ class MemOClient:
             query_norm = float(np.linalg.norm(query_vec))
 
             for memory in result.data:
-                if memory.get("embedding"):
-                    memory_vec = np.array(memory["embedding"])
+                embedding_data = memory.get("embedding")
+                if embedding_data:
+                    # Parse embedding from database format (pgvector returns string)
+                    embedding_list = self._parse_vector_from_db(embedding_data)
+                    if embedding_list is None:
+                        continue
+
+                    memory_vec = np.array(embedding_list)
                     memory_norm = float(np.linalg.norm(memory_vec))
 
                     # Skip zero vectors to avoid invalid divisions.
