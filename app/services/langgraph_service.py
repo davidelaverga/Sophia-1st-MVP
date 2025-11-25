@@ -205,20 +205,20 @@ class LangGraphService:
         user_id: Optional[str] = None,
         conversation_count: Optional[int] = None,
     ):
-        """Stream conversation response through full LangGraph pipeline with tier-0 classification
+        """Stream conversation response through full LangGraph pipeline with all 5 nodes
 
-        M2-BUG-1 Fix: Uses complete LangGraph flow with all 8 nodes:
+        M2-BUG-1 Fix: Executes complete LangGraph flow with ALL 5 nodes:
         - AudioIngestor: Voxtral ASR + Phoenix emotion analysis
         - IntentAnalyzer: Intent classification
         - ResponseGenerator: Memory (Mem0) + RAG + emotion-guided prompts
-        - TTSNode: Inworld TTS
-        - EvalLogger: RAGAS + Phoenix evaluations
+        - TTSNode: Inworld TTS (executed after streaming completes)
+        - EvalLogger: Save to Supabase/Mem0 + evaluation logging
 
         Also includes tier-0 fast classification for immediate UX feedback.
         """
 
         logger.info(
-            f"🎯 M2-BUG-1: Streaming through FULL LangGraph pipeline for session {session_id}"
+            f"🎯 M2-BUG-1 FIX: Streaming through FULL LangGraph pipeline (all 5 nodes) for session {session_id}"
         )
 
         try:
@@ -281,19 +281,66 @@ class LangGraphService:
             )
 
             logger.info(
-                f"✅ LangGraph context ready: "
+                f"✅ NODE 1-2 completed: "
                 f"emotion={state['user_emotion'].label} ({state['user_emotion'].confidence:.2f}), "
                 f"intent={state.get('intent')}, "
-                f"mode={state.get('current_mode')}, "
-                f"memory_entries={len(state.get('memo_context', {}).get('memories', []))}"
+                f"mode={state.get('current_mode')}"
             )
 
-            # Step 3: Stream LLM response with full context (memory + RAG + emotion guidance)
+            # Step 3: Execute NODE 3: ResponseGenerator (via stream_llm_response)
+            # Note: stream_llm_response() internally calls ResponseGenerator._build_context()
+            # which extracts memory (Flash + Mem0) and RAG context
             logger.info(
-                "💬 Streaming LLM response with memory, RAG, and emotion guidance..."
+                "🔄 NODE 3: ResponseGenerator - Streaming LLM response with memory + RAG + emotion guidance..."
             )
+            full_response = ""
             for token in self.sophia_graph.stream_llm_response(state):
+                full_response += token
                 yield token
+
+            # Update state with full response
+            state["llm_response"] = full_response
+            logger.info(
+                f"✅ NODE 3 completed: LLM response generated ({len(full_response)} chars) "
+                f"with memory context (Flash + Mem0) and RAG integration"
+            )
+
+            # Step 4: Execute NODE 4: TTSNode (audio synthesis + emotion analysis)
+            logger.info(
+                "🔄 NODE 4: Executing TTSNode (audio synthesis + emotion analysis)..."
+            )
+            from app.langgraph_nodes import TTSNode
+
+            tts_node = TTSNode()
+            state = tts_node(state)
+
+            logger.info(
+                f"✅ NODE 4 completed: audio_url={state.get('audio_url')}, "
+                f"sophia_emotion={state['sophia_emotion'].label}({state['sophia_emotion'].confidence:.2f})"
+            )
+
+            # Step 5: Execute NODE 5: EvalLogger (save to Supabase/Mem0)
+            logger.info(
+                "🔄 NODE 5: Executing EvalLogger (saving conversation to Supabase + Mem0)..."
+            )
+            from app.langgraph_nodes import EvalLogger
+
+            eval_logger = EvalLogger()
+            state = eval_logger(state)
+
+            logger.info(
+                f"✅ NODE 5 completed: Conversation saved to Supabase/Mem0, "
+                f"evaluation logs: {len(state.get('evaluation_logs', []))} entries"
+            )
+
+            logger.info(
+                f"🎉 FULL 5-node pipeline completed successfully for session {session_id}:\n"
+                f"   ✅ AudioIngestor (ASR + emotion)\n"
+                f"   ✅ IntentAnalyzer (intent classification)\n"
+                f"   ✅ ResponseGenerator (memory retrieval + RAG + LLM response)\n"
+                f"   ✅ TTSNode (audio synthesis + emotion analysis)\n"
+                f"   ✅ EvalLogger (save to Supabase + Mem0)"
+            )
 
         except Exception as e:
             logger.error(f"❌ LangGraph streaming failed: {e}")
