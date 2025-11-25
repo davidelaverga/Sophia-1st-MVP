@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Callable, Dict, Any, Optional, List, TypedDict, Sequence
+from typing import Callable, Dict, Any, Optional, List, TypedDict, Sequence, NotRequired
 from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
@@ -33,6 +33,7 @@ from app.services.prompt_composer import prompt_composer  # Task #42597
 from app.config import get_settings
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.models import CurrentMode, Intent, UtilityPath
+from app.graph.nodes import EmotionalSkillRouterNode
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,12 @@ class GraphState(TypedDict):
     audio_bytes: bytes
     transcript: str
     user_emotion: EmotionData
+    conversation_count: int
+    last_skill: Optional[str]
+    user_id: Optional[str]
+    skill_id: NotRequired[str]
+    skill_variant: NotRequired[str]
+    skill_reasoning: NotRequired[str]
     intent: str
     current_mode: str  # Task #42729: Routing mode
     utility_path: Optional[str]
@@ -1453,6 +1460,7 @@ class SophiaLangGraph:
         # Initialize nodes
         audio_ingestor = AudioIngestor()
         intent_analyzer = IntentAnalyzer()
+        emotional_skill_router = EmotionalSkillRouterNode()
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
@@ -1463,6 +1471,7 @@ class SophiaLangGraph:
         # Add nodes
         workflow.add_node("audio_ingestor", audio_ingestor)
         workflow.add_node("intent_analyzer", intent_analyzer)
+        workflow.add_node("emotional_skill_router", emotional_skill_router)
         workflow.add_node("response_generator", response_generator)
         workflow.add_node("tts_node", tts_node)
         workflow.add_node("eval_logger", eval_logger)
@@ -1470,7 +1479,8 @@ class SophiaLangGraph:
         # Define edges (workflow sequence with intent/mode classification inside IntentAnalyzer)
         workflow.add_edge(START, "audio_ingestor")
         workflow.add_edge("audio_ingestor", "intent_analyzer")
-        workflow.add_edge("intent_analyzer", "response_generator")
+        workflow.add_edge("intent_analyzer", "emotional_skill_router")
+        workflow.add_edge("emotional_skill_router", "response_generator")
         workflow.add_edge("response_generator", "tts_node")
         workflow.add_edge("tts_node", "eval_logger")
         workflow.add_edge("eval_logger", END)
@@ -1483,11 +1493,19 @@ class SophiaLangGraph:
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
         cancel_check: Optional[CancelCallback] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process a complete conversation turn through the graph"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state
         initial_state: GraphState = {
@@ -1495,6 +1513,9 @@ class SophiaLangGraph:
             "audio_bytes": audio_bytes,
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1530,11 +1551,19 @@ class SophiaLangGraph:
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
         cancel_check: Optional[CancelCallback] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process a text-only conversation turn, bypassing audio processing"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state with text message directly
         initial_state: GraphState = {
@@ -1542,6 +1571,9 @@ class SophiaLangGraph:
             "audio_bytes": b"",  # Empty for text input
             "transcript": message,  # Use the text message directly
             "user_emotion": EmotionData(label="neutral", confidence=0.7),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1576,19 +1608,22 @@ class SophiaLangGraph:
 
         # Initialize nodes
         intent_analyzer = IntentAnalyzer()
+        emotional_skill_router = EmotionalSkillRouterNode()
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
 
         # Add nodes (skip audio_ingestor for text input)
         text_workflow.add_node("intent_analyzer", intent_analyzer)
+        text_workflow.add_node("emotional_skill_router", emotional_skill_router)
         text_workflow.add_node("response_generator", response_generator)
         text_workflow.add_node("tts_node", tts_node)
         text_workflow.add_node("eval_logger", eval_logger)
 
         # Define edges (workflow sequence without audio processing)
         text_workflow.add_edge(START, "intent_analyzer")
-        text_workflow.add_edge("intent_analyzer", "response_generator")
+        text_workflow.add_edge("intent_analyzer", "emotional_skill_router")
+        text_workflow.add_edge("emotional_skill_router", "response_generator")
         text_workflow.add_edge("response_generator", "tts_node")
         text_workflow.add_edge("tts_node", "eval_logger")
         text_workflow.add_edge("eval_logger", END)
@@ -1601,13 +1636,40 @@ class SophiaLangGraph:
 
         return final_state
 
+    def _infer_conversation_count(
+        self, session_id: str, supabase_token: Optional[str]
+    ) -> int:
+        """Best-effort conversation count based on stored session memory."""
+        try:
+            memory = memory_manager.get_session_memory(
+                session_id, access_token=supabase_token
+            )
+            if memory and hasattr(memory, "turns"):
+                return len(memory.turns) + 1
+        except Exception as exc:
+            logger.warning(
+                "Conversation count lookup failed for %s: %s", session_id, exc
+            )
+        return 0
+
     def process_audio_to_context(
-        self, audio_bytes: bytes, session_id: Optional[str] = None
+        self,
+        audio_bytes: bytes,
+        session_id: Optional[str] = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process audio through initial nodes to get context for streaming"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state
         initial_state: GraphState = {
@@ -1615,6 +1677,9 @@ class SophiaLangGraph:
             "audio_bytes": audio_bytes,
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
             "intent": "",
             "current_mode": MODE_LIGHT,
             "utility_path": UtilityPath.LIGHT.value,

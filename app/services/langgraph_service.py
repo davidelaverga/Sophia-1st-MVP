@@ -22,6 +22,8 @@ class LangGraphService:
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
         cancel_check=None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Process conversation through LangGraph pipeline"""
 
@@ -36,6 +38,8 @@ class LangGraphService:
                 session_id,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
+                conversation_count=conversation_count,
             )
 
             # Collect evaluation data if requested (instead of running full evaluation)
@@ -108,6 +112,8 @@ class LangGraphService:
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
         cancel_check=None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Process text-only conversation through LangGraph pipeline"""
 
@@ -122,6 +128,8 @@ class LangGraphService:
                 session_id,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
+                conversation_count=conversation_count,
             )
 
             # Collect evaluation data if requested
@@ -190,7 +198,12 @@ class LangGraphService:
             raise
 
     async def stream_conversation_response(
-        self, audio_bytes: bytes, session_id: str = None
+        self,
+        audio_bytes: bytes,
+        session_id: str = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ):
         """Stream conversation response through full LangGraph pipeline with tier-0 classification
 
@@ -259,7 +272,13 @@ class LangGraphService:
             logger.info(
                 "🔄 Processing through LangGraph nodes (Phoenix emotion, Memory, RAG)..."
             )
-            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
+            state = self.sophia_graph.process_audio_to_context(
+                audio_bytes,
+                session_id,
+                supabase_token=supabase_token,
+                user_id=user_id,
+                conversation_count=conversation_count,
+            )
 
             logger.info(
                 f"✅ LangGraph context ready: "
@@ -285,7 +304,12 @@ class LangGraphService:
             yield "I'm having trouble processing your request. Could you please try again?"
 
     def stream_conversation_response_old(
-        self, audio_bytes: bytes, session_id: str = None
+        self,
+        audio_bytes: bytes,
+        session_id: str = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ):
         """Stream conversation response through LangGraph pipeline
 
@@ -298,7 +322,13 @@ class LangGraphService:
 
         try:
             # Process audio to get context (ASR + emotion + intent + RAG)
-            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
+            state = self.sophia_graph.process_audio_to_context(
+                audio_bytes,
+                session_id,
+                supabase_token=supabase_token,
+                user_id=user_id,
+                conversation_count=conversation_count,
+            )
 
             # Stream LLM response using the processed context
             for token in self.sophia_graph.stream_llm_response(state):

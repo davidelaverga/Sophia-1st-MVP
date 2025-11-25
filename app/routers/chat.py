@@ -194,7 +194,10 @@ async def ws_voice(websocket: WebSocket):
                 turn_state.set_status("streaming")
                 try:
                     async for tok in langgraph_service.stream_conversation_response(
-                        wav_utter
+                        wav_utter,
+                        session_id=session_id,
+                        supabase_token=supabase_token,
+                        user_id=supabase_user_id,
                     ):
                         cancel_check()
                         if not tok:
@@ -590,6 +593,7 @@ async def defi_chat(
                 collect_evaluation_data=True,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
             )
 
             turn_state.set_status("synthesizing")
@@ -775,6 +779,7 @@ async def text_chat(
                 collect_evaluation_data=True,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
             )
 
             turn_state.set_status("synthesizing")
@@ -864,15 +869,14 @@ async def text_chat_stream(
 
             try:
                 # Send meta event with session_id first
-                yield sse_event('meta', {
-                    'session_id': session_identifier
-                })
+                yield sse_event("meta", {"session_id": session_identifier})
                 result = langgraph_service.process_text_conversation(
                     body.message,
                     session_identifier,
                     collect_evaluation_data=True,
                     supabase_token=supabase_token,
                     cancel_check=cancel_check,
+                    user_id=user_id,
                 )
                 yield sse_event("token", result["reply"].replace("\n", " "))
                 yield sse_event(
@@ -888,19 +892,25 @@ async def text_chat_stream(
                         "user_emotion": result["user_emotion"],
                     },
                 )
-                yield sse_event('token', result['reply'].replace('\n', ' '))
-                yield sse_event('reply_done', {
-                    'reply': result['reply'],
-                    'user_emotion': result['user_emotion'],
-                    'session_id': session_identifier
-                })
-                yield sse_event('audio_url', {
-                    "audio_url": result.get('audio_url'),
-                    "sophia_emotion": result['sophia_emotion'],
-                    "mock_audio": result['is_mock_audio'],
-                    "user_emotion": result['user_emotion'],
-                    'session_id': session_identifier
-                })
+                yield sse_event("token", result["reply"].replace("\n", " "))
+                yield sse_event(
+                    "reply_done",
+                    {
+                        "reply": result["reply"],
+                        "user_emotion": result["user_emotion"],
+                        "session_id": session_identifier,
+                    },
+                )
+                yield sse_event(
+                    "audio_url",
+                    {
+                        "audio_url": result.get("audio_url"),
+                        "sophia_emotion": result["sophia_emotion"],
+                        "mock_audio": result["is_mock_audio"],
+                        "user_emotion": result["user_emotion"],
+                        "session_id": session_identifier,
+                    },
+                )
                 # user_emotion = chat_service.analyze_emotion_by_text(body.message)
                 # flash_context = memory_manager.get_context_for_llm(
                 #     session_identifier, access_token=supabase_token

@@ -35,16 +35,13 @@ class TextChatSessionIDTester:
             # Generate a new session_id
             test_session_id = str(uuid.uuid4())
 
-            payload = {
-                "message": "What is DeFi?",
-                "session_id": test_session_id
-            }
+            payload = {"message": "What is DeFi?", "session_id": test_session_id}
 
             response = requests.post(
                 f"{self.base_url}/text-chat",
                 json=payload,
                 headers=self.headers,
-                timeout=60
+                timeout=60,
             )
 
             print(f"Status: {response.status_code}")
@@ -58,13 +55,13 @@ class TextChatSessionIDTester:
 
             # Check if session_id is in response
             if "session_id" not in data:
-                print(f"❌ FAIL: session_id not found in response")
+                print("❌ FAIL: session_id not found in response")
                 print(f"Response keys: {data.keys()}")
                 return False
 
             # Check if session_id matches what we sent
             if data["session_id"] != test_session_id:
-                print(f"❌ FAIL: session_id mismatch")
+                print("❌ FAIL: session_id mismatch")
                 print(f"  Expected: {test_session_id}")
                 print(f"  Received: {data['session_id']}")
                 return False
@@ -76,6 +73,7 @@ class TextChatSessionIDTester:
         except Exception as e:
             print(f"❌ FAIL: Exception occurred: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -93,7 +91,7 @@ class TextChatSessionIDTester:
                 f"{self.base_url}/text-chat",
                 json=payload,
                 headers=self.headers,
-                timeout=60
+                timeout=60,
             )
 
             print(f"Status: {response.status_code}")
@@ -107,7 +105,7 @@ class TextChatSessionIDTester:
 
             # Check if session_id is in response
             if "session_id" not in data:
-                print(f"❌ FAIL: session_id not found in response")
+                print("❌ FAIL: session_id not found in response")
                 print(f"Response keys: {data.keys()}")
                 return False
 
@@ -123,6 +121,7 @@ class TextChatSessionIDTester:
         except Exception as e:
             print(f"❌ FAIL: Exception occurred: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -136,7 +135,7 @@ class TextChatSessionIDTester:
 
             payload = {
                 "message": "What is yield farming?",
-                "session_id": test_session_id
+                "session_id": test_session_id,
             }
 
             response = requests.post(
@@ -144,7 +143,7 @@ class TextChatSessionIDTester:
                 json=payload,
                 headers=self.headers,
                 timeout=60,
-                stream=True
+                stream=True,
             )
 
             print(f"Status: {response.status_code}")
@@ -159,7 +158,7 @@ class TextChatSessionIDTester:
 
             # Check for events
             if not events:
-                print(f"❌ FAIL: No SSE events received")
+                print("❌ FAIL: No SSE events received")
                 return False
 
             print(f"Received {len(events)} SSE events")
@@ -167,63 +166,66 @@ class TextChatSessionIDTester:
             # Check for meta event with session_id
             meta_events = [e for e in events if e["event"] == "meta"]
             if not meta_events:
-                print(f"❌ FAIL: No 'meta' event found")
+                print("❌ FAIL: No 'meta' event found")
                 print(f"Available events: {[e['event'] for e in events]}")
                 return False
 
             meta_data = meta_events[0]["data"]
             if "session_id" not in meta_data:
-                print(f"❌ FAIL: session_id not found in 'meta' event")
+                print("❌ FAIL: session_id not found in 'meta' event")
                 print(f"Meta data: {meta_data}")
                 return False
 
             if meta_data["session_id"] != test_session_id:
-                print(f"❌ FAIL: session_id mismatch in 'meta' event")
+                print("❌ FAIL: session_id mismatch in 'meta' event")
                 print(f"  Expected: {test_session_id}")
                 print(f"  Received: {meta_data['session_id']}")
                 return False
 
-            print(f"✅ PASS: 'meta' event has correct session_id: {meta_data['session_id']}")
+            print(
+                f"✅ PASS: 'meta' event has correct session_id: {meta_data['session_id']}"
+            )
 
             # Check for reply_done event with session_id
             reply_done_events = [e for e in events if e["event"] == "reply_done"]
             if not reply_done_events:
-                print(f"❌ FAIL: No 'reply_done' event found")
+                print("❌ FAIL: No 'reply_done' event found")
                 return False
 
             reply_done_data = reply_done_events[0]["data"]
             if "session_id" not in reply_done_data:
-                print(f"❌ FAIL: session_id not found in 'reply_done' event")
+                print("❌ FAIL: session_id not found in 'reply_done' event")
                 print(f"Reply done data: {reply_done_data}")
                 return False
 
             if reply_done_data["session_id"] != test_session_id:
-                print(f"❌ FAIL: session_id mismatch in 'reply_done' event")
+                print("❌ FAIL: session_id mismatch in 'reply_done' event")
                 print(f"  Expected: {test_session_id}")
                 print(f"  Received: {reply_done_data['session_id']}")
                 return False
 
-            print(f"✅ PASS: 'reply_done' event has correct session_id")
+            print("✅ PASS: 'reply_done' event has correct session_id")
 
             # Check for audio_url event with session_id
             audio_url_events = [e for e in events if e["event"] == "audio_url"]
             if audio_url_events:
                 audio_url_data = audio_url_events[0]["data"]
                 if "session_id" not in audio_url_data:
-                    print(f"⚠️  WARNING: session_id not found in 'audio_url' event")
+                    print("⚠️  WARNING: session_id not found in 'audio_url' event")
                     print(f"Audio URL data: {audio_url_data}")
                 elif audio_url_data["session_id"] != test_session_id:
-                    print(f"⚠️  WARNING: session_id mismatch in 'audio_url' event")
+                    print("⚠️  WARNING: session_id mismatch in 'audio_url' event")
                     print(f"  Expected: {test_session_id}")
                     print(f"  Received: {audio_url_data['session_id']}")
                 else:
-                    print(f"✅ PASS: 'audio_url' event has correct session_id")
+                    print("✅ PASS: 'audio_url' event has correct session_id")
 
             return True
 
         except Exception as e:
             print(f"❌ FAIL: Exception occurred: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -242,7 +244,7 @@ class TextChatSessionIDTester:
                 json=payload,
                 headers=self.headers,
                 timeout=60,
-                stream=True
+                stream=True,
             )
 
             print(f"Status: {response.status_code}")
@@ -258,12 +260,12 @@ class TextChatSessionIDTester:
             # Check for meta event with session_id
             meta_events = [e for e in events if e["event"] == "meta"]
             if not meta_events:
-                print(f"❌ FAIL: No 'meta' event found")
+                print("❌ FAIL: No 'meta' event found")
                 return False
 
             meta_data = meta_events[0]["data"]
             if "session_id" not in meta_data:
-                print(f"❌ FAIL: session_id not found in 'meta' event")
+                print("❌ FAIL: session_id not found in 'meta' event")
                 return False
 
             # Check if session_id is a valid UUID
@@ -272,12 +274,15 @@ class TextChatSessionIDTester:
                 print(f"✅ PASS: session_id auto-generated: {meta_data['session_id']}")
                 return True
             except ValueError:
-                print(f"❌ FAIL: session_id is not a valid UUID: {meta_data['session_id']}")
+                print(
+                    f"❌ FAIL: session_id is not a valid UUID: {meta_data['session_id']}"
+                )
                 return False
 
         except Exception as e:
             print(f"❌ FAIL: Exception occurred: {e}")
             import traceback
+
             traceback.print_exc()
             return False
 
@@ -325,10 +330,22 @@ class TextChatSessionIDTester:
         print("=" * 80)
 
         tests = [
-            ("Regular /text-chat with session_id", self.test_text_chat_regular_session_id),
-            ("Regular /text-chat without session_id", self.test_text_chat_regular_without_session_id),
-            ("Streaming /text-chat/stream with session_id", self.test_text_chat_stream_session_id),
-            ("Streaming /text-chat/stream without session_id", self.test_text_chat_stream_without_session_id),
+            (
+                "Regular /text-chat with session_id",
+                self.test_text_chat_regular_session_id,
+            ),
+            (
+                "Regular /text-chat without session_id",
+                self.test_text_chat_regular_without_session_id,
+            ),
+            (
+                "Streaming /text-chat/stream with session_id",
+                self.test_text_chat_stream_session_id,
+            ),
+            (
+                "Streaming /text-chat/stream without session_id",
+                self.test_text_chat_stream_without_session_id,
+            ),
         ]
 
         results = {}
@@ -344,6 +361,7 @@ class TextChatSessionIDTester:
             except Exception as e:
                 print(f"❌ Test '{test_name}' raised an exception: {e}")
                 import traceback
+
                 traceback.print_exc()
                 results[test_name] = False
 
