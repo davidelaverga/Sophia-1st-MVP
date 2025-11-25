@@ -11,43 +11,28 @@ class TestAffectSnapshot:
 
     def test_valid_affect_snapshot_with_phoenix(self):
         """Test creating AffectSnapshot with phoenix source."""
-        snapshot = AffectSnapshot(
-            emotion="happy",
-            confidence=0.85,
-            source="phoenix"
-        )
+        snapshot = AffectSnapshot(emotion="happy", confidence=0.85, source="phoenix")
         assert snapshot.emotion == "happy"
         assert snapshot.confidence == 0.85
         assert snapshot.source == "phoenix"
 
     def test_valid_affect_snapshot_with_fast(self):
         """Test creating AffectSnapshot with fast source."""
-        snapshot = AffectSnapshot(
-            emotion="neutral",
-            confidence=0.60,
-            source="fast"
-        )
+        snapshot = AffectSnapshot(emotion="neutral", confidence=0.60, source="fast")
         assert snapshot.emotion == "neutral"
         assert snapshot.confidence == 0.60
         assert snapshot.source == "fast"
 
     def test_valid_affect_snapshot_no_source(self):
         """Test creating AffectSnapshot with no source."""
-        snapshot = AffectSnapshot(
-            emotion="sad",
-            confidence=0.72,
-            source=None
-        )
+        snapshot = AffectSnapshot(emotion="sad", confidence=0.72, source=None)
         assert snapshot.emotion == "sad"
         assert snapshot.confidence == 0.72
         assert snapshot.source is None
 
     def test_affect_snapshot_default_source_is_none(self):
         """Test that source defaults to None."""
-        snapshot = AffectSnapshot(
-            emotion="anxious",
-            confidence=0.78
-        )
+        snapshot = AffectSnapshot(emotion="anxious", confidence=0.78)
         assert snapshot.source is None
 
     def test_affect_snapshot_confidence_boundaries(self):
@@ -79,7 +64,7 @@ class TestPromptPayload:
         payload = PromptPayload(
             model="mistral-large-latest",
             prompt="You are Sophia, a helpful DeFi assistant.",
-            truncated=False
+            truncated=False,
         )
         assert payload.model == "mistral-large-latest"
         assert payload.prompt == "You are Sophia, a helpful DeFi assistant."
@@ -88,9 +73,7 @@ class TestPromptPayload:
     def test_valid_prompt_payload_truncated(self):
         """Test creating PromptPayload with truncation."""
         payload = PromptPayload(
-            model="claude-3-haiku",
-            prompt="Truncated prompt...",
-            truncated=True
+            model="claude-3-haiku", prompt="Truncated prompt...", truncated=True
         )
         assert payload.model == "claude-3-haiku"
         assert payload.prompt == "Truncated prompt..."
@@ -98,18 +81,12 @@ class TestPromptPayload:
 
     def test_prompt_payload_default_truncated_is_false(self):
         """Test that truncated defaults to False."""
-        payload = PromptPayload(
-            model="gpt-4",
-            prompt="Some prompt"
-        )
+        payload = PromptPayload(model="gpt-4", prompt="Some prompt")
         assert payload.truncated is False
 
     def test_prompt_payload_empty_prompt(self):
         """Test creating PromptPayload with empty prompt."""
-        payload = PromptPayload(
-            model="mistral-small",
-            prompt=""
-        )
+        payload = PromptPayload(model="mistral-small", prompt="")
         assert payload.prompt == ""
         assert payload.truncated is False
 
@@ -117,9 +94,7 @@ class TestPromptPayload:
         """Test creating PromptPayload with very long prompt."""
         long_text = "A" * 10000
         payload = PromptPayload(
-            model="mistral-large-latest",
-            prompt=long_text,
-            truncated=True
+            model="mistral-large-latest", prompt=long_text, truncated=True
         )
         assert len(payload.prompt) == 10000
         assert payload.truncated is True
@@ -130,18 +105,14 @@ class TestTurnSnippet:
 
     def test_valid_turn_snippet_user(self):
         """Test creating TurnSnippet with user role."""
-        turn = TurnSnippet(
-            role="user",
-            text="What is staking?"
-        )
+        turn = TurnSnippet(role="user", text="What is staking?")
         assert turn.role == "user"
         assert turn.text == "What is staking?"
 
     def test_valid_turn_snippet_assistant(self):
         """Test creating TurnSnippet with assistant role."""
         turn = TurnSnippet(
-            role="assistant",
-            text="Staking is the process of locking cryptocurrency..."
+            role="assistant", text="Staking is the process of locking cryptocurrency..."
         )
         assert turn.role == "assistant"
         assert turn.text == "Staking is the process of locking cryptocurrency..."
@@ -190,18 +161,13 @@ class TestDataclassInteraction:
 
     def test_affect_snapshot_with_prompt_payload_context(self):
         """Test using AffectSnapshot in prompt creation context."""
-        affect = AffectSnapshot(
-            emotion="anxious",
-            confidence=0.82,
-            source="phoenix"
-        )
+        affect = AffectSnapshot(emotion="anxious", confidence=0.82, source="phoenix")
 
         # Simulate using affect data in prompt
-        prompt_text = f"User is feeling {affect.emotion} (confidence: {affect.confidence})"
-        payload = PromptPayload(
-            model="mistral-large-latest",
-            prompt=prompt_text
+        prompt_text = (
+            f"User is feeling {affect.emotion} (confidence: {affect.confidence})"
         )
+        payload = PromptPayload(model="mistral-large-latest", prompt=prompt_text)
 
         assert "anxious" in payload.prompt
         assert "0.82" in payload.prompt

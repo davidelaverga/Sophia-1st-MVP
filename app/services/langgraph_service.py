@@ -316,6 +316,7 @@ class LangGraphService:
         except Exception as e:
             logger.error(f"❌ LangGraph streaming failed: {e}")
             import traceback
+
             traceback.print_exc()
             # Fallback to rule-based response
             yield "I'm having trouble processing your request. Could you please try again?"

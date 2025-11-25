@@ -19,14 +19,15 @@ ALLOWED_AUDIO_EXTENSIONS = [
     ".aac",
 ]
 ALLOWED_AUDIO_CONTENT_TYPES = {
-    'audio/wav',
-    'audio/x-wav',
-    'audio/webm',
-    'audio/ogg',
-    'audio/flac',
-    'audio/mp4',
-    'audio/aac',
+    "audio/wav",
+    "audio/x-wav",
+    "audio/webm",
+    "audio/ogg",
+    "audio/flac",
+    "audio/mp4",
+    "audio/aac",
 }
+
 
 def prosody_features(pcm_bytes: bytes) -> Dict[str, str]:
     """Return a coarse intensity classification based on PCM16 RMS."""
@@ -48,6 +49,7 @@ def prosody_features(pcm_bytes: bytes) -> Dict[str, str]:
         return {"intensity": intensity}
     except Exception:
         return {"intensity": "low"}
+
 
 async def extract_audio(upload: UploadFile):
     payload = await upload.read()
@@ -79,6 +81,7 @@ async def extract_audio(upload: UploadFile):
         )
     return payload
 
+
 def validate_audio_upload(upload: UploadFile) -> None:
     filename = upload.filename.lower()
     content_type = upload.content_type
@@ -100,6 +103,7 @@ def validate_audio_upload(upload: UploadFile) -> None:
             " Supported formats: wav, webm, mp4, ogg, flac, m4a, aac"
         ),
     )
+
 
 def sse_event(event_type: str, payload: Any):
     return f"event: {event_type}\ndata: {payload if isinstance(payload, str) else json.dumps(payload)}\n\n"

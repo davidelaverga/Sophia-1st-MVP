@@ -21,3 +21,4 @@ sentence-transformers
 alembic
 nest-asyncio
 psutil
+prometheus-client

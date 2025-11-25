@@ -15,6 +15,7 @@ from app.services.memory import memory_manager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
 @router.get("/api")
 def api_root():
     """API status endpoint"""

@@ -22,6 +22,7 @@ class AffectSnapshot:
                 - "fast": Fast tier-0 classifier
                 - None: No emotion data available
     """
+
     emotion: str
     confidence: float
     source: Optional[Literal["phoenix", "fast"]] = None
@@ -29,7 +30,9 @@ class AffectSnapshot:
     def __post_init__(self):
         """Validate confidence is within valid range."""
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError(f"confidence must be between 0.0 and 1.0, got {self.confidence}")
+            raise ValueError(
+                f"confidence must be between 0.0 and 1.0, got {self.confidence}"
+            )
 
 
 @dataclass
@@ -42,6 +45,7 @@ class PromptPayload:
         prompt: The complete assembled prompt text
         truncated: Whether the prompt was truncated to fit token limits
     """
+
     model: str
     prompt: str
     truncated: bool = False
@@ -58,6 +62,7 @@ class TurnSnippet:
               - "assistant": Assistant/Sophia response
         text: The actual message text
     """
+
     role: Literal["user", "assistant"]
     text: str
 
