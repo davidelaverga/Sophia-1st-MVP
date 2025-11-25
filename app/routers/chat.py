@@ -209,7 +209,7 @@ async def ws_voice(websocket: WebSocket):
                     async for (
                         tok
                     ) in langgraph_service.stream_conversation_response(
-                        wav_utter
+                        wav_utter, session_id=session_id, supabase_token=supabase_token
                     ):
                         cancel_check()
                         if not tok:
