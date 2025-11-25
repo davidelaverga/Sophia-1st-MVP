@@ -13,7 +13,9 @@ import time
 import struct
 import sys
 import http.client
+import os
 from datetime import datetime
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, "/app")
@@ -39,6 +41,10 @@ except ImportError:
 
 # Authentication token for load test user
 SUPABASE_JWT_SECRET = "YqIRjWsZ7jOodskvZ8rV8Ar7/C57iEMID0lq1fiN89whnkLd0VdWHWjH8oVVJFSsdbakWI4zj/t7uLMOu6S5Og=="
+
+
+def _running_under_pytest() -> bool:
+    return "PYTEST_CURRENT_TEST" in os.environ
 
 
 def create_jwt_token():
@@ -192,10 +198,8 @@ async def test_parallel_sessions(num_sessions: int = 5):
     }
 
 
-def test_service_fallback():
-    """
-    TEST 2: Service crash simulation with graceful fallback
-    """
+def _service_fallback_check() -> bool:
+    """Helper to validate service fallback expectations."""
     print("\n📋 TEST 2: Service Fallback Mechanisms")
     print("=" * 60)
 
@@ -217,12 +221,24 @@ def test_service_fallback():
         resp = conn.getresponse()
         if resp.status == 200:
             print(f"\n   ✅ Server responds: HTTP {resp.status}")
-        return True
+            return True
     except Exception as e:
-        print(f"\n   ❌ Server failed: {e}")
+        msg = f"Server failed: {e}"
+        print(f"\n   ❌ {msg}")
+        if _running_under_pytest():
+            pytest.skip(msg)
         return False
     finally:
         conn.close()
+
+    return False
+
+
+def test_service_fallback():
+    """
+    TEST 2: Service crash simulation with graceful fallback
+    """
+    assert _service_fallback_check()
 
 
 async def main():
@@ -250,7 +266,7 @@ async def main():
         conn.close()
 
     # TEST 2: Fallback mechanisms
-    fallback_ok = test_service_fallback()
+    fallback_ok = _service_fallback_check()
 
     # TEST 1, 3, 4: Parallel sessions + Latency + Monitoring
     results = await test_parallel_sessions(num_sessions=5)

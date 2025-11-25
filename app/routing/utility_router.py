@@ -127,16 +127,12 @@ def classify_utility_path(user_message: str) -> UtilityPathResult:
 
         # Check for DeFi-related questions that need RAG/LLM
         if _has_pattern(normalized, DEFI_KEYWORDS):
-            reasoning = (
-                "DeFi-related question detected; needs RAG/LLM context, using light path."
-            )
+            reasoning = "DeFi-related question detected; needs RAG/LLM context, using light path."
             return UtilityPathResult(UtilityPath.LIGHT, 0.75, reasoning)
 
         # Check for questions that require conversation context
         if _has_pattern(normalized, CONTEXT_REQUIRING_QUESTIONS):
-            reasoning = (
-                "Context-requiring question detected (what can we/should we/today); using light path."
-            )
+            reasoning = "Context-requiring question detected (what can we/should we/today); using light path."
             return UtilityPathResult(UtilityPath.LIGHT, 0.72, reasoning)
 
         is_question_like = "?" in normalized or _has_pattern(

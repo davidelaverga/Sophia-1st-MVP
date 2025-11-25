@@ -22,6 +22,8 @@ class LangGraphService:
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
         cancel_check=None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Process conversation through LangGraph pipeline"""
 
@@ -36,6 +38,8 @@ class LangGraphService:
                 session_id,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
+                conversation_count=conversation_count,
             )
 
             # Collect evaluation data if requested (instead of running full evaluation)
@@ -108,6 +112,8 @@ class LangGraphService:
         collect_evaluation_data: bool = True,
         supabase_token: Optional[str] = None,
         cancel_check=None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Process text-only conversation through LangGraph pipeline"""
 
@@ -122,6 +128,8 @@ class LangGraphService:
                 session_id,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
+                conversation_count=conversation_count,
             )
 
             # Collect evaluation data if requested
@@ -190,7 +198,12 @@ class LangGraphService:
             raise
 
     async def stream_conversation_response(
-        self, audio_bytes: bytes, session_id: str = None, supabase_token: Optional[str] = None
+        self,
+        audio_bytes: bytes,
+        session_id: str = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ):
         """Stream conversation response through full LangGraph pipeline with all 5 nodes
 
@@ -254,10 +267,18 @@ class LangGraphService:
                     f"⚠️ Tier-0 classifier failed: {e}, continuing with full pipeline"
                 )
 
-            # Step 2: Execute NODE 1-2: AudioIngestor + IntentAnalyzer
-            logger.info("🔄 NODE 1-2: Executing AudioIngestor + IntentAnalyzer...")
-            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
-            state["supabase_token"] = supabase_token
+            # Step 2: Process through FULL LangGraph pipeline
+            # This executes: AudioIngestor → IntentAnalyzer nodes
+            logger.info(
+                "🔄 Processing through LangGraph nodes (Phoenix emotion, Memory, RAG)..."
+            )
+            state = self.sophia_graph.process_audio_to_context(
+                audio_bytes,
+                session_id,
+                supabase_token=supabase_token,
+                user_id=user_id,
+                conversation_count=conversation_count,
+            )
 
             logger.info(
                 f"✅ NODE 1-2 completed: "
@@ -269,7 +290,9 @@ class LangGraphService:
             # Step 3: Execute NODE 3: ResponseGenerator (via stream_llm_response)
             # Note: stream_llm_response() internally calls ResponseGenerator._build_context()
             # which extracts memory (Flash + Mem0) and RAG context
-            logger.info("🔄 NODE 3: ResponseGenerator - Streaming LLM response with memory + RAG + emotion guidance...")
+            logger.info(
+                "🔄 NODE 3: ResponseGenerator - Streaming LLM response with memory + RAG + emotion guidance..."
+            )
             full_response = ""
             for token in self.sophia_graph.stream_llm_response(state):
                 full_response += token
@@ -283,8 +306,11 @@ class LangGraphService:
             )
 
             # Step 4: Execute NODE 4: TTSNode (audio synthesis + emotion analysis)
-            logger.info("🔄 NODE 4: Executing TTSNode (audio synthesis + emotion analysis)...")
+            logger.info(
+                "🔄 NODE 4: Executing TTSNode (audio synthesis + emotion analysis)..."
+            )
             from app.langgraph_nodes import TTSNode
+
             tts_node = TTSNode()
             state = tts_node(state)
 
@@ -294,8 +320,11 @@ class LangGraphService:
             )
 
             # Step 5: Execute NODE 5: EvalLogger (save to Supabase/Mem0)
-            logger.info("🔄 NODE 5: Executing EvalLogger (saving conversation to Supabase + Mem0)...")
+            logger.info(
+                "🔄 NODE 5: Executing EvalLogger (saving conversation to Supabase + Mem0)..."
+            )
             from app.langgraph_nodes import EvalLogger
+
             eval_logger = EvalLogger()
             state = eval_logger(state)
 
@@ -322,7 +351,12 @@ class LangGraphService:
             yield "I'm having trouble processing your request. Could you please try again?"
 
     def stream_conversation_response_old(
-        self, audio_bytes: bytes, session_id: str = None
+        self,
+        audio_bytes: bytes,
+        session_id: str = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ):
         """Stream conversation response through LangGraph pipeline
 
@@ -335,7 +369,13 @@ class LangGraphService:
 
         try:
             # Process audio to get context (ASR + emotion + intent + RAG)
-            state = self.sophia_graph.process_audio_to_context(audio_bytes, session_id)
+            state = self.sophia_graph.process_audio_to_context(
+                audio_bytes,
+                session_id,
+                supabase_token=supabase_token,
+                user_id=user_id,
+                conversation_count=conversation_count,
+            )
 
             # Stream LLM response using the processed context
             for token in self.sophia_graph.stream_llm_response(state):
