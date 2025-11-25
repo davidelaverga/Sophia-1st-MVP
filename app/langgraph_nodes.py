@@ -70,6 +70,8 @@ class GraphState(TypedDict):
     skill_id: NotRequired[str]
     skill_variant: NotRequired[str]
     skill_reasoning: NotRequired[str]
+    had_crisis: NotRequired[bool]
+    had_boundary: NotRequired[bool]
     intent: str
     current_mode: str  # Task #42729: Routing mode
     utility_path: Optional[str]
@@ -1337,6 +1339,8 @@ class EvalLogger:
             "utility_path": state.get("utility_path"),
             "router_path": state.get("router_path"),
             "fallbacks_used": state.get("fallback_used", {}),
+            "had_crisis": state.get("had_crisis", False),
+            "had_boundary": state.get("had_boundary", False),
             "transcript_length": len(state["transcript"]),
             "response_length": len(state["llm_response"]),
         }
@@ -1516,6 +1520,8 @@ class SophiaLangGraph:
             "conversation_count": conv_count,
             "last_skill": None,
             "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1574,6 +1580,8 @@ class SophiaLangGraph:
             "conversation_count": conv_count,
             "last_skill": None,
             "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1680,6 +1688,8 @@ class SophiaLangGraph:
             "conversation_count": conv_count,
             "last_skill": None,
             "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,
             "utility_path": UtilityPath.LIGHT.value,
