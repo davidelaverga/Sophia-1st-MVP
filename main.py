@@ -23,6 +23,8 @@ load_dotenv()
 from app.routers import text_chat as text_chat_router
 from app.routers import reflections as reflections_router
 from app.routers import community as community_router
+from app.routers import usage_router
+from app.routers import stripe_router
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -126,6 +128,8 @@ else:
 app.include_router(text_chat_router.router, prefix="/text-chat", tags=["text-chat"])
 app.include_router(reflections_router.router, tags=["reflections"])
 app.include_router(community_router.router, tags=["community"])
+app.include_router(usage_router.router)
+app.include_router(stripe_router.router)
 
 logger.info("✅ New routers mounted: /text-chat, /api/reflections, /api/community")
 @app.get("/health")
