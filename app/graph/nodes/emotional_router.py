@@ -3,6 +3,11 @@
 import logging
 from typing import Any, Callable, Dict, Optional
 
+from app.obs.metrics import (
+    track_boundary_override,
+    track_crisis_override,
+    track_skill_distribution,
+)
 from app.routing.emotional_router import (
     ConversationMeta,
     EmotionalRoutingResult,
@@ -45,6 +50,15 @@ class EmotionalSkillRouterNode:
         result = self._router(message, meta, tier0_label=tier0_label)
 
         skill = result.skill
+
+        # Track skill distribution metrics
+        track_skill_distribution(skill.value)
+
+        # Track crisis and boundary overrides (required for customer validation)
+        if skill == EmotionalSkill.CRISIS_REDIRECT:
+            track_crisis_override()
+        elif skill == EmotionalSkill.BOUNDARY_HOLDING:
+            track_boundary_override()
 
         state["skill_id"] = skill.value
         state["skill_variant"] = result.tier0_label

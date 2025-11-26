@@ -86,3 +86,52 @@ def track_utility_path(path: str) -> None:
         path: Path value (DIRECT, LIGHT, AGENTIC)
     """
     utility_path_total.labels(path=path).inc()
+
+
+# Emotional skill distribution metrics
+skill_total = Counter(
+    "skill_total",
+    "Total number of emotional skill routings",
+    ["skill_id"],  # Values: CRISIS_REDIRECT, BOUNDARY_HOLDING, CELEBRATING_BREAKTHROUGH, etc.
+)
+
+# Crisis and boundary override metrics (required for customer validation)
+crisis_override_total = Counter(
+    "crisis_override_total",
+    "Total number of crisis override activations (CRISIS_REDIRECT skill)",
+)
+
+boundary_override_total = Counter(
+    "boundary_override_total",
+    "Total number of boundary override activations (BOUNDARY_HOLDING skill)",
+)
+
+
+def track_skill_distribution(skill_id: str) -> None:
+    """
+    Track emotional skill distribution.
+
+    Args:
+        skill_id: Skill identifier (e.g., CRISIS_REDIRECT, BOUNDARY_HOLDING, etc.)
+    """
+    skill_total.labels(skill_id=skill_id).inc()
+
+
+def track_crisis_override() -> None:
+    """
+    Track crisis override activation.
+
+    Called when CRISIS_REDIRECT skill is activated due to crisis markers.
+    This metric is required for customer validation and acceptance testing.
+    """
+    crisis_override_total.inc()
+
+
+def track_boundary_override() -> None:
+    """
+    Track boundary override activation.
+
+    Called when BOUNDARY_HOLDING skill is activated due to boundary violations.
+    This metric is required for customer validation and acceptance testing.
+    """
+    boundary_override_total.inc()
