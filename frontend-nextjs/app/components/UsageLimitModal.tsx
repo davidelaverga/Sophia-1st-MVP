@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { UsageLimitInfo } from "../types/rate-limits";
 import { copy } from "../../copy";
+import { useUsageLimitStore } from "../stores/usage-limit-store";
 
 type UsageLimitModalProps = {
   open: boolean;
@@ -11,6 +12,7 @@ type UsageLimitModalProps = {
 };
 
 export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
+  const isAtLimit = useUsageLimitStore((state) => state.isAtLimit)
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -28,7 +30,10 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        // Don't allow closing if at 100% limit
+        if (!isAtLimit) {
+          onClose();
+        }
         return;
       }
       if (event.key !== "Tab") return;
@@ -50,7 +55,7 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
     return () => {
       node.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open, onClose]);
+  }, [open, onClose, isAtLimit]);
 
   if (!open) return null;
 
@@ -89,8 +94,12 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="usage-limit-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
       ref={containerRef}
+      onClick={(e) => {
+        // Prevent closing modal by clicking backdrop - user must use button
+        e.stopPropagation()
+      }}
     >
       <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-soft">
         <h2 id="usage-limit-title" className="text-xl font-semibold text-sophia-text">
@@ -123,8 +132,16 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
         <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
-            onClick={onClose}
-            className="w-full rounded-2xl border border-sophia-text/15 bg-white px-4 py-2.5 text-sm font-medium text-sophia-text transition hover:bg-sophia-user sm:w-auto"
+            onClick={() => {
+              // Don't allow closing if at 100% limit - user must upgrade
+              if (!isAtLimit) {
+                onClose();
+              }
+            }}
+            disabled={isAtLimit}
+            className={`w-full rounded-2xl border border-sophia-text/15 bg-white px-4 py-2.5 text-sm font-medium text-sophia-text transition hover:bg-sophia-user sm:w-auto ${
+              isAtLimit ? "opacity-50 cursor-not-allowed" : ""
+            }`}
           >
             {copy.usageLimit.ctaSecondary}
           </button>

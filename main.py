@@ -18,6 +18,7 @@ from app.services import mistral as mistral_service
 from app.services import supabase as supabase_service
 from app.services import tts as tts_service
 from app.services.langgraph_service import langgraph_service
+from app.services.rate_limits import rate_limit_service
 from dotenv import load_dotenv
 load_dotenv()
 from app.routers import text_chat as text_chat_router
@@ -178,6 +179,7 @@ class DefiChatResponse(BaseModel):
 class TextChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    user_id: Optional[str] = None  # For rate limiting (Supabase user UUID)
 
 
 @app.get("/")
@@ -466,6 +468,7 @@ async def defi_chat(
     request: Request,
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # For rate limiting (Supabase user UUID)
     api_key_ok: None = Depends(verify_api_key),
 ):
     """Enhanced chat endpoint using LangGraph for DeFi conversations"""
@@ -474,6 +477,29 @@ async def defi_chat(
     allowed_extensions = ['.wav', '.webm', '.mp3', '.mp4', '.ogg', '.flac', '.m4a', '.aac']
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
         raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
+
+    # 💜 Gentle rate limiting check (optional, only if user_id provided)
+    # Estimate ~3 seconds per voice message as a reasonable average
+    if user_id:
+        limit_check = rate_limit_service.check_limits(
+            user_id=user_id,
+            additional_voice_sec=3
+        )
+        
+        if not limit_check.allowed:
+            logger.info(f"Rate limit reached for user {user_id}: {limit_check.reason}")
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "USAGE_LIMIT_REACHED",
+                    "reason": limit_check.reason,
+                    "plan_tier": limit_check.plan_tier,
+                    "limit": limit_check.limit,
+                    "used": limit_check.used,
+                    "title": limit_check.title,
+                    "body": limit_check.body,
+                }
+            )
 
     try:
         wav_bytes = await file.read()
@@ -509,6 +535,16 @@ async def defi_chat(
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist conversation session: {e}")
+        
+        # 💜 Track usage after successful processing (best effort)
+        # Use actual audio duration if available, otherwise use estimate
+        if user_id:
+            try:
+                # TODO: Get actual audio duration from wav_bytes if needed
+                rate_limit_service.add_voice_usage(user_id=user_id, seconds=3)
+                logger.debug(f"Tracked voice usage for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to track voice usage: {e}")
         
         return DefiChatResponse(**result)
         
@@ -673,10 +709,13 @@ def _avg_abs_pcm16(buf: bytes) -> float:
 @app.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket):
     # In production, protect with auth (API key/session) via headers or query.
+    # Extract user_id from query params for rate limiting (optional)
+    user_id = websocket.query_params.get("user_id")
+    
     await websocket.accept()
     session_id = str(uuid.uuid4())
     log_prefix = f"[ws_voice:{session_id}]"
-    logger.info(f"{log_prefix} connection accepted")
+    logger.info(f"{log_prefix} connection accepted" + (f" user_id={user_id}" if user_id else ""))
     SAMPLE_RATE = 16000
     BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
     CHUNK_MS = 200
@@ -731,6 +770,33 @@ async def ws_voice(websocket: WebSocket):
                     wav_utter = _wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                     logger.info(f"{log_prefix} endpoint detected; utterance bytes={len(utter_bytes)}")
 
+                    # 💜 Gentle rate limiting check before processing (optional, only if user_id provided)
+                    if user_id:
+                        # Estimate voice duration from audio bytes (PCM16 mono 16kHz)
+                        voice_duration_sec = max(1, len(utter_bytes) // BYTES_PER_SEC)
+                        limit_check = rate_limit_service.check_limits(
+                            user_id=user_id,
+                            additional_voice_sec=voice_duration_sec
+                        )
+                        
+                        if not limit_check.allowed:
+                            logger.info(f"{log_prefix} Rate limit reached for user {user_id}: {limit_check.reason}")
+                            # Send gentle error message to client
+                            await _ws_send_json(websocket, {
+                                "type": "error",
+                                "error": "USAGE_LIMIT_REACHED",
+                                "reason": limit_check.reason,
+                                "plan_tier": limit_check.plan_tier,
+                                "limit": limit_check.limit,
+                                "used": limit_check.used,
+                                "title": limit_check.title,
+                                "body": limit_check.body,
+                            })
+                            # Reset for next utterance but don't close connection
+                            in_speech = False
+                            pcm_buffer.clear()
+                            continue
+                    
                     # Process audio through LangGraph pipeline (non-streaming for reliability)
                     reply_tokens = []
                     tokens_sent = 0
@@ -848,6 +914,15 @@ async def ws_voice(websocket: WebSocket):
                     last_final_text = f"[Audio processed: {len(utter_bytes)} bytes]"
                     last_reply_text = reply_full
                     last_audio_url = audio_url_last
+                    
+                    # 💜 Track usage after successful processing (best effort)
+                    if user_id:
+                        try:
+                            voice_duration_sec = max(1, len(utter_bytes) // BYTES_PER_SEC)
+                            rate_limit_service.add_voice_usage(user_id=user_id, seconds=voice_duration_sec)
+                            logger.debug(f"{log_prefix} Tracked {voice_duration_sec}s voice usage for user {user_id}")
+                        except Exception as e:
+                            logger.warning(f"{log_prefix} Failed to track voice usage: {e}")
 
                     # Reset for next utterance
                     partial_transcript = ""
@@ -889,6 +964,28 @@ async def text_chat(
 ):
     """Text-only chat endpoint for DeFi conversations"""
     
+    # 💜 Gentle rate limiting check (optional, only if user_id provided)
+    if body.user_id:
+        limit_check = rate_limit_service.check_limits(
+            user_id=body.user_id,
+            additional_text_msgs=1
+        )
+        
+        if not limit_check.allowed:
+            logger.info(f"Rate limit reached for user {body.user_id}: {limit_check.reason}")
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "USAGE_LIMIT_REACHED",
+                    "reason": limit_check.reason,
+                    "plan_tier": limit_check.plan_tier,
+                    "limit": limit_check.limit,
+                    "used": limit_check.used,
+                    "title": limit_check.title,
+                    "body": limit_check.body,
+                }
+            )
+    
     try:
         # Process text message directly through LangGraph with text input
         result = langgraph_service.process_text_conversation(
@@ -917,6 +1014,14 @@ async def text_chat(
                 logger.warning(f"Failed to persist sophia emotion: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist text conversation session: {e}")
+        
+        # 💜 Track usage after successful processing (best effort)
+        if body.user_id:
+            try:
+                rate_limit_service.add_text_usage(user_id=body.user_id, messages=1)
+                logger.debug(f"Tracked text usage for user {body.user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to track text usage: {e}")
         
         return DefiChatResponse(**result)
         

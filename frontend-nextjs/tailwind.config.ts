@@ -46,6 +46,10 @@ const config: Config = {
           "0%": { opacity: "0" },
           "100%": { opacity: "1" },
         },
+        fadeInUp: {
+          "0%": { opacity: "0", transform: "translateY(10px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
         breathe: {
           "0%, 100%": { opacity: "0.8", transform: "scale(1)" },
           "50%": { opacity: "1", transform: "scale(1.02)" },
@@ -62,14 +66,37 @@ const config: Config = {
           "0%": { backgroundPosition: "200% 0" },
           "100%": { backgroundPosition: "-200% 0" },
         },
+        glowBreathe: {
+          "0%, 100%": { 
+            opacity: "0.4",
+            transform: "scale(0.95)",
+            boxShadow: "0 0 8px rgba(139, 92, 246, 0.3)"
+          },
+          "50%": { 
+            opacity: "1",
+            transform: "scale(1.1)",
+            boxShadow: "0 0 20px rgba(139, 92, 246, 0.6), 0 0 40px rgba(167, 139, 250, 0.3)"
+          },
+        },
+        ringBreathe: {
+          "0%, 100%": { 
+            boxShadow: "0 0 0 2px rgba(139, 92, 246, 0.2), 0 0 20px rgba(139, 92, 246, 0.1)"
+          },
+          "50%": { 
+            boxShadow: "0 0 0 2px rgba(139, 92, 246, 0.4), 0 0 40px rgba(139, 92, 246, 0.3), 0 0 60px rgba(167, 139, 250, 0.2)"
+          },
+        },
       },
       animation: {
         pulseSoft: "pulseSoft 2s ease-in-out infinite",
-        fadeIn: "fadeIn 200ms ease",
+        fadeIn: "fadeIn 400ms ease-out",
+        fadeInUp: "fadeInUp 500ms ease-out",
         breathe: "breathe 3s ease-in-out infinite",
         breatheSlow: "breatheSlow 4s ease-in-out infinite",
         float: "float 3s ease-in-out infinite",
         shimmer: "shimmer 3s ease-in-out infinite",
+        glowBreathe: "glowBreathe 2.5s ease-in-out infinite",
+        ringBreathe: "ringBreathe 3s ease-in-out infinite",
       },
     },
   },

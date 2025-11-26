@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react"
 import { usePresenceStore } from "../stores/presence-store"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
+import { useVoiceHistoryStore } from "../stores/voice-history-store"
+import { useChatStore } from "../stores/chat-store"
 import { emitTelemetry } from "../lib/telemetry"
-import type { UsageLimitError } from "../types/rate-limits"
+import type { UsageLimitError, UsageLimitInfo } from "../types/rate-limits"
+import { refreshUsage } from "./useUsageMonitor"
 
 const PREBUFFER_CHUNKS = 3
 const FIRST_AUDIO_TARGET_MS = 200
@@ -82,7 +85,8 @@ function downsampleTo16kPCM(input: Float32Array, inputSampleRate: number): Array
   return pcm.buffer
 }
 
-export function useVoiceLoop() {
+// 💜 Accept userId for rate limiting (optional)
+export function useVoiceLoop(userId?: string) {
   const [stage, setStage] = useState<VoiceStage>("idle")
   const [partialReply, setPartialReply] = useState("")
   const [finalReply, setFinalReply] = useState("")
@@ -96,6 +100,10 @@ export function useVoiceLoop() {
   const setPresenceDetail = usePresenceStore((state) => state.setDetail)
   const settlePresence = usePresenceStore((state) => state.settleToRestingSoon)
   const resetPresence = usePresenceStore((state) => state.reset)
+  const showLimitModal = useUsageLimitStore((state) => state.showModal)
+  
+  const addVoiceMessage = useVoiceHistoryStore((state) => state.addMessage)
+  const addVoiceToChat = useChatStore((state) => state.addVoiceMessage)
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -199,6 +207,12 @@ export function useVoiceLoop() {
         setStage("idle")
         setSpeakingPresence(false)
         settlePresence()
+        
+        // Close WebSocket after all audio playback is complete
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.close()
+          wsRef.current = null
+        }
       }
     }
 
@@ -236,7 +250,8 @@ export function useVoiceLoop() {
   const enqueueBase64Chunk = (b64: string, mime?: string) => {
     try {
       const bytes = base64ToUint8Array(b64)
-      const blob = new Blob([bytes], { type: mime || "audio/wav" })
+      // TypeScript fix: cast to ensure compatibility with BlobPart
+      const blob = new Blob([bytes as BlobPart], { type: mime || "audio/wav" })
       const url = URL.createObjectURL(blob)
       enqueueChunk({ url, revokeOnUse: true })
     } catch (err) {
@@ -257,6 +272,12 @@ export function useVoiceLoop() {
       setStage("idle")
       setSpeakingPresence(false)
       settlePresence()
+      
+      // Close WebSocket after audio stream ends to prevent backend loop
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
     if (speechStartAtRef.current) {
       emitTelemetry("voice.stream_complete", {
@@ -323,7 +344,34 @@ export function useVoiceLoop() {
       }
       case "reply_done": {
         const text = typeof data.text === "string" ? data.text : replyBufferRef.current
+        
+        // Save to voice history (for VoiceTranscript component)
+        if (text.trim()) {
+          addVoiceMessage(text)
+        }
+        
+        // ALSO save to unified chat store for seamless context
+        if (text.trim()) {
+          addVoiceToChat(text)
+        }
+        
+        // Clear finalReply after saving to history to avoid showing it separately
         setFinalReply(text)
+        setTimeout(() => {
+          setFinalReply("")
+        }, 100)
+        
+        // IMPORTANT: Reset reply buffer to prevent concatenation
+        replyBufferRef.current = ""
+        setPartialReply("")
+        
+        // Refresh usage immediately after voice interaction completes
+        // Backend has updated the usage, so we should see the new count
+        refreshUsage()
+        
+        // DON'T close WebSocket here - audio chunks still need to come through
+        // WebSocket will close when audio playback ends (handleStreamEos)
+        
         break
       }
       case "audio_chunk":
@@ -394,7 +442,13 @@ export function useVoiceLoop() {
     }
     // Use NEXT_PUBLIC_BACKEND_WS_URL if available, otherwise construct from API URL
     const wsBase = process.env.NEXT_PUBLIC_BACKEND_WS_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-    const wsUrl = wsBase.startsWith("ws") ? `${wsBase}/ws/voice` : `${httpToWs(wsBase)}/ws/voice`
+    let wsUrl = wsBase.startsWith("ws") ? `${wsBase}/ws/voice` : `${httpToWs(wsBase)}/ws/voice`
+    
+    // 💜 Add user_id query param for rate limiting (optional)
+    if (userId) {
+      wsUrl += `?user_id=${encodeURIComponent(userId)}`
+    }
+    
     setStage("connecting")
 
     const promise = new Promise<WebSocket>((resolve, reject) => {
@@ -474,29 +528,62 @@ export function useVoiceLoop() {
   }
 
   const startTalking = async () => {
+    // 💜 Block if user is at 100% usage limit
+    const usageStore = useUsageLimitStore.getState()
+    if (usageStore.isAtLimit) {
+      // Show modal if not already open
+      if (!usageStore.isOpen && usageStore.currentUsage) {
+        const reason = usageStore.currentUsage.voicePercent >= 100 ? "voice" : "text"
+        const limitInfo: UsageLimitInfo = {
+          reason,
+          plan_tier: "FREE", // Will be updated by usage monitor
+          limit: 0,
+          used: 0,
+        }
+        usageStore.showModal(limitInfo)
+      }
+      setError("You've reached your daily limit. Please upgrade or come back tomorrow.")
+      setStage("error")
+      return // Block the request
+    }
+
+    // Immediate visual feedback - set connecting state right away
     setError(undefined)
+    setStage("connecting")
     replyBufferRef.current = ""
     setPartialReply("")
     setFinalReply("")
 
     try {
-      const ws = await ensureConnection()
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        throw new Error("Voice service unavailable")
-      }
+      // Start connection in parallel with other operations
+      const wsPromise = ensureConnection()
+      
       const AudioContextClass = getAudioContextClass()
       const ctx = audioCtxRef.current ?? new AudioContextClass({ sampleRate: 48000 })
       audioCtxRef.current = ctx
+      
+      // Unlock audio if needed (can happen in parallel)
+      let unlockPromise: Promise<boolean> | null = null
       if (ctx.state === "suspended") {
-        const unlocked = await unlockAudio()
-        if (!unlocked) {
-          throw new Error("Audio context locked")
-        }
+        unlockPromise = unlockAudio()
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      // Get user media (can happen in parallel with connection)
+      const streamPromise = navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true },
       })
+
+      // Wait for all operations in parallel
+      const [ws, stream] = await Promise.all([
+        wsPromise,
+        streamPromise,
+        unlockPromise || Promise.resolve(true),
+      ])
+      
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        throw new Error("Voice service unavailable")
+      }
+      
       streamRef.current = stream
       const source = ctx.createMediaStreamSource(stream)
       sourceRef.current = source
@@ -611,4 +698,7 @@ export function useVoiceLoop() {
     unlockAudio,
   }
 }
+
+// Export return type for components that receive voice state as props
+export type VoiceLoopReturn = ReturnType<typeof useVoiceLoop>
 

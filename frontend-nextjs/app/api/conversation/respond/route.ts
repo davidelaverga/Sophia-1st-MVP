@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
+import { createServerClient, type CookieOptions } from "@supabase/ssr"
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -26,14 +28,22 @@ const formatEvent = (event: string, data: unknown) => {
 }
 
 const sendMetaEvent = (controller: ReadableStreamDefaultController, conversationId: string, status: string, detail?: string) => {
-  controller.enqueue(
-    encoder.encode(
-      formatEvent("meta", {
-        conversationId,
-        presence: { status, detail },
-      })
-    )
-  )
+  try {
+    // Check if controller is still open before enqueuing
+    if (controller.desiredSize !== null) {
+      controller.enqueue(
+        encoder.encode(
+          formatEvent("meta", {
+            conversationId,
+            presence: { status, detail },
+          })
+        )
+      )
+    }
+  } catch (error) {
+    // Silently ignore errors when stream is closed
+    console.warn("[conversation] Stream already closed, skipping meta event:", status)
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -42,6 +52,36 @@ export async function POST(request: NextRequest) {
 
   if (!apiBase || !apiKey) {
     return NextResponse.json({ error: "Server configuration incomplete" }, { status: 500 })
+  }
+
+  // 💜 Get authenticated user for rate limiting (optional)
+  let userId: string | undefined
+  try {
+    const cookieStore = cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value
+          },
+          set(name: string, value: string, options: CookieOptions) {
+            cookieStore.set({ name, value, ...options })
+          },
+          remove(name: string, options: CookieOptions) {
+            cookieStore.set({ name, value: "", ...options })
+          },
+        },
+      }
+    )
+
+    const { data: { user } } = await supabase.auth.getUser()
+    userId = user?.id
+    console.log("[conversation] User ID for rate limiting:", userId)
+  } catch (error) {
+    // If auth fails, continue without user_id (no rate limiting)
+    console.warn("[conversation] Failed to get user for rate limiting:", error)
   }
 
   let body: TextChatRequest
@@ -55,6 +95,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing message" }, { status: 400 })
   }
 
+  // 💜 Use user_id from request body if provided (from client-side)
+  // Fallback to server-side auth if not provided
+  if (body.user_id) {
+    userId = body.user_id
+    console.log("[conversation] Using user_id from request body:", userId)
+  } else if (!userId) {
+    console.warn("[conversation] No user_id provided in request body and server-side auth failed")
+  }
+
   const conversationId = body.conversationId || crypto.randomUUID()
 
   const backendResponse = await fetch(`${apiBase}/text-chat/stream`, {
@@ -66,6 +115,7 @@ export async function POST(request: NextRequest) {
     body: JSON.stringify({
       message: body.message,
       session_id: conversationId,
+      user_id: userId, // 💜 Pass user_id for rate limiting (optional)
     }),
   })
 
@@ -87,7 +137,15 @@ export async function POST(request: NextRequest) {
       const reader = backendResponse.body!.getReader()
 
       const queueEvent = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(formatEvent(event, data)))
+        try {
+          // Check if controller is still open before enqueuing
+          if (controller.desiredSize !== null) {
+            controller.enqueue(encoder.encode(formatEvent(event, data)))
+          }
+        } catch (error) {
+          // Silently ignore errors when stream is closed
+          console.warn("[conversation] Stream already closed, skipping event:", event)
+        }
       }
 
       const dispatchDone = () => {

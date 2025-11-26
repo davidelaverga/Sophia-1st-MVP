@@ -1,13 +1,18 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { copy, t } from "../../copy"
 import { PresenceIndicator } from "./PresenceIndicator"
+import { useSupabase } from "../providers"
 
 type HeaderProps = {
   onOpenSettings?: () => void
 }
 
 export function Header({ onOpenSettings }: HeaderProps) {
+  const { user } = useSupabase()
+  const router = useRouter()
+
   return (
     <header className="safe-px flex h-14 items-center justify-between">
       <div className="flex items-center gap-3">
@@ -23,13 +28,23 @@ export function Header({ onOpenSettings }: HeaderProps) {
       </div>
       <div className="flex items-center gap-3">
         <PresenceIndicator />
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="rounded-2xl border border-sophia-text/15 bg-white/60 px-4 py-1.5 text-sm font-medium text-sophia-text shadow-soft/20 transition-all duration-300 ease-out hover:scale-[1.02] hover:bg-white hover:shadow-md active:scale-[0.98]"
-        >
-          {t("settings.title")}
-        </button>
+        {user ? (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="rounded-2xl border border-sophia-text/15 bg-white/60 px-4 py-1.5 text-sm font-medium text-sophia-text shadow-soft/20 transition-all duration-300 ease-out hover:scale-[1.02] hover:bg-white hover:shadow-md active:scale-[0.98]"
+          >
+            {t("settings.title")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => router.push("/login")}
+            className="rounded-2xl bg-gradient-to-br from-sophia-purple to-sophia-glow px-4 py-1.5 text-sm font-semibold text-white shadow-md shadow-sophia-purple/30 transition-all duration-300 ease-out hover:scale-[1.02] hover:shadow-lg hover:shadow-sophia-purple/40 active:scale-[0.98]"
+          >
+            Sign in
+          </button>
+        )}
       </div>
     </header>
   )

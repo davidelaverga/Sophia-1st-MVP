@@ -27,6 +27,7 @@ from app.services.supabase import upload_audio_and_get_url, insert_conversation_
 from app.services.evaluations import evaluation_manager
 from app.services.mistral import generate_llm_reply_with_context
 from app.services.rag import rag_system
+from app.services.rate_limits import rate_limit_service
 import json
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class TextChatRequest(BaseModel):
     """Request body for text chat"""
     message: str = Field(..., min_length=1, description="User's text message")
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
+    user_id: Optional[str] = Field(None, description="User ID for rate limiting")
 
 
 class TextChatResponse(BaseModel):
@@ -325,6 +327,15 @@ async def _stream_text_chat_enhanced(message: str, session_id: Optional[str], us
         except Exception as e:
             logger.error(f"[Text Chat Stream] Failed to collect evaluation data: {e}")
         
+        # 💜 Track usage after successful processing (best effort)
+        if user_id:
+            try:
+                logger.info(f"[Text Chat Stream] Attempting to track text usage for user {user_id}")
+                rate_limit_service.add_text_usage(user_id=user_id, messages=1)
+                logger.info(f"[Text Chat Stream] ✅ Successfully tracked text usage for user {user_id}")
+            except Exception as e:
+                logger.error(f"[Text Chat Stream] ❌ Failed to track text usage for user {user_id}: {e}", exc_info=True)
+        
         # EVENT 7: Resting
         yield f"event: meta\ndata: {json.dumps({'stage': 'resting', 'session_id': session_id})}\n\n"
         
@@ -359,10 +370,45 @@ async def text_chat_stream_enhanced(
     - Accept: text/event-stream
     """
     
-    logger.info(f"[Enhanced Text Chat] Request: message='{body.message[:50]}...', session={body.session_id}")
+    logger.info(f"[Enhanced Text Chat] Request: message='{body.message[:50]}...', session={body.session_id}, user_id={body.user_id}")
+    
+    if not body.user_id:
+        logger.warning(f"[Enhanced Text Chat] ⚠️ No user_id provided - usage tracking will be skipped")
+    
+    # Check rate limits before processing
+    if body.user_id:
+        from app.services.rate_limits import rate_limit_service
+        limit_check = rate_limit_service.check_limits(
+            user_id=body.user_id,
+            additional_text_msgs=1
+        )
+        
+        if not limit_check.allowed:
+            logger.info(f"[Enhanced Text Chat] Rate limit reached for user {body.user_id}: {limit_check.reason}")
+            async def error_stream():
+                error_data = json.dumps({
+                    "error": "USAGE_LIMIT_REACHED",
+                    "reason": limit_check.reason,
+                    "plan_tier": limit_check.plan_tier,
+                    "limit": limit_check.limit,
+                    "used": limit_check.used,
+                    "title": limit_check.title,
+                    "body": limit_check.body,
+                })
+                yield f"event: error\ndata: {error_data}\n\n"
+            
+            return StreamingResponse(
+                error_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                }
+            )
     
     return StreamingResponse(
-        _stream_text_chat_enhanced(body.message, body.session_id),
+        _stream_text_chat_enhanced(body.message, body.session_id, body.user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

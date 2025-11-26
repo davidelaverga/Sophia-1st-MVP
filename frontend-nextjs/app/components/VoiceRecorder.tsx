@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { Mic, Square } from 'lucide-react'
 import { copy, t } from '../../copy'
+import { useSupabase } from '../providers'
 
 interface VoiceRecorderProps {
   onMessage: (message: any) => void
@@ -16,6 +17,9 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
   const audioChunksRef = useRef<Blob[]>([])
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  
+  // 💜 Get authenticated user for rate limiting
+  const { user } = useSupabase()
 
   const startRecording = useCallback(async () => {
     try {
@@ -111,6 +115,11 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       }
       
       formData.append('file', audioBlob, fileName)
+      
+      // 💜 Add user_id for rate limiting (optional)
+      if (user?.id) {
+        formData.append('user_id', user.id)
+      }
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat/stream`, {
         method: 'POST',

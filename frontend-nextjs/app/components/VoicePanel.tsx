@@ -1,12 +1,15 @@
 "use client"
 
-import { useRef } from "react"
+import { useRef, useEffect } from "react"
 import { Mic, Square, Zap } from "lucide-react"
-import { useVoiceLoop } from "../hooks/useVoiceLoop"
+import type { VoiceLoopReturn } from "../hooks/useVoiceLoop"
 import { Waveform } from "./Waveform"
+import { VoiceTranscript } from "./VoiceTranscript"
+import { useFocusModeStore } from "../stores/focus-mode-store"
+import { useUsageLimitStore } from "../stores/usage-limit-store"
 
 const stageLabel: Record<string, string> = {
-  idle: "Press and hold whenever you’re ready",
+  idle: "Press and hold whenever you're ready",
   connecting: "Connecting…",
   listening: "Listening",
   thinking: "Thinking",
@@ -14,11 +17,29 @@ const stageLabel: Record<string, string> = {
   error: "Something went wrong",
 }
 
-export function VoicePanel() {
+type VoicePanelProps = {
+  voiceState: VoiceLoopReturn
+}
+
+export function VoicePanel({ voiceState }: VoicePanelProps) {
   const { stage, partialReply, finalReply, error, path, needsUnlock, stream, startTalking, stopTalking, bargeIn, unlockAudio } =
-    useVoiceLoop()
-  const holdRef = useRef(false)
-  const pointerIdRef = useRef<number | null>(null)
+    voiceState
+  const isRecordingRef = useRef(false)
+  
+  // Focus mode management
+  const setMode = useFocusModeStore((state) => state.setMode)
+  const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
+  
+  // Check if usage limit modal is open - block voice interaction
+  const isModalOpen = useUsageLimitStore((state) => state.isOpen)
+  
+  // Stop recording if modal opens
+  useEffect(() => {
+    if (isModalOpen && isRecordingRef.current) {
+      isRecordingRef.current = false
+      stopTalking()
+    }
+  }, [isModalOpen, stopTalking])
   
   // Map voice stage to presence state for waveform
   const getWaveformState = () => {
@@ -28,40 +49,42 @@ export function VoicePanel() {
     return "resting"
   }
 
-  const handlePressStart = async () => {
-    if (holdRef.current) return
-    holdRef.current = true
-    try {
-      await startTalking()
-    } catch {
-      holdRef.current = false
+  // Toggle recording on/off with each click
+  const handleToggleRecording = async () => {
+    // Block interaction if modal is open
+    if (isModalOpen) {
+      return
+    }
+    
+    if (stage === "thinking" || stage === "speaking") {
+      // Don't allow toggle while processing
+      return
+    }
+
+    if (isRecordingRef.current) {
+      // Stop recording - immediate feedback
+      isRecordingRef.current = false
+      stopTalking()
+    } else {
+      // Start recording - immediate visual feedback
+      isRecordingRef.current = true
+      
+      // Switch to voice focus mode when user starts talking
+      setMode("voice")
+      setManualOverride(true)
+      
+      // Start async operations in background (don't await)
+      // This allows immediate visual feedback
+      startTalking().catch(() => {
+        isRecordingRef.current = false
+      })
     }
   }
 
-  const handlePressEnd = () => {
-    if (!holdRef.current) return
-    holdRef.current = false
-    stopTalking()
-  }
-
-  const handleKeyDown = async (event: React.KeyboardEvent<HTMLButtonElement>) => {
+  const handleKeyPress = async (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === " " || event.key === "Enter") {
       event.preventDefault()
-      if (!holdRef.current) {
-        holdRef.current = true
-        try {
-          await startTalking()
-        } catch {
-          holdRef.current = false
-        }
-      }
-    }
-  }
-
-  const handleKeyUp = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === " " || event.key === "Enter") {
-      event.preventDefault()
-      handlePressEnd()
+      handleToggleRecording()
     }
   }
 
@@ -69,7 +92,13 @@ export function VoicePanel() {
   const showInterrupt = stage === "speaking"
 
   return (
-    <section className="rounded-3xl bg-white p-5 pb-6 shadow-soft">
+    <section 
+      className={`rounded-3xl bg-white p-5 pb-6 shadow-soft transition-all duration-500 ${
+        stage === "thinking" 
+          ? "animate-ringBreathe" 
+          : ""
+      }`}
+    >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-sophia-text">Live voice space</p>
@@ -80,6 +109,11 @@ export function VoicePanel() {
             {path}
           </span>
         )}
+      </div>
+
+      {/* Voice transcript - Sophia's voice responses */}
+      <div className="mt-4">
+        <VoiceTranscript partialReply={partialReply} finalReply={finalReply} />
       </div>
 
       <div className="mt-6 flex flex-col items-center gap-4">
@@ -95,40 +129,31 @@ export function VoicePanel() {
         <div className="flex flex-col items-center gap-2">
           <button
             type="button"
-            onPointerDown={(event) => {
-              pointerIdRef.current = event.pointerId
-              handlePressStart()
-            }}
-            onPointerUp={(event) => {
-              if (pointerIdRef.current === event.pointerId) {
-                handlePressEnd()
-              }
-            }}
-            onPointerLeave={(event) => {
-              if (pointerIdRef.current === event.pointerId) {
-                handlePressEnd()
-              }
-            }}
-            onPointerCancel={(event) => {
-              if (pointerIdRef.current === event.pointerId) {
-                handlePressEnd()
-              }
-            }}
-            onKeyDown={handleKeyDown}
-            onKeyUp={handleKeyUp}
-            className={`group relative flex h-16 w-16 items-center justify-center rounded-3xl text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 sm:h-24 sm:w-24 ${
-              stage === "listening"
-                ? "bg-gradient-to-br from-sophia-purple to-sophia-glow shadow-lg shadow-sophia-purple/40"
-                : "bg-gradient-to-br from-sophia-purple to-sophia-glow/60"
+            onClick={handleToggleRecording}
+            onKeyDown={handleKeyPress}
+            disabled={stage === "thinking" || stage === "speaking" || isModalOpen}
+            className={`group relative flex h-16 w-16 items-center justify-center rounded-3xl text-white transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 sm:h-24 sm:w-24 ${
+              isModalOpen
+                ? "bg-gradient-to-br from-sophia-purple/40 to-sophia-glow/30 opacity-50 cursor-not-allowed"
+                : stage === "listening"
+                ? "bg-gradient-to-br from-sophia-purple to-sophia-glow shadow-lg shadow-sophia-purple/40 scale-105"
+                : stage === "thinking"
+                ? "bg-gradient-to-br from-sophia-purple/60 to-sophia-glow/40 opacity-60 cursor-not-allowed"
+                : "bg-gradient-to-br from-sophia-purple to-sophia-glow/60 hover:scale-105"
             }`}
             aria-pressed={stage === "listening"}
+            aria-busy={stage === "thinking" || isModalOpen}
+            aria-label={stage === "listening" ? "Stop recording" : "Start recording"}
           >
             <Mic className="h-7 w-7 sm:h-10 sm:w-10" />
           </button>
           
-          {/* Hint text below button - always inside container */}
+          {/* Status text */}
           {stage === "listening" && (
-            <span className="text-[11px] font-medium text-sophia-text2 animate-fadeIn">Release to send</span>
+            <span className="text-[11px] font-medium text-sophia-text2 animate-fadeIn">Click to stop & send</span>
+          )}
+          {stage === "thinking" && (
+            <span className="text-xs font-medium text-sophia-purple animate-pulse">Sophia is thinking...</span>
           )}
         </div>
 

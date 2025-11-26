@@ -6,6 +6,7 @@ import { Check } from "lucide-react";
 
 export default function FoundingSupporterPage() {
   const [showToast, setShowToast] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"free" | "founding">("founding");
 
   const handleUpgrade = () => {
     const checkoutUrl = process.env.NEXT_PUBLIC_FOUNDING_CHECKOUT_URL;
@@ -105,9 +106,44 @@ export default function FoundingSupporterPage() {
           <h2 className="text-center text-2xl font-bold text-sophia-text">
             {copy.foundingSupporter.plans.title}
           </h2>
+          
+          {/* Plan Toggle */}
+          <div className="mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-white p-1 shadow-soft">
+            <button
+              type="button"
+              onClick={() => setSelectedPlan("free")}
+              className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${
+                selectedPlan === "free"
+                  ? "bg-sophia-purple text-white shadow-md"
+                  : "text-sophia-text2 hover:text-sophia-text"
+              }`}
+            >
+              {copy.foundingSupporter.plans.free.title}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedPlan("founding")}
+              className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${
+                selectedPlan === "founding"
+                  ? "bg-sophia-purple text-white shadow-md"
+                  : "text-sophia-text2 hover:text-sophia-text"
+              }`}
+            >
+              {copy.foundingSupporter.plans.founding.title}
+            </button>
+          </div>
+
+          {/* Plan Cards */}
           <div className="grid gap-6 md:grid-cols-2">
             {/* Free Plan */}
-            <div className="rounded-3xl border-2 border-sophia-text/10 bg-white p-6 shadow-soft">
+            <div
+              onClick={() => setSelectedPlan("free")}
+              className={`cursor-pointer rounded-3xl border-2 p-6 shadow-soft transition-all ${
+                selectedPlan === "free"
+                  ? "border-sophia-purple bg-sophia-purple/5"
+                  : "border-sophia-text/10 bg-white hover:border-sophia-purple/30"
+              }`}
+            >
               <h3 className="mb-4 text-xl font-bold text-sophia-text">
                 {copy.foundingSupporter.plans.free.title}
               </h3>
@@ -122,7 +158,14 @@ export default function FoundingSupporterPage() {
             </div>
 
             {/* Founding Supporter Plan */}
-            <div className="relative rounded-3xl border-2 border-sophia-purple bg-white p-6 shadow-soft">
+            <div
+              onClick={() => setSelectedPlan("founding")}
+              className={`relative cursor-pointer rounded-3xl border-2 p-6 shadow-soft transition-all ${
+                selectedPlan === "founding"
+                  ? "border-sophia-purple bg-sophia-purple/5"
+                  : "border-sophia-purple bg-white hover:bg-sophia-purple/5"
+              }`}
+            >
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sophia-purple px-4 py-1 text-xs font-semibold text-white">
                 {copy.foundingSupporter.plans.founding.badge}
               </div>

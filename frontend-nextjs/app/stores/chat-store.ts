@@ -5,6 +5,9 @@ import { streamConversation } from "../lib/stream-conversation"
 import { usePresenceStore } from "./presence-store"
 import { useUsageLimitStore } from "./usage-limit-store"
 import { copy } from "../../copy"
+import type { UsageLimitInfo } from "../types/rate-limits"
+import { refreshUsage } from "../hooks/useUsageMonitor"
+import { useSupabase } from "../providers"
 
 type ChatRole = "user" | "sophia" | "system"
 
@@ -18,6 +21,7 @@ export type ChatMessage = {
   status?: ChatStatus
   audioUrl?: string
   turnId?: string
+  source?: "voice" | "text" // Track if message came from voice or text interaction
 }
 
 type FeedbackGate = {
@@ -47,6 +51,7 @@ type ChatStore = {
   acknowledgeFeedback: (turnId: string) => void
   openSessionFeedback: (turnId: string) => void
   closeSessionFeedback: () => void
+  addVoiceMessage: (content: string, audioUrl?: string) => void
 }
 
 const createMessageId = () => {
@@ -96,6 +101,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const text = (override ?? get().composerValue).trim()
     if (!text || get().isLocked) return
 
+    // 💜 Block if user is at 100% usage limit
+    const usageStore = useUsageLimitStore.getState()
+    if (usageStore.isAtLimit) {
+      // Show modal if not already open
+      if (!usageStore.isOpen && usageStore.currentUsage) {
+        const reason = usageStore.currentUsage.textPercent >= 100 ? "text" : "voice"
+        const limitInfo: UsageLimitInfo = {
+          reason,
+          plan_tier: "FREE", // Will be updated by usage monitor
+          limit: 0,
+          used: 0,
+        }
+        usageStore.showModal(limitInfo)
+      }
+      return // Block the request
+    }
+
     const userMessage = createMessage("user", text)
     const replyId = createMessageId()
 
@@ -118,11 +140,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     usePresenceStore.getState().setListening(true)
     let sawFeedbackGate = false
 
+    // 💜 Get user_id from usage store (set by useUsageMonitor)
+    // The usage monitor already has access to the user, so we can get it from there
+    const userId = useUsageLimitStore.getState().currentUsage?.user_id
+    
     try {
       await streamConversation({
         body: {
           message: text,
           conversationId: get().conversationId,
+          user_id: userId, // 💜 Pass user_id for rate limiting
         },
       }, {
         onUsageLimit: (error) => {
@@ -223,6 +250,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
           usePresenceStore.getState().setListening(false)
           usePresenceStore.getState().settleToRestingSoon()
+          
+          // Refresh usage immediately after message completes
+          // Backend has updated the usage, so we should see the new count
+          console.log("[chat-store] Message completed, calling refreshUsage()")
+          refreshUsage()
         },
         onError: (payload) => {
           set((state) => ({
@@ -264,6 +296,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       usePresenceStore.getState().setListening(false)
       usePresenceStore.getState().settleToRestingSoon()
     }
+  },
+  addVoiceMessage: (content, audioUrl) => {
+    const voiceMessage = createMessage("sophia", content, {
+      source: "voice",
+      status: "complete",
+      audioUrl,
+    })
+    set((state) => ({
+      messages: [...state.messages, voiceMessage],
+    }))
   },
 }))
 
