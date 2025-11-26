@@ -1186,8 +1186,8 @@ class ResponseGenerator:
         logger.info("ResponseGenerator: LIGHT mode - standard path with memory")
 
         # Use existing logic with Mem0 + PromptComposer
-        use_voxtral = state.get("use_voxtral", False)
-        if use_voxtral:
+        use_voxtral_state = state.get("use_voxtral", False)
+        if self.use_voxtral and use_voxtral_state:
             return self._process_with_voxtral(state)
         else:
             return self._process_with_legacy_llm(state)
@@ -1575,17 +1575,22 @@ class EvalLogger:
 class SophiaLangGraph:
     """Main LangGraph orchestrator"""
 
-    def __init__(self):
+    def __init__(self, settings=None):
+        # Allow injecting settings for tests; default to global config
+        self.settings = settings or get_settings()
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state machine (Task #42729: with ModeClassifier)"""
 
+        # Determine whether unified Voxtral pipeline should be used
+        use_voxtral_flag = getattr(self.settings, "USE_VOXTRAL", True)
+
         # Initialize nodes
-        audio_ingestor = AudioIngestor()
+        audio_ingestor = AudioIngestor(use_voxtral=use_voxtral_flag)
         intent_analyzer = IntentAnalyzer()
         emotional_skill_router = EmotionalSkillRouterNode()
-        response_generator = ResponseGenerator()
+        response_generator = ResponseGenerator(use_voxtral=use_voxtral_flag)
         tts_node = TTSNode()
         eval_logger = EvalLogger()
 
@@ -1830,7 +1835,8 @@ class SophiaLangGraph:
         }
 
         # Process through initial nodes
-        audio_ingestor = AudioIngestor()
+        use_voxtral_flag = getattr(self.settings, "USE_VOXTRAL", True)
+        audio_ingestor = AudioIngestor(use_voxtral=use_voxtral_flag)
         intent_analyzer = IntentAnalyzer()
 
         # Run audio processing and intent analysis
@@ -1846,7 +1852,7 @@ class SophiaLangGraph:
         cancel_check = state.get("cancel_check")
         try:
             # Check if we should use Voxtral streaming
-            if state.get("use_voxtral", False):
+            if getattr(self.settings, "USE_VOXTRAL", True) and state.get("use_voxtral", False):
                 from app.services.shared_services import shared_services
 
                 hybrid_service = shared_services.get_hybrid_voxtral_service()
