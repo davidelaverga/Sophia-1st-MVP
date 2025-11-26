@@ -34,7 +34,11 @@ interface ChatInterfaceProps {
 
 export default function ChatInterface({ messages, setMessages, isLoading, setIsLoading, accessToken }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('')
-  const [sessionId, setSessionId] = useState(() => createLocalId())
+  const [sessionId, setSessionId] = useState(() => {
+    const id = createLocalId()
+    console.log('🆔 [Frontend] Initial session_id created:', id)
+    return id
+  })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -48,7 +52,9 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
 
   useEffect(() => {
     if (messages.length === 0) {
-      setSessionId(createLocalId())
+      const newId = createLocalId()
+      console.log('🔄 [Frontend] Session reset - new session_id:', newId)
+      setSessionId(newId)
     }
   }, [messages.length])
 
@@ -63,6 +69,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       timestamp: new Date()
     }
 
+    console.log('📝 Sending message - PromptComposerV2 will build prompt on backend')
     setMessages([...messages, userMessage])
     setInputText('')
     setIsLoading(true)
@@ -84,6 +91,8 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       if (!accessToken) {
         throw new Error('Missing Supabase access token. Please refresh the page or sign in again.')
       }
+
+      console.log('📤 [Frontend] Sending request with session_id:', sessionId)
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/text-chat/stream`, {
         method: 'POST',
@@ -126,20 +135,39 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
 
       const handleEvent = (event: string, data: string) => {
         try {
-          if (event === 'token') {
+          if (event === 'meta') {
+            const payload = JSON.parse(data)
+            if (payload.session_id) {
+              console.log('📥 [Frontend] Received session_id from META event:', payload.session_id)
+              setSessionId(payload.session_id)
+            }
+          } else if (event === 'token') {
             const chunk = data
             accumulated += chunk
             updateSophia({ content: accumulated })
           } else if (event === 'reply_done') {
             const payload = JSON.parse(data)
             accumulated = payload.reply || accumulated
+            console.log('✅ Response received - built with PromptComposerV2 (check backend logs for details)')
             updateSophia({ content: accumulated, isStreaming: false })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Emotion Classification Result:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false,
+                source: 'PhoenixClient (OpenAI gpt-4o-mini)'
+              })
+              console.log('😊 User emotion detected:', payload.user_emotion)
               updateUserEmotion(payload.user_emotion)
+            }
+            if (payload.session_id) {
+              console.log('📥 [Frontend] Received session_id from REPLY_DONE event:', payload.session_id)
+              setSessionId(payload.session_id)
             }
             replyFinished = true
           } else if (event === 'audio_url') {
             const payload = JSON.parse(data)
+            console.log('🔊 Audio synthesis complete')
             updateSophia({
               content: accumulated,
               audioUrl: payload.audio_url,
@@ -147,7 +175,16 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               isSynthesizing: false
             })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Final Emotion State:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false
+              })
               updateUserEmotion(payload.user_emotion)
+            }
+            if (payload.session_id) {
+              console.log('📥 [Frontend] Received session_id from AUDIO_URL event:', payload.session_id)
+              setSessionId(payload.session_id)
             }
             audioCompleted = true
             const mock = !!payload.mock_audio
@@ -240,7 +277,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     }
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendTextMessage()
@@ -356,7 +393,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 placeholder="Ask Sophia about DeFi strategies, risks, or market insights..."
                 className="w-full bg-gradient-to-r from-gray-800/80 to-gray-900/80 border border-gray-600/50 rounded-xl px-6 py-4 text-white placeholder-gray-400 focus:outline-none focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/20 transition-all backdrop-blur-sm shadow-lg"
                 disabled={isLoading}

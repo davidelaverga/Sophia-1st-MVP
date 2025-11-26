@@ -5,7 +5,7 @@ import time
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import get_settings
 from app.services.supabase import get_supabase
 
@@ -118,7 +118,7 @@ class MemoryManager:
         return payload.copy()
 
     def _normalize_affect_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         snapshot = AffectSnapshot(
             emotion=str(payload.get("emotion") or "neutral"),
             confidence=float(payload.get("confidence", 0.5)),
@@ -372,7 +372,7 @@ class MemoryManager:
         # This is a simplified version - in practice you'd need more sophisticated parsing
         # Support both 'response' (new) and 'reply' (old) for backward compatibility
         response_text = session_data.get("response") or session_data.get("reply", "")
-        
+
         turn = ConversationTurn(
             query=session_data.get("transcript", ""),
             response=response_text,

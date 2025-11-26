@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+import json
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
@@ -69,6 +70,45 @@ def _get_mistral_client() -> Mistral:
     if not settings.MISTRAL_API_KEY:
         raise RuntimeError("MISTRAL_API_KEY is not set")
     return Mistral(api_key=settings.MISTRAL_API_KEY)
+
+
+def _parse_json_from_content(raw: str) -> Dict[str, Any]:
+    """Extract a JSON object from an LLM chat completion string.
+
+    Handles common cases like:
+    - Bare JSON: '{"intent": "...", ...}'
+    - JSON wrapped in ``` or ```json fences
+    - JSON with surrounding whitespace or commentary (we take the first {...} block).
+
+    Raises ValueError if no JSON object can be located or parsed.
+    """
+
+    if raw is None:
+        raise ValueError("Empty response from Mistral API")
+
+    text = raw.strip()
+    if not text:
+        raise ValueError("Empty response from Mistral API")
+
+    # Strip Markdown code fences if present
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[-1].strip().startswith("```"):
+            # Drop first (``` or ```json) and last (```)
+            inner = "\n".join(lines[1:-1]).strip()
+            if inner:
+                text = inner
+
+    # Take substring spanning the outermost JSON object
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(
+            f"Could not locate JSON object in Mistral response: {text[:80]!r}"
+        )
+
+    json_str = text[start : end + 1]
+    return json.loads(json_str)
 
 
 def _detect_crisis(text: str) -> bool:
@@ -314,12 +354,8 @@ Respond ONLY in this JSON format:
         # Debug logging
         logger.debug(f"Mistral API response content: {content}")
 
-        # Parse JSON response
-        import json
-
-        if not content or not content.strip():
-            raise ValueError("Empty response from Mistral API")
-        result = json.loads(content.strip())
+        # Parse JSON response robustly (handles code fences, extra text, etc.)
+        result = _parse_json_from_content(content)
         return result["intent"], result["emotion"], result["confidence"]
 
     return await asyncio.to_thread(_invoke)

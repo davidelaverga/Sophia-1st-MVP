@@ -7,10 +7,36 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import numpy as np
 
+from prometheus_client import Counter, Gauge
+
 from app.config import get_settings
 from app.services.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+# Prometheus metrics for MemO
+memo_writes_total = Counter(
+    'memo_writes_total',
+    'Total number of memory write attempts',
+    ['status']  # status: success or failure
+)
+
+memo_searches_total = Counter(
+    'memo_searches_total',
+    'Total number of memory search attempts',
+    ['status']  # status: success or failure
+)
+
+memo_write_success_rate = Gauge(
+    'memo_write_success_rate',
+    'Memory write success rate (percentage)'
+)
+
+memo_search_latency_seconds = Gauge(
+    'memo_search_latency_seconds',
+    'Memory search latency in seconds',
+    ['quantile']  # quantile: avg, p95
+)
 
 
 # Memory metrics for monitoring
@@ -65,6 +91,31 @@ class MemOClient:
                 self.enabled = False  # Disable if model loading fails
                 return None
         return self._embedding_model
+
+    def _parse_vector_from_db(self, vector_str: any) -> Optional[List[float]]:
+        """Parse vector from database (handles both string and list formats)"""
+        if vector_str is None:
+            return None
+
+        # If already a list, return as-is
+        if isinstance(vector_str, list):
+            return vector_str
+
+        # If it's a string representation, parse it
+        if isinstance(vector_str, str):
+            try:
+                # Remove 'np.str_(' prefix and ')' suffix if present
+                if vector_str.startswith("np.str_('") or vector_str.startswith("np.str_(\""):
+                    vector_str = vector_str[9:-2]
+
+                # Parse as JSON array
+                import json
+                return json.loads(vector_str)
+            except Exception as e:
+                logger.warning(f"Failed to parse vector string: {e}")
+                return None
+
+        return None
 
     def _generate_embedding(self, text: str) -> Optional[List[float]]:
         """Generate embedding vector for text"""
@@ -128,6 +179,11 @@ class MemOClient:
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             self.metrics.total_stores += 1
+
+            # Update Prometheus metrics
+            memo_writes_total.labels(status='success').inc()
+            self._update_write_success_rate()
+
             logger.info(
                 f"Memory stored: type={memory_type}, latency={latency_ms:.1f}ms"
             )
@@ -137,6 +193,11 @@ class MemOClient:
         except Exception as e:
             logger.error(f"Memory storage failed: {e}")
             self.metrics.total_errors += 1
+
+            # Update Prometheus metrics
+            memo_writes_total.labels(status='failure').inc()
+            self._update_write_success_rate()
+
             return False
 
     async def search_memories(
@@ -195,12 +256,26 @@ class MemOClient:
             memories_with_scores = []
             query_vec = np.array(query_embedding)
 
+            query_norm = float(np.linalg.norm(query_vec))
+
             for memory in result.data:
-                if memory.get("embedding"):
-                    memory_vec = np.array(memory["embedding"])
+                embedding_data = memory.get("embedding")
+                if embedding_data:
+                    # Parse embedding from database format (pgvector returns string)
+                    embedding_list = self._parse_vector_from_db(embedding_data)
+                    if embedding_list is None:
+                        continue
+
+                    memory_vec = np.array(embedding_list)
+                    memory_norm = float(np.linalg.norm(memory_vec))
+
+                    # Skip zero vectors to avoid invalid divisions.
+                    if query_norm == 0.0 or memory_norm == 0.0:
+                        continue
+
                     # Cosine similarity
                     similarity = np.dot(query_vec, memory_vec) / (
-                        np.linalg.norm(query_vec) * np.linalg.norm(memory_vec)
+                        query_norm * memory_norm
                     )
 
                     if similarity >= self.similarity_threshold:
@@ -218,6 +293,9 @@ class MemOClient:
             if top_memories:
                 self.metrics.total_hits += 1
 
+            # Update Prometheus metrics
+            memo_searches_total.labels(status='success').inc()
+
             logger.info(
                 f"Memory search: found={len(top_memories)}/{len(result.data)}, "
                 f"latency={latency_ms:.1f}ms, P95={self.metrics.p95_search_latency_ms:.1f}ms"
@@ -229,6 +307,10 @@ class MemOClient:
             logger.error(f"Memory search failed: {e}")
             self.metrics.total_errors += 1
             self.metrics.total_searches += 1
+
+            # Update Prometheus metrics
+            memo_searches_total.labels(status='failure').inc()
+
             return []
 
     def _record_search_latency(self, latency_ms: float):
@@ -249,6 +331,30 @@ class MemOClient:
         if self.metrics.total_searches > 0:
             self.metrics.hit_rate = (
                 self.metrics.total_hits / self.metrics.total_searches
+            )
+
+        # Update Prometheus search latency metrics
+        memo_search_latency_seconds.labels(quantile='avg').set(
+            self.metrics.avg_search_latency_ms / 1000.0
+        )
+        memo_search_latency_seconds.labels(quantile='p95').set(
+            self.metrics.p95_search_latency_ms / 1000.0
+        )
+
+    def _update_write_success_rate(self):
+        """Update Prometheus write success rate metric"""
+        # Get current counter values from Prometheus
+        success_count = memo_writes_total.labels(status='success')._value.get()
+        failure_count = memo_writes_total.labels(status='failure')._value.get()
+
+        total_writes = success_count + failure_count
+
+        if total_writes > 0:
+            success_rate_pct = (success_count / total_writes) * 100.0
+            memo_write_success_rate.set(success_rate_pct)
+            logger.debug(
+                f"Prometheus: memory_write_success_rate = {success_rate_pct:.2f}% "
+                f"({success_count}/{total_writes})"
             )
 
     def get_metrics(self) -> Dict[str, Any]:

@@ -69,6 +69,7 @@ def client(monkeypatch):
     app_config.get_settings.cache_clear()
     sys.modules.pop("main", None)
     app_module = importlib.import_module("main")
+    chat_schemas = importlib.import_module("app.schemas.chat")
     monkeypatch.setattr(app_module, "verify_api_key", lambda authorization=None: None)
 
     async def _bypass(self, request, call_next):
@@ -77,7 +78,7 @@ def client(monkeypatch):
     monkeypatch.setattr(app_module.APIKeyMiddleware, "dispatch", _bypass, raising=False)
 
     global Emotion
-    Emotion = app_module.Emotion
+    Emotion = chat_schemas.Emotion
     return TestClient(app_module.app)
 
 
@@ -209,7 +210,11 @@ def test_chat(
 def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkeypatch):
     """Ensure /chat pushes cancel callbacks through STT, LLM, and TTS while releasing the session turn."""
     assert Emotion is not None
-    app_module = sys.modules["main"]
+    mistral_service = sys.modules["app.services.mistral"]
+    emotion_service = sys.modules["app.services.emotion"]
+    tts_service = sys.modules["app.services.tts"]
+    supabase_service = sys.modules["app.services.supabase"]
+    shared_services = sys.modules["app.services.shared_services"]
 
     fake_manager = SessionTurnManager()
     raise_calls = []
@@ -222,7 +227,7 @@ def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkey
 
     fake_manager.raise_if_cancelled = types.MethodType(_tracked_raise, fake_manager)
     monkeypatch.setattr(
-        app_module.shared_services,
+        shared_services.shared_services,
         "get_session_turn_manager",
         lambda: fake_manager,
         raising=False,
@@ -257,32 +262,32 @@ def test_chat_turn_manager_propagates_cancel_checks(mock_consent, client, monkey
         return emotion_values.pop(0)
 
     monkeypatch.setattr(
-        app_module.mistral_service,
+        mistral_service,
         "transcribe_audio_with_voxtral",
         _fake_transcribe,
         raising=False,
     )
     monkeypatch.setattr(
-        app_module.mistral_service, "generate_llm_reply", _fake_generate, raising=False
+        mistral_service, "generate_llm_reply", _fake_generate, raising=False
     )
-    monkeypatch.setattr(app_module, "synthesize_inworld", _fake_tts, raising=False)
+    monkeypatch.setattr(tts_service, "synthesize_inworld", _fake_tts, raising=False)
     monkeypatch.setattr(
-        app_module, "analyze_emotion_audio", _fake_emotion, raising=False
+        emotion_service, "analyze_emotion_audio", _fake_emotion, raising=False
     )
     monkeypatch.setattr(
-        app_module.supabase_service,
+        supabase_service,
         "upload_audio_and_get_url",
         lambda *_args, **_kwargs: "https://example.com/audio.mp3",
         raising=False,
     )
     monkeypatch.setattr(
-        app_module.supabase_service,
+        supabase_service,
         "insert_conversation_session",
         lambda *_args, **_kwargs: None,
         raising=False,
     )
     monkeypatch.setattr(
-        app_module.supabase_service,
+        supabase_service,
         "insert_emotion_score",
         lambda *_args, **_kwargs: None,
         raising=False,
