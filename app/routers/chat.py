@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -817,20 +817,38 @@ async def text_chat(
             )
 
 
+def _extract_emotion_label(
+    value: Union[Dict[str, Any], Emotion, None], default: str = "neutral"
+) -> str:
+    """Extract an emotion label from either a dict or Emotion instance.
+
+    Text chat streaming passes raw dicts from LangGraph, while non-streaming
+    paths often pass Emotion objects. This helper normalizes both shapes so
+    memory always records the correct Sophia/user emotion label.
+    """
+
+    if isinstance(value, dict):
+        return (value.get("label") or default) if value else default
+    if hasattr(value, "label"):
+        # Emotion schema or any object with a label attribute
+        return getattr(value, "label") or default
+    return default
+
+
 def _record_text_stream_turn(
     session_id: str,
     user_text: str,
     reply: str,
-    user_emotion: Dict[str, Any],
-    sophia_emotion: Optional[Emotion],
+    user_emotion: Union[Dict[str, Any], Emotion, None],
+    sophia_emotion: Union[Dict[str, Any], Emotion, None],
     supabase_token: Optional[str],
 ):
     try:
         turn = ConversationTurn(
             query=user_text,
             response=reply,
-            user_emotion=user_emotion.get("label") or "neutral",
-            sophia_emotion=getattr(sophia_emotion, "label", "neutral"),
+            user_emotion=_extract_emotion_label(user_emotion),
+            sophia_emotion=_extract_emotion_label(sophia_emotion),
             intent="text_chat",
             timestamp=time.time(),
         )
