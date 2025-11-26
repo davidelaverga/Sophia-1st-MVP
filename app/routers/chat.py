@@ -878,20 +878,7 @@ async def text_chat_stream(
                     cancel_check=cancel_check,
                     user_id=user_id,
                 )
-                yield sse_event("token", result["reply"].replace("\n", " "))
-                yield sse_event(
-                    "reply_done",
-                    {"reply": result["reply"], "user_emotion": result["user_emotion"]},
-                )
-                yield sse_event(
-                    "audio_url",
-                    {
-                        "audio_url": result.get("audio_url"),
-                        "sophia_emotion": result["sophia_emotion"],
-                        "mock_audio": result["is_mock_audio"],
-                        "user_emotion": result["user_emotion"],
-                    },
-                )
+                # Emit SSE events for text chat response
                 yield sse_event("token", result["reply"].replace("\n", " "))
                 yield sse_event(
                     "reply_done",
