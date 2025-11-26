@@ -30,6 +30,7 @@ from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
+from app.prompt.composer_v2 import PromptComposerV2, TurnSnippet, AffectSnapshot  # Task #42839
 from app.config import get_settings
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.models import CurrentMode, Intent, UtilityPath
@@ -426,6 +427,78 @@ class ResponseGenerator:
         logger.info(
             f"ResponseGenerator initialized (Voxtral Large preference: {use_voxtral_large})"
         )
+        self._prompt_composer_v2 = PromptComposerV2()  # Task #42839
+
+    async def _build_prompt_v2(self, state: GraphState) -> str:
+        """Build prompt using PromptComposerV2 (Task #42839)"""
+        # Get current mode
+        mode_str = state.get("current_mode", MODE_LIGHT)
+        if isinstance(mode_str, str):
+            mode = CurrentMode(mode_str)
+        else:
+            mode = mode_str
+
+        # Get skill_id if emotional support mode
+        skill_id = state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+
+        # Build conversation turns from flash context
+        flash_context = self._ensure_flash_context(state)
+        conversation_turns = []
+        recent_turns = flash_context.get("recent_turns", [])
+        for turn in recent_turns[-5:]:  # Last 5 turns
+            if turn.get("user"):
+                conversation_turns.append(TurnSnippet(role="user", text=turn["user"]))
+            if turn.get("sophia"):
+                conversation_turns.append(TurnSnippet(role="assistant", text=turn["sophia"]))
+
+        # Add current user message
+        transcript = state.get("transcript", "")
+        if transcript:
+            conversation_turns.append(TurnSnippet(role="user", text=transcript))
+
+        # Get mem0 snippets from memo context
+        memo_context = self._ensure_memo_context(state)
+        memories = memo_context.get("memories", [])
+        mem0_snippets = []
+        for mem in memories[:3]:  # Top 3 memories
+            mem_text = mem.get("text") or mem.get("memory_text", "")
+            if mem_text:
+                mem0_snippets.append(mem_text)
+
+        # Get RAG snippets if DeFi question
+        rag_snippets = []
+        if state.get("intent") == "defi_question":
+            rag_context = rag_system.get_context_for_llm(transcript)
+            if rag_context:
+                rag_snippets = [rag_context]
+
+        # Build affect snapshot if emotional support mode
+        affect_snapshot = None
+        if mode == CurrentMode.EMOTIONAL_SUPPORT:
+            user_emotion = state.get("user_emotion")
+            if user_emotion:
+                affect_snapshot = AffectSnapshot(
+                    emotion=user_emotion.label,
+                    confidence=user_emotion.confidence,
+                    source="phoenix"
+                )
+
+        # Build prompt using PromptComposerV2
+        result = await self._prompt_composer_v2.build_prompt(
+            current_mode=mode,
+            skill_id=skill_id,
+            conversation_turns=conversation_turns,
+            mem0_snippets=mem0_snippets,
+            rag_snippets=rag_snippets,
+            affect_snapshot=affect_snapshot,
+        )
+
+        logger.info(
+            f"PromptComposerV2: Built prompt (length={len(result.prompt)}, "
+            f"truncated={result.truncated}, mode={mode.value}, skill={skill_id})"
+        )
+
+        return result.prompt
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
@@ -957,43 +1030,51 @@ class ResponseGenerator:
         self, state: GraphState, cancel_check: Optional[CancelCallback]
     ) -> str:
         transcript = state.get("transcript", "")
-        flash_context = self._ensure_flash_context(state)
-        memo_context = self._ensure_memo_context(state)
-        emotion_guidance = _ensure_emotion_guidance(state)
 
-        rag_context = ""
-        if (state.get("intent") or "").lower() == "defi_question":
-            try:
-                rag_context = rag_system.get_context_for_llm(transcript)
-                if rag_context:
-                    logger.info(
-                        "RAG context retrieved for session %s: %d chars",
-                        state["session_id"],
-                        len(rag_context),
-                    )
-            except Exception as exc:
-                logger.warning("RAG context lookup failed: %s", exc)
-                rag_context = ""
+        # Task #42839: Use PromptComposerV2 for prompt building
+        try:
+            # Call async _build_prompt_v2 from sync context
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Event loop running, use ThreadPoolExecutor
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    system_prompt = pool.submit(
+                        lambda: asyncio.run(self._build_prompt_v2(state))
+                    ).result()
+            else:
+                # No event loop running, use asyncio.run
+                system_prompt = asyncio.run(self._build_prompt_v2(state))
+        except Exception as exc:
+            logger.warning(f"PromptComposerV2 failed, falling back to old composer: {exc}")
+            # Fallback to old prompt composer
+            flash_context = self._ensure_flash_context(state)
+            memo_context = self._ensure_memo_context(state)
+            emotion_guidance = _ensure_emotion_guidance(state)
 
-        additional_context = self._build_agentic_additional_context(
-            flash_context, rag_context
-        )
-        system_prompt = prompt_composer.compose_system_prompt(
-            memory_context=memo_context,
-            user_emotion=state["user_emotion"].label,
-            additional_context=additional_context,
-            emotion_guidance=emotion_guidance,
-        )
-        user_prompt = self._build_agentic_user_prompt(
-            transcript, state["user_emotion"], flash_context, rag_context
-        )
+            rag_context = ""
+            if (state.get("intent") or "").lower() == "defi_question":
+                try:
+                    rag_context = rag_system.get_context_for_llm(transcript)
+                except Exception as e:
+                    logger.warning(f"RAG context lookup failed: {e}")
+
+            additional_context = self._build_agentic_additional_context(
+                flash_context, rag_context
+            )
+            system_prompt = prompt_composer.compose_system_prompt(
+                memory_context=memo_context,
+                user_emotion=state["user_emotion"].label,
+                additional_context=additional_context,
+                emotion_guidance=emotion_guidance,
+            )
 
         if cancel_check:
             cancel_check()
         return generate_llm_reply(
-            user_prompt,
+            transcript,  # Current user message
             cancel_check=cancel_check,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt,  # Full context from PromptComposerV2
             max_tokens=256,
         )
 
