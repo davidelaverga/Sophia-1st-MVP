@@ -23,6 +23,7 @@ from app.routers import (
     chat as chat_router,
     admin as admin_router,
     evaluation as evaluation_router,
+    phoenix_test as phoenix_test_router,
 )
 from dotenv import load_dotenv
 
@@ -123,6 +124,7 @@ else:
 app.include_router(admin_router.router)
 app.include_router(chat_router.router)
 app.include_router(evaluation_router.router)
+app.include_router(phoenix_test_router.router)
 
 
 # Simple health endpoint for Fly.io checks and container orchestration
