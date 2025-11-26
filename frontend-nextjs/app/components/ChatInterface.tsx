@@ -151,6 +151,12 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             console.log('✅ Response received - built with PromptComposerV2 (check backend logs for details)')
             updateSophia({ content: accumulated, isStreaming: false })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Emotion Classification Result:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false,
+                source: 'PhoenixClient (OpenAI gpt-4o-mini)'
+              })
               console.log('😊 User emotion detected:', payload.user_emotion)
               updateUserEmotion(payload.user_emotion)
             }
@@ -169,6 +175,11 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               isSynthesizing: false
             })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Final Emotion State:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false
+              })
               updateUserEmotion(payload.user_emotion)
             }
             if (payload.session_id) {

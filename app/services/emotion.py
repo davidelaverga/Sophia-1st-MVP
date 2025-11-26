@@ -455,37 +455,53 @@ def _fallback_deep_classify(text: str) -> Dict[str, Any]:
 
 
 def _phoenix_deep_text_classify(text: str) -> Optional[Dict[str, Any]]:
-    """Run Phoenix deep classification for DIRECT/LIGHT background flows."""
+    """Run Phoenix deep classification using NEW PhoenixClient (Task #42841)."""
     normalized = (text or "").strip()
     if not normalized:
         return None
 
     try:
-        from phoenix.evals import llm_classify
-        from phoenix.evals import GoogleGenAIModel
+        from app.emotion import PhoenixClient, PhoenixConfig
     except Exception as exc:
-        logger.info("Phoenix deep text classify unavailable: %s", exc)
+        logger.info("PhoenixClient unavailable: %s", exc)
         return _fallback_deep_classify(normalized)
 
     try:
-        model = GoogleGenAIModel(model="gemini-2.5-flash")
-        template = (
-            "Classify the user's primary emotional state from the INPUT. "
-            f"Choose exactly one label from: {', '.join(_DEEP_EMOTION_RAILS)}. "
-            "Return only the label."
+        settings = get_settings()
+        if not settings.OPENAI_API_KEY:
+            logger.info("OpenAI API key not configured, using fallback")
+            return _fallback_deep_classify(normalized)
+
+        config = PhoenixConfig(
+            base_url="https://api.openai.com/v1",
+            api_key=settings.OPENAI_API_KEY,
+            timeout_seconds=12.0
         )
-        result = llm_classify(
-            llm=model,
-            data=[{"input": normalized}],
-            template=template,
-            label_schema=set(_DEEP_EMOTION_RAILS),
-        )
-        label = str(result.get("label", ["neutral"])[0]).strip().lower()
-        if label not in _DEEP_EMOTION_RAILS:
-            label = "neutral"
-        score_raw = result.get("score", [0.7])[0]
-        confidence = max(0.0, min(1.0, float(score_raw)))
-        return {"label": label, "confidence": confidence}
+
+        # Create async context and run classification
+        async def _async_classify():
+            async with PhoenixClient(config) as client:
+                result = await client.classify(text=normalized, prosody_context=None)
+                return {
+                    "label": result.label,
+                    "confidence": result.confidence,
+                    "safety_flag": result.safety_flag
+                }
+
+        # Run in existing event loop or create new one
+        try:
+            loop = asyncio.get_running_loop()
+            # We're already in an async context, create a task
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _async_classify())
+                result = future.result(timeout=13.0)
+                return result
+        except RuntimeError:
+            # No event loop running, use asyncio.run
+            result = asyncio.run(_async_classify())
+            return result
+
     except Exception as exc:
         logger.warning("Phoenix deep text classify failed: %s", exc)
         return _fallback_deep_classify(normalized)
