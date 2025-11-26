@@ -189,3 +189,40 @@ def test_affect_snapshot_seeds_direct_path_emotion():
     assert state["response_path"] == ResponsePath.DIRECT.value
     assert state["user_emotion"].label == "panic"
     assert state["llm_response"] == "I'm here. We can take this one step at a time."
+
+
+def test_mode_direct_greeting_uses_template_and_skips_memory():
+    state = _base_state()
+    state["transcript"] = "hi sophia"
+    # Seed some fake memory to ensure DIRECT clears it
+    state["memo_context"] = {"memories": ["old"]}
+    state["context_memory"] = {"last_topics": ["yesterday"]}
+    generator = ResponseGenerator(use_voxtral=False)
+
+    result_state = generator._process_direct_mode(state)
+
+    greetings = {
+        "Hello! How can I help you today?",
+        "Hi there! What brings you here?",
+        "Hey! Nice to see you!",
+        "Hello! I'm here to assist you.",
+    }
+    assert result_state["llm_response"] in greetings
+    assert result_state["memo_context"] == {"memories": []}
+    assert result_state["context_memory"] == {}
+
+
+def test_mode_direct_complex_input_falls_back_to_light():
+    state = _base_state()
+    state["transcript"] = "Can you remind me what we talked about yesterday?"
+    generator = ResponseGenerator(use_voxtral=False)
+
+    with patch.object(
+        ResponseGenerator,
+        "_process_light_mode",
+        return_value=state,
+    ) as mock_light:
+        result_state = generator._process_direct_mode(state)
+
+    mock_light.assert_called_once_with(state)
+    assert result_state is state

@@ -984,6 +984,54 @@ class ResponseGenerator:
                 return True
         return False
 
+    @staticmethod
+    def _looks_like_thanks(transcript: str) -> bool:
+        normalized = (transcript or "").strip().lower()
+        if not normalized:
+            return False
+        thanks_exact = {"thanks", "thank you", "ty", "thx"}
+        if normalized in thanks_exact:
+            return True
+        for token in ("thanks", "thank you"):
+            if normalized.startswith(f"{token} "):
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_farewell(transcript: str) -> bool:
+        normalized = (transcript or "").strip().lower()
+        if not normalized:
+            return False
+        farewells = {
+            "bye",
+            "goodbye",
+            "see you",
+            "see ya",
+            "later",
+            "cya",
+            "good night",
+            "goodnight",
+        }
+        if normalized in farewells:
+            return True
+        for token in ("bye", "goodbye", "see you", "see ya"):
+            if normalized.startswith(f"{token} "):
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_ack(transcript: str) -> bool:
+        normalized = (transcript or "").strip().lower()
+        if not normalized:
+            return False
+        acks = {"ok", "okay", "cool", "got it", "alright"}
+        if normalized in acks:
+            return True
+        for token in ("ok", "okay", "cool", "got it", "alright"):
+            if normalized.startswith(f"{token} "):
+                return True
+        return False
+
     _DIRECT_NEGATIVE_EMOTIONS = {"sad", "anxious", "grief", "panic"}
     _DIRECT_NEGATIVE_RESPONSE = "I'm here. We can take this one step at a time."
     _DIRECT_DEFAULT_RESPONSE = (
@@ -1170,16 +1218,44 @@ class ResponseGenerator:
         return " | ".join(parts)
 
     def _process_direct_mode(self, state: GraphState) -> GraphState:
-        """DIRECT mode: Skip Mem0, skip RAG, use Voxtral-only path (Task #42729)"""
+        """DIRECT mode: ultra-fast, no memory/RAG, template-based responses.
+
+        Transcript already comes from Voxtral STT (+ fallbacks) upstream.
+        """
         logger.info("ResponseGenerator: DIRECT mode - fast path without memory/RAG")
 
         # Skip memory retrieval
         state["memo_context"] = {"memories": []}
         state["context_memory"] = {}
 
-        # Use simple, fast response
-        state["llm_response"] = self._generate_simple_greeting(state["transcript"])
-        return state
+        transcript = (state.get("transcript") or "").strip()
+
+        # 1) Greeting-style inputs
+        if self._looks_like_greeting(transcript):
+            state["llm_response"] = self._generate_direct_greeting(transcript)
+            return state
+
+        # 2) Thanks / appreciation
+        if self._looks_like_thanks(transcript):
+            state["llm_response"] = self._generate_direct_thanks(transcript)
+            return state
+
+        # 3) Farewells
+        if self._looks_like_farewell(transcript):
+            state["llm_response"] = self._generate_direct_farewell(transcript)
+            return state
+
+        # 4) Simple acknowledgments
+        if self._looks_like_ack(transcript):
+            state["llm_response"] = self._generate_direct_ack(transcript)
+            return state
+
+        # 5) Fallback: escalate to LIGHT mode for anything non-trivial
+        logger.info(
+            "DIRECT mode: transcript '%s' not simple greet/thanks/bye/ack; falling back to LIGHT.",
+            transcript[:80],
+        )
+        return self._process_light_mode(state)
 
     def _process_light_mode(self, state: GraphState) -> GraphState:
         """LIGHT mode: Include Mem0, use PromptComposer + Mistral (Task #42729)"""
@@ -1229,7 +1305,7 @@ class ResponseGenerator:
         return result_state
 
     def _generate_simple_greeting(self, transcript: str) -> str:
-        """Generate simple greeting response for DIRECT mode"""
+        """Legacy greeting helper (kept for compatibility)."""
         import random
 
         greetings = [
@@ -1239,6 +1315,22 @@ class ResponseGenerator:
             "Hello! I'm here to assist you.",
         ]
         return random.choice(greetings)
+
+    def _generate_direct_greeting(self, transcript: str) -> str:
+        """Template response for greeting-style DIRECT turns."""
+        return self._generate_simple_greeting(transcript)
+
+    def _generate_direct_thanks(self, transcript: str) -> str:
+        """Template response for thanks/acknowledgment in DIRECT mode."""
+        return "You're so welcome. I'm here whenever you want to keep going."
+
+    def _generate_direct_farewell(self, transcript: str) -> str:
+        """Template response for farewell-style DIRECT turns."""
+        return "Take good care. I'm here whenever you want to pick this back up."
+
+    def _generate_direct_ack(self, transcript: str) -> str:
+        """Template response for simple acknowledgments in DIRECT mode."""
+        return "Got it. I'm right here with you."
 
     def _claude_fallback(
         self,
