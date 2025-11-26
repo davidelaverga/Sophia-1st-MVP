@@ -16,26 +16,25 @@ logger = logging.getLogger(__name__)
 
 # Prometheus metrics for MemO
 memo_writes_total = Counter(
-    'memo_writes_total',
-    'Total number of memory write attempts',
-    ['status']  # status: success or failure
+    "memo_writes_total",
+    "Total number of memory write attempts",
+    ["status"],  # status: success or failure
 )
 
 memo_searches_total = Counter(
-    'memo_searches_total',
-    'Total number of memory search attempts',
-    ['status']  # status: success or failure
+    "memo_searches_total",
+    "Total number of memory search attempts",
+    ["status"],  # status: success or failure
 )
 
 memo_write_success_rate = Gauge(
-    'memo_write_success_rate',
-    'Memory write success rate (percentage)'
+    "memo_write_success_rate", "Memory write success rate (percentage)"
 )
 
 memo_search_latency_seconds = Gauge(
-    'memo_search_latency_seconds',
-    'Memory search latency in seconds',
-    ['quantile']  # quantile: avg, p95
+    "memo_search_latency_seconds",
+    "Memory search latency in seconds",
+    ["quantile"],  # quantile: avg, p95
 )
 
 
@@ -105,11 +104,14 @@ class MemOClient:
         if isinstance(vector_str, str):
             try:
                 # Remove 'np.str_(' prefix and ')' suffix if present
-                if vector_str.startswith("np.str_('") or vector_str.startswith("np.str_(\""):
+                if vector_str.startswith("np.str_('") or vector_str.startswith(
+                    'np.str_("'
+                ):
                     vector_str = vector_str[9:-2]
 
                 # Parse as JSON array
                 import json
+
                 return json.loads(vector_str)
             except Exception as e:
                 logger.warning(f"Failed to parse vector string: {e}")
@@ -181,7 +183,7 @@ class MemOClient:
             self.metrics.total_stores += 1
 
             # Update Prometheus metrics
-            memo_writes_total.labels(status='success').inc()
+            memo_writes_total.labels(status="success").inc()
             self._update_write_success_rate()
 
             logger.info(
@@ -195,7 +197,7 @@ class MemOClient:
             self.metrics.total_errors += 1
 
             # Update Prometheus metrics
-            memo_writes_total.labels(status='failure').inc()
+            memo_writes_total.labels(status="failure").inc()
             self._update_write_success_rate()
 
             return False
@@ -294,7 +296,7 @@ class MemOClient:
                 self.metrics.total_hits += 1
 
             # Update Prometheus metrics
-            memo_searches_total.labels(status='success').inc()
+            memo_searches_total.labels(status="success").inc()
 
             logger.info(
                 f"Memory search: found={len(top_memories)}/{len(result.data)}, "
@@ -309,7 +311,7 @@ class MemOClient:
             self.metrics.total_searches += 1
 
             # Update Prometheus metrics
-            memo_searches_total.labels(status='failure').inc()
+            memo_searches_total.labels(status="failure").inc()
 
             return []
 
@@ -334,18 +336,18 @@ class MemOClient:
             )
 
         # Update Prometheus search latency metrics
-        memo_search_latency_seconds.labels(quantile='avg').set(
+        memo_search_latency_seconds.labels(quantile="avg").set(
             self.metrics.avg_search_latency_ms / 1000.0
         )
-        memo_search_latency_seconds.labels(quantile='p95').set(
+        memo_search_latency_seconds.labels(quantile="p95").set(
             self.metrics.p95_search_latency_ms / 1000.0
         )
 
     def _update_write_success_rate(self):
         """Update Prometheus write success rate metric"""
         # Get current counter values from Prometheus
-        success_count = memo_writes_total.labels(status='success')._value.get()
-        failure_count = memo_writes_total.labels(status='failure')._value.get()
+        success_count = memo_writes_total.labels(status="success")._value.get()
+        failure_count = memo_writes_total.labels(status="failure")._value.get()
 
         total_writes = success_count + failure_count
 

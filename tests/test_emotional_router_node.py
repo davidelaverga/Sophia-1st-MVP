@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 from app.graph.nodes.emotional_router import EmotionalSkillRouterNode
 from app.routing.emotional_router import (
-    ConversationMeta,
     EmotionalRoutingResult,
     EmotionalSkill,
     route_emotional_skill,
