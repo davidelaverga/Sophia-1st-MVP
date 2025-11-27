@@ -101,6 +101,26 @@ def test_crisis_override(mock_track_skill, mock_track_crisis):
     mock_track_crisis.assert_called_once()
 
 
+@patch("app.graph.nodes.emotional_router.track_crisis_override")
+@patch("app.graph.nodes.emotional_router.track_skill_distribution")
+def test_crisis_override_commit_suicide(mock_track_skill, mock_track_crisis):
+    """Test that 'commit suicide' phrasing also triggers CRISIS_REDIRECT and metrics."""
+    node = EmotionalSkillRouterNode(router=route_emotional_skill)
+
+    # Phrase reported from production metrics gap
+    state = _base_state(
+        transcript="I want to commit suicide",
+        conversation_count=5,
+    )
+
+    result = node(state)
+
+    assert result["skill_id"] == EmotionalSkill.CRISIS_REDIRECT.value
+    assert result["had_crisis"] is True
+    mock_track_skill.assert_called_once_with(EmotionalSkill.CRISIS_REDIRECT.value)
+    mock_track_crisis.assert_called_once()
+
+
 @patch("app.graph.nodes.emotional_router.track_boundary_override")
 @patch("app.graph.nodes.emotional_router.track_skill_distribution")
 def test_boundary_override(mock_track_skill, mock_track_boundary):
