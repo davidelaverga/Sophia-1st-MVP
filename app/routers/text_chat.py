@@ -28,10 +28,6 @@ from app.services.evaluations import evaluation_manager
 from app.services.mistral import generate_llm_reply_with_context
 from app.services.rag import rag_system
 from app.services.rate_limits import rate_limit_service
-<<<<<<< HEAD
-
-=======
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 import json
 
 logger = logging.getLogger(__name__)
@@ -405,52 +401,10 @@ async def text_chat_stream_enhanced(
     """
     """Enhanced streaming text chat with rate limits."""
     
-<<<<<<< HEAD
     logger.info(f"[Enhanced Text Chat] user_id={user_id}, message='{body.message[:50]}...'")
     
     return StreamingResponse(
         _stream_text_chat_enhanced(body.message, body.session_id, user_id),
-=======
-    logger.info(f"[Enhanced Text Chat] Request: message='{body.message[:50]}...', session={body.session_id}, user_id={body.user_id}")
-    
-    if not body.user_id:
-        logger.warning(f"[Enhanced Text Chat] ⚠️ No user_id provided - usage tracking will be skipped")
-    
-    # Check rate limits before processing
-    if body.user_id:
-        from app.services.rate_limits import rate_limit_service
-        limit_check = rate_limit_service.check_limits(
-            user_id=body.user_id,
-            additional_text_msgs=1
-        )
-        
-        if not limit_check.allowed:
-            logger.info(f"[Enhanced Text Chat] Rate limit reached for user {body.user_id}: {limit_check.reason}")
-            async def error_stream():
-                error_data = json.dumps({
-                    "error": "USAGE_LIMIT_REACHED",
-                    "reason": limit_check.reason,
-                    "plan_tier": limit_check.plan_tier,
-                    "limit": limit_check.limit,
-                    "used": limit_check.used,
-                    "title": limit_check.title,
-                    "body": limit_check.body,
-                })
-                yield f"event: error\ndata: {error_data}\n\n"
-            
-            return StreamingResponse(
-                error_stream(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                }
-            )
-    
-    return StreamingResponse(
-        _stream_text_chat_enhanced(body.message, body.session_id, body.user_id),
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

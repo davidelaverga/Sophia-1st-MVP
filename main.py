@@ -36,7 +36,6 @@ from app.deps import (
 )
 from app.services import mistral as mistral_service
 from app.services.langgraph_service import langgraph_service
-<<<<<<< HEAD
 from app.services.emotion import analyze_emotion_audio, infer_text_emotion
 from app.services.tts import synthesize_inworld, synthesize_inworld_stream
 from app.services import supabase_client as supabase_service
@@ -47,21 +46,14 @@ from app.services.emotional_guidance import (
     build_emotion_guided_prompt,
 )
 from app.services.memory import memory_manager, ConversationTurn
-=======
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 from app.services.rate_limits import rate_limit_service
 from dotenv import load_dotenv
 load_dotenv()
 from app.routers import text_chat as text_chat_router
 from app.routers import reflections as reflections_router
 from app.routers import community as community_router
-<<<<<<< HEAD
 from app.routers import usage_router as usage_router
 from app.routers import stripe_router as stripe_router
-=======
-from app.routers import usage_router
-from app.routers import stripe_router
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -710,10 +702,6 @@ app.include_router(reflections_router.router, tags=["reflections"])
 app.include_router(community_router.router, tags=["community"])
 app.include_router(usage_router.router)
 app.include_router(stripe_router.router)
-<<<<<<< HEAD
-=======
-
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 logger.info("✅ New routers mounted: /text-chat, /api/reflections, /api/community")
 @app.get("/health")
 def health():
@@ -1145,12 +1133,7 @@ async def defi_chat(
     request: Request,
     file: UploadFile = File(...),
     session_id: Optional[str] = None,
-<<<<<<< HEAD
     supabase_token: str = Depends(verify_api_key),
-=======
-    user_id: Optional[str] = None,  # For rate limiting (Supabase user UUID)
-    api_key_ok: None = Depends(verify_api_key),
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 ):
     discord_id = extract_identity_from_token(supabase_token)
     user_id = '00000000-0000-0000-0000-000000000000'
@@ -1159,45 +1142,9 @@ async def defi_chat(
         ".wav", ".webm", ".mp3", ".mp4", ".ogg", ".flac", ".m4a", ".aac",
     ]
     if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
-<<<<<<< HEAD
         raise HTTPException(
             status_code=400,
             detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}",
-=======
-        raise HTTPException(status_code=400, detail=f"File must be an audio file. Supported formats: {', '.join(allowed_extensions)}")
-
-    # 💜 Gentle rate limiting check (optional, only if user_id provided)
-    # Estimate ~3 seconds per voice message as a reasonable average
-    if user_id:
-        limit_check = rate_limit_service.check_limits(
-            user_id=user_id,
-            additional_voice_sec=3
-        )
-        
-        if not limit_check.allowed:
-            logger.info(f"Rate limit reached for user {user_id}: {limit_check.reason}")
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "USAGE_LIMIT_REACHED",
-                    "reason": limit_check.reason,
-                    "plan_tier": limit_check.plan_tier,
-                    "limit": limit_check.limit,
-                    "used": limit_check.used,
-                    "title": limit_check.title,
-                    "body": limit_check.body,
-                }
-            )
-
-    try:
-        wav_bytes = await file.read()
-        
-        # Process through LangGraph pipeline
-        result = langgraph_service.process_conversation(
-            audio_bytes=wav_bytes,
-            session_id=session_id,
-            collect_evaluation_data=True
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
         )
 
     session_identifier = session_id or str(uuid.uuid4())
@@ -1318,30 +1265,10 @@ async def defi_chat(
             logger.info("DeFi chat turn %s cancelled", turn_state.turn_id)
             raise
         except Exception as e:
-<<<<<<< HEAD
             logger.exception("DeFi chat processing failed")
             raise HTTPException(
                 status_code=500, detail=f"DeFi chat processing failed: {str(e)}"
             )
-=======
-            logger.warning(f"Failed to persist conversation session: {e}")
-        
-        # 💜 Track usage after successful processing (best effort)
-        # Use actual audio duration if available, otherwise use estimate
-        if user_id:
-            try:
-                # TODO: Get actual audio duration from wav_bytes if needed
-                rate_limit_service.add_voice_usage(user_id=user_id, seconds=3)
-                logger.debug(f"Tracked voice usage for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to track voice usage: {e}")
-        
-        return DefiChatResponse(**result)
-        
-    except Exception as e:
-        logger.exception("DeFi chat processing failed")
-        raise HTTPException(status_code=500, detail=f"DeFi chat processing failed: {str(e)}")
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 
 
 @app.post("/defi-chat/stream")
@@ -1873,7 +1800,6 @@ async def text_chat(
     #consent_ok: None = Depends(require_consent),
 ):
     """Text-only chat endpoint for DeFi conversations"""
-<<<<<<< HEAD
     user_id, discord_id = extract_identity_from_token(supabase_token)
 
     session_identifier = body.session_id or str(uuid.uuid4())
@@ -1890,40 +1816,6 @@ async def text_chat(
         def cancel_check():
             manager.raise_if_cancelled(turn_state.turn_id)
 
-=======
-    
-    # 💜 Gentle rate limiting check (optional, only if user_id provided)
-    if body.user_id:
-        limit_check = rate_limit_service.check_limits(
-            user_id=body.user_id,
-            additional_text_msgs=1
-        )
-        
-        if not limit_check.allowed:
-            logger.info(f"Rate limit reached for user {body.user_id}: {limit_check.reason}")
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "USAGE_LIMIT_REACHED",
-                    "reason": limit_check.reason,
-                    "plan_tier": limit_check.plan_tier,
-                    "limit": limit_check.limit,
-                    "used": limit_check.used,
-                    "title": limit_check.title,
-                    "body": limit_check.body,
-                }
-            )
-    
-    try:
-        # Process text message directly through LangGraph with text input
-        result = langgraph_service.process_text_conversation(
-            message=body.message,
-            session_id=body.session_id,
-            collect_evaluation_data=True
-        )
-        
-        # Store in Supabase (let DB set timestamps). Insert conversation first, then emotions.
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
         try:
             turn_state.set_status("streaming")
             cancel_check()
@@ -1982,7 +1874,6 @@ async def text_chat(
             logger.info("Text chat turn %s cancelled", turn_state.turn_id)
             raise
         except Exception as e:
-<<<<<<< HEAD
             logger.exception("Text chat processing failed")
             raise HTTPException(
                 status_code=500, detail=f"Text chat processing failed: {str(e)}"
@@ -2046,23 +1937,6 @@ def _record_text_stream_turn(
         )
     except Exception as exc:
         logger.warning("Text chat stream memory update failed: %s", exc)
-=======
-            logger.warning(f"Failed to persist text conversation session: {e}")
-        
-        # 💜 Track usage after successful processing (best effort)
-        if body.user_id:
-            try:
-                rate_limit_service.add_text_usage(user_id=body.user_id, messages=1)
-                logger.debug(f"Tracked text usage for user {body.user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to track text usage: {e}")
-        
-        return DefiChatResponse(**result)
-        
-    except Exception as e:
-        logger.exception("Text chat processing failed")
-        raise HTTPException(status_code=500, detail=f"Text chat processing failed: {str(e)}")
->>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 
 
 # @app.post("/text-chat/stream")
