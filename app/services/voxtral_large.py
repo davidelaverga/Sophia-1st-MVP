@@ -226,12 +226,11 @@ class VoxtralLargeService:
         """
         try:
             file_name = f"audio{self._detect_audio_extension(audio_bytes)}"
-            bio = io.BytesIO(audio_bytes)
 
             resp = self.client.audio.transcriptions.complete(
                 model=self.model,
                 file={
-                    "content": bio,
+                    "content": audio_bytes,
                     "file_name": file_name,
                 },
             )

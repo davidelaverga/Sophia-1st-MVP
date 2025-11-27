@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "202502110002"
-down_revision = "fefc279c0f5b"  # depends on RLS policies
+down_revision = "3d8db1a9f9d2"  # depends on RLS policies
 branch_labels = None
 depends_on = None
 
@@ -88,16 +88,6 @@ def upgrade() -> None:
         postgresql_ops={"created_at": "DESC"},
     )
 
-    # Create vector index for cosine similarity search (IVFFlat)
-    # Note: This requires pgvector extension and may need manual creation via SQL
-    # if the database user doesn't have sufficient privileges
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_user_memories_embedding_ivfflat
-        ON user_memories
-        USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100);
-    """)
-
     # Add foreign key to users table (references auth.users in Supabase)
     # Note: In Supabase, auth.users is managed separately, so we may need to handle this manually
     # For now, we'll add a comment indicating the relationship
@@ -107,7 +97,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_user_memories_embedding_ivfflat", table_name="user_memories")
     op.drop_index("idx_user_memories_created_at", table_name="user_memories")
     op.drop_index("idx_user_memories_session_id", table_name="user_memories")
     op.drop_index("idx_user_memories_user_id", table_name="user_memories")

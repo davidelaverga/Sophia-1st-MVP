@@ -1,4 +1,8 @@
+import asyncio
 import logging
+import shutil
+import subprocess
+import threading
 import time
 import uuid
 from typing import Callable, Optional, Dict, Any
@@ -184,15 +188,82 @@ def synthesize_reply(reply: str, cancel_check: Optional[Callable] = None):
         logger.exception("Synthesis or upload failed in chat")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
-def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional[Callable] = None):
-    try:
-        for pcm_chunk in synthesize_inworld_stream(text, sample_rate_hz=samplerate, cancel_check=cancel_check):
-            if cancel_check:
-                cancel_check()
-            yield pcm_chunk
-    except Exception:
-        logger.exception("Streamed synthesis failed in chat")
-        raise HTTPException(status_code=500, detail="Synthesis failed")
+async def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional[Callable] = None):
+    """Stream TTS without blocking the event loop by offloading to a thread."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+
+    def _run_blocking_stream():
+        try:
+            for pcm_chunk in synthesize_inworld_stream(
+                text, sample_rate_hz=samplerate, cancel_check=cancel_check
+            ):
+                asyncio.run_coroutine_threadsafe(queue.put(pcm_chunk), loop)
+        except Exception:
+            logger.exception("Streamed synthesis failed in chat (thread)")
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+            return
+        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+    threading.Thread(target=_run_blocking_stream, daemon=True).start()
+
+    while True:
+        pcm_chunk = await queue.get()
+        if pcm_chunk is None:
+            break
+        if cancel_check:
+            cancel_check()
+        yield pcm_chunk
+
+def strip_wav_header_if_present(chunk: bytes) -> bytes:
+    """Remove a WAV header if the streamed chunk includes one."""
+    if len(chunk) >= 12 and chunk[:4] == b"RIFF" and chunk[8:12] == b"WAVE":
+        # Standard PCM WAV header is 44 bytes; guard for short headers
+        header_len = 44 if len(chunk) >= 44 else 0
+        return chunk[header_len:]
+    return chunk
+
+def encode_pcm_to_mp3(
+    pcm_data: bytes,
+    sample_rate: int = 48000,
+    channels: int = 1,
+    bitrate: str = "128k",
+) -> bytes:
+    """Encode raw PCM (s16le) to MP3 using ffmpeg/libmp3lame."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("ffmpeg binary not found for PCM->MP3 encoding")
+
+    cmd = [
+        ffmpeg_bin,
+        "-f",
+        "s16le",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        str(channels),
+        "-i",
+        "pipe:0",
+        "-acodec",
+        "libmp3lame",
+        "-b:a",
+        bitrate,
+        "-f",
+        "mp3",
+        "pipe:1",
+    ]
+
+    result = subprocess.run(
+        cmd,
+        input=pcm_data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="ignore")
+        raise RuntimeError(f"ffmpeg encoding failed (code {result.returncode}): {stderr}")
+
+    return result.stdout
 
 def persist_conversation_session(
     supabase_token: str,
