@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useSupabase } from '../providers'
 import { X, Shield, AlertCircle } from 'lucide-react'
+import { copy, t } from '../../copy'
 
 interface ConsentModalProps {
   onAccept: () => void
@@ -45,7 +46,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
         // Log error but still allow user to continue
         const data = await response.json().catch(() => ({ error: 'Unknown error' }))
         console.warn('⚠️ Failed to save consent, but allowing user to continue:', data.error)
-        setError('Could not save consent record. Your session will continue, but you may be asked again.')
+        setError(t('consentModal.errors.save'))
         
         // Allow user to continue after 3 seconds even if save fails
         setTimeout(() => {
@@ -56,7 +57,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
     } catch (err) {
       // Log error but still allow user to continue
       console.error('❌ Network error saving consent, but allowing user to continue:', err)
-      setError('Network error. You can still use Sophia, but consent was not recorded.')
+      setError(t('consentModal.errors.network'))
       
       // Allow user to continue after 3 seconds even if save fails
       setTimeout(() => {
@@ -93,7 +94,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Shield style={{ width: '1.25rem', height: '1.25rem', color: '#a855f7' }} />
-            <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: 'white' }}>Consent Required</h3>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: 'white' }}>{t('consentModal.title')}</h3>
           </div>
           <button
             onClick={onClose}
@@ -113,6 +114,8 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <p style={{ fontSize: '0.95rem', color: '#d1d5db', lineHeight: 1.5 }}>{t('consentModal.intro')}</p>
+
           <div style={{
             background: 'rgba(245, 158, 11, 0.1)',
             border: '1px solid rgba(245, 158, 11, 0.2)',
@@ -122,32 +125,29 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
               <AlertCircle style={{ width: '1.25rem', height: '1.25rem', color: '#fbbf24', flexShrink: 0, marginTop: '0.125rem' }} />
               <div style={{ fontSize: '0.875rem' }}>
-                <p style={{ color: '#fde68a', fontWeight: '500', marginBottom: '0.25rem' }}>Data Processing Notice</p>
+                <p style={{ color: '#fde68a', fontWeight: '500', marginBottom: '0.25rem' }}>{t('consentModal.noticeTitle')}</p>
                 <p style={{ color: 'rgba(253, 230, 138, 0.8)' }}>
-                  Sophia logs and processes your voice to improve your experience. 
-                  We use this data for AI-generated DeFi education with voice analytics.
+                  {t('consentModal.noticeBody')}
                 </p>
               </div>
             </div>
           </div>
 
           <div style={{ fontSize: '0.875rem', color: '#d1d5db' }}>
-            <h4 style={{ fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>What we collect:</h4>
+            <h4 style={{ fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>{t('consentModal.whatTitle')}</h4>
             <ul style={{ listStyleType: 'disc', paddingLeft: '1.25rem', color: '#9ca3af', lineHeight: '1.6' }}>
-              <li>Voice recordings for transcription and emotion analysis</li>
-              <li>Chat messages and AI responses</li>
-              <li>Usage patterns and session data</li>
-              <li>Discord profile information (username, avatar)</li>
+              {copy.consentModal.whatItems.map((item, idx) => (
+                <li key={idx}>{item}</li>
+              ))}
             </ul>
           </div>
 
           <div style={{ fontSize: '0.875rem', color: '#d1d5db' }}>
-            <h4 style={{ fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>How we use it:</h4>
+            <h4 style={{ fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>{t('consentModal.howTitle')}</h4>
             <ul style={{ listStyleType: 'disc', paddingLeft: '1.25rem', color: '#9ca3af', lineHeight: '1.6' }}>
-              <li>Provide personalized DeFi education</li>
-              <li>Improve AI response quality</li>
-              <li>Analyze conversation effectiveness</li>
-              <li>Ensure system security and compliance</li>
+              {copy.consentModal.howItems.map((item, idx) => (
+                <li key={idx}>{item}</li>
+              ))}
             </ul>
           </div>
 
@@ -157,8 +157,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
             padding: '0.75rem'
           }}>
             <p style={{ fontSize: '0.75rem', color: '#9ca3af', lineHeight: '1.5' }}>
-              We will store a hashed consent record with timestamp and your IP address. 
-              You can withdraw consent at any time by contacting support.
+              {t('consentModal.retention')}
             </p>
           </div>
 
@@ -191,7 +190,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
               onMouseEnter={(e) => !isSubmitting && ((e.target as HTMLElement).style.background = '#374151')}
               onMouseLeave={(e) => !isSubmitting && ((e.target as HTMLElement).style.background = 'transparent')}
             >
-              Cancel
+              {t('consentModal.buttons.cancel')}
             </button>
             <button
               onClick={handleAccept}
@@ -211,7 +210,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
               onMouseEnter={(e) => !isSubmitting && ((e.target as HTMLElement).style.background = 'linear-gradient(135deg, #4338ca 0%, #6d28d9 100%)')}
               onMouseLeave={(e) => !isSubmitting && ((e.target as HTMLElement).style.background = 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)')}
             >
-              {isSubmitting ? 'Saving...' : 'I Agree'}
+              {isSubmitting ? t('consentModal.buttons.saving') : t('consentModal.buttons.accept')}
             </button>
           </div>
         </div>

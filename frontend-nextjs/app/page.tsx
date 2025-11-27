@@ -1,5 +1,6 @@
-'use client'
+import { ConversationView } from "./components/ConversationView"
 
+<<<<<<< HEAD
 import LiveCall from "./components/LiveCall";
 import { useState, useEffect, useCallback } from 'react'
 import { LogOut } from 'lucide-react'
@@ -307,4 +308,8 @@ export default function Home() {
       )}
     </div>
   )
+=======
+export default function HomePage() {
+  return <ConversationView />
+>>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
 }

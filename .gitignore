@@ -59,6 +59,14 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+<<<<<<< HEAD
+.next/
+=======
+>>>>>>> 2abcbd9bebfc1be54eb1acf3fa04c9dd81b46cf9
+
+# Virtual Environment
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/

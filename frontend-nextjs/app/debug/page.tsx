@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string -- Internal debug surface displays raw diagnostic strings */
 'use client'
 
 import { useEffect, useState } from 'react'

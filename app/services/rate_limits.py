@@ -147,11 +147,16 @@ class RateLimitService:
     def add_text_usage(user_id: str, messages: int = 1, tokens: int = 0) -> None:
         """
         Add text message usage for user.
+<<<<<<< HEAD
+=======
+        Uses direct INSERT/UPDATE if RPC function doesn't exist.
+>>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
         """
         try:
             supabase = get_supabase()
             today = date.today().isoformat()
             
+<<<<<<< HEAD
             supabase.rpc(
                 "upsert_user_daily_usage",
                 {
@@ -166,6 +171,62 @@ class RateLimitService:
             logger.info(f"Added {messages} text message(s) for user {user_id}")
         except Exception as e:
             logger.error(f"Failed to add text usage: {e}")
+=======
+            logger.info(f"[Rate Limits] Adding text usage: user_id={user_id}, messages={messages}, date={today}")
+            
+            # Try RPC function first
+            try:
+                result = supabase.rpc(
+                    "upsert_user_daily_usage",
+                    {
+                        "p_user_id": user_id,
+                        "p_usage_date": today,
+                        "p_voice_seconds": 0,
+                        "p_text_messages": messages,
+                        "p_text_tokens": tokens,
+                    }
+                ).execute()
+                
+                logger.info(f"[Rate Limits] ✅ RPC call successful. Result: {result}")
+            except Exception as rpc_error:
+                # Fallback: Use direct INSERT/UPDATE if RPC doesn't exist
+                logger.warning(f"[Rate Limits] RPC function not available, using direct INSERT/UPDATE: {rpc_error}")
+                
+                # Get current usage FIRST (before any insert/update)
+                current_usage = RateLimitService.get_daily_usage(user_id, date.today())
+                current_text = current_usage.get("text_messages", 0)
+                current_voice = current_usage.get("voice_seconds", 0)
+                current_tokens = current_usage.get("text_tokens", 0)
+                
+                logger.info(f"[Rate Limits] Current usage: text={current_text}, voice={current_voice}, tokens={current_tokens}")
+                logger.info(f"[Rate Limits] Adding: messages={messages}, tokens={tokens}")
+                
+                # Upsert directly - Supabase Python client uses different syntax
+                # First try to insert, if conflict then update
+                try:
+                    supabase.table("user_daily_usage").insert({
+                        "user_id": user_id,
+                        "usage_date": today,
+                        "voice_seconds": 0,
+                        "text_messages": messages,
+                        "text_tokens": tokens,
+                    }).execute()
+                    logger.info(f"[Rate Limits] ✅ Direct insert successful (new record)")
+                except Exception as insert_error:
+                    # If insert fails (likely conflict), do update with increment
+                    logger.info(f"[Rate Limits] Insert failed (likely conflict), doing update: {insert_error}")
+                    # Update by adding to existing values
+                    supabase.table("user_daily_usage").update({
+                        "text_messages": current_text + messages,
+                        "text_tokens": current_tokens + tokens,
+                    }).eq("user_id", user_id).eq("usage_date", today).execute()
+                    logger.info(f"[Rate Limits] ✅ Direct update successful (existing record, new total: text={current_text + messages})")
+            
+            logger.info(f"[Rate Limits] Added {messages} text message(s) for user {user_id}")
+        except Exception as e:
+            logger.error(f"[Rate Limits] ❌ Failed to add text usage for user {user_id}: {e}", exc_info=True)
+            raise  # Re-raise to see the error in the calling code
+>>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
     
     @staticmethod
     def check_limits(

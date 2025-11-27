@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Loader2 } from 'lucide-react'
 import EmotionDisplay from './EmotionDisplay'
+import { copy, t } from '../../copy'
 
 const createLocalId = () =>
   'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -215,7 +216,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       const errorMessage: Message = {
         id: createLocalId(),
         type: 'sophia',
-        content: `Sorry, I encountered an error: ${error.message}`,
+        content: t('errors.generic'),
         sender: 'ai',
         timestamp: new Date()
       }
@@ -268,7 +269,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             >
               {message.type === 'sophia' && (
                 <div className="w-12 h-12 bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg group-hover:scale-105 transition-transform">
-                  <span className="text-lg font-bold text-white">S</span>
+                  <span className="text-lg font-bold text-white">{copy.brand.initial}</span>
                 </div>
               )}
               
@@ -290,7 +291,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                       className="mt-3 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs transition-all flex items-center gap-2 font-medium border border-white/10 hover:border-white/20"
                     >
                       <span className="text-sm">🔊</span>
-                      Play Audio Response
+                      {t('chat.audioButton')}
                     </button>
                   )}
 
@@ -339,6 +340,27 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             </div>
           ))}
           
+<<<<<<< HEAD
+=======
+          {isLoading && (
+            <div className="flex gap-4 justify-start group">
+              <div className="w-12 h-12 bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg animate-pulse">
+                <span className="text-lg font-bold text-white">{copy.brand.initial}</span>
+              </div>
+              <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-2xl p-5 shadow-lg backdrop-blur-sm border border-gray-700/50">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
+                  <span className="text-sm text-gray-300 font-medium">{t('chat.loading')}</span>
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-purple-400 rounded-full animate-bounce"></div>
+                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                    <div className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+>>>>>>> 0c5b809ac824140402012b804879965c93f57ab1
         </div>
         <div ref={messagesEndRef} />
       </div>
@@ -357,7 +379,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask Sophia about DeFi strategies, risks, or market insights..."
+                placeholder={t('chat.placeholder')}
                 className="w-full bg-gradient-to-r from-gray-800/80 to-gray-900/80 border border-gray-600/50 rounded-xl px-6 py-4 text-white placeholder-gray-400 focus:outline-none focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/20 transition-all backdrop-blur-sm shadow-lg"
                 disabled={isLoading}
               />
@@ -375,12 +397,12 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               {isLoading ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span className="hidden sm:inline">Sending...</span>
+                  <span className="hidden sm:inline">{t('chat.sending')}</span>
                 </>
               ) : (
                 <>
                   <Send className="w-5 h-5" />
-                  <span className="hidden sm:inline">Send</span>
+                  <span className="hidden sm:inline">{t('chat.send')}</span>
                 </>
               )}
             </button>
@@ -389,26 +411,17 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
         
         {messages.length === 0 && (
           <div className="mt-6 pt-4 border-t border-gray-700/50">
-            <p className="text-xs text-gray-400 mb-3 font-medium">💡 Quick start suggestions:</p>
+            <p className="text-xs text-gray-400 mb-3 font-medium">💡 {t('chat.quickStartTitle')}</p>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => handleQuickMessage('What is yield farming?')}
-                className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-purple-300 rounded-xl text-sm hover:from-purple-500/30 hover:to-blue-500/30 transition-all border border-purple-500/30 hover:border-purple-400/50 font-medium"
-              >
-                🌾 What is yield farming?
-              </button>
-              <button
-                onClick={() => handleQuickMessage('How do I start with DeFi safely?')}
-                className="px-4 py-2 bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 rounded-xl text-sm hover:from-green-500/30 hover:to-emerald-500/30 transition-all border border-green-500/30 hover:border-green-400/50 font-medium"
-              >
-                🛡️ How do I start with DeFi safely?
-              </button>
-              <button
-                onClick={() => handleQuickMessage('What are current DeFi trends?')}
-                className="px-4 py-2 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 rounded-xl text-sm hover:from-blue-500/30 hover:to-cyan-500/30 transition-all border border-blue-500/30 hover:border-blue-400/50 font-medium"
-              >
-                📈 What are current DeFi trends?
-              </button>
+              {copy.chat.quickPrompts.map((prompt) => (
+                <button
+                  key={prompt.id}
+                  onClick={() => handleQuickMessage(prompt.label)}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-purple-300 rounded-xl text-sm hover:from-purple-500/30 hover:to-blue-500/30 transition-all border border-purple-500/30 hover:border-purple-400/50 font-medium"
+                >
+                  {prompt.emoji ? `${prompt.emoji} ` : null}{prompt.label}
+                </button>
+              ))}
             </div>
           </div>
         )}
