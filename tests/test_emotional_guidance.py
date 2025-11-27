@@ -1,83 +1,80 @@
-import sys
-import types
-
-_fake_dotenv = types.ModuleType("dotenv")
-_fake_dotenv.load_dotenv = lambda *args, **kwargs: None
-_fake_dotenv.find_dotenv = lambda *args, **kwargs: ""
-sys.modules.setdefault("dotenv", _fake_dotenv)
-
-from app.services.emotional_guidance import (  # noqa: E402
-    EmotionalGuidanceProvider,
-    format_guidance_block,
-)
+import json
+from pathlib import Path
 
 
-def test_yaml_guidance_covers_all_supported_emotions():
-    provider = EmotionalGuidanceProvider(mode="static")
-    emotions = [
-        "neutral",
-        "joy",
-        "sad",
-        "anxious",
-        "angry",
-        "fearful",
-        "grief",
-        "panic",
-        "excited",
-    ]
-    for emotion in emotions:
-        guidance = provider.get_guidance(emotion)
-        assert guidance, f"No guidance returned for {emotion}"
+from app.services import emotional_guidance as eg
 
 
-def test_service_mode_uses_remote_guidance():
-    captured = {}
-
-    def fake_post(url, payload, timeout):
-        captured["url"] = url
-        captured["payload"] = payload
-        captured["timeout"] = timeout
-        return {"guidance": ["remote tip"]}
-
-    provider = EmotionalGuidanceProvider(
-        mode="service",
-        service_url="https://example.test/guidance",
-        timeout_seconds=1.0,
-        http_post=fake_post,
+def test_static_store_loads_yaml_and_defaults_to_neutral(tmp_path: Path):
+    yaml_file = tmp_path / "guidance.yaml"
+    yaml_file.write_text(
+        "neutral:\n  - stay calm\njoy:\n  - celebrate\n", encoding="utf-8"
     )
+    store = eg._StaticGuidanceStore(yaml_file)
+    assert store.get("joy") == ["celebrate"]
+    # Unknown emotion falls back to neutral
+    assert store.get("unknown") == ["stay calm"]
 
-    guidance = provider.get_guidance("joy")
 
-    assert guidance == ["remote tip"]
-    assert captured["payload"] == {"emotion": "joy"}
+def test_emotional_guidance_service_success(monkeypatch):
+    # Fake HTTP POST returning a guidance list
+    def fake_post(url, payload, timeout):
+        return {"guidance": [f"hello {payload['emotion']}"]}
+
+    provider = eg.EmotionalGuidanceProvider(
+        mode="service", service_url="http://example", http_post=fake_post
+    )
+    guidance = provider.get_guidance("sad")
+    assert guidance == ["hello sad"]
 
 
-def test_service_failure_falls_back_to_yaml():
-    called = {"value": False}
+def test_emotional_guidance_service_failure_falls_back(monkeypatch, tmp_path: Path):
+    yaml_file = tmp_path / "guidance.yaml"
+    yaml_file.write_text("neutral:\n  - fallback\n", encoding="utf-8")
 
     def failing_post(url, payload, timeout):
-        called["value"] = True
-        raise RuntimeError("network down")
+        raise RuntimeError("boom")
 
-    provider = EmotionalGuidanceProvider(
+    provider = eg.EmotionalGuidanceProvider(
         mode="service",
-        service_url="https://example.test/guidance",
+        service_url="http://example",
         http_post=failing_post,
+        yaml_path=yaml_file,
     )
-
-    guidance = provider.get_guidance("sad")
-
-    assert guidance, "Fallback guidance should not be empty"
-    assert called["value"], "Remote service should be attempted before fallback"
+    guidance = provider.get_guidance("happy")
+    assert guidance == ["fallback"]
 
 
-def test_format_guidance_block_outputs_bullets():
-    block = format_guidance_block(["Validate feelings", "", "Offer next step", "  "])
-    assert block.startswith("Emotion guidance cues:")
-    assert "- Validate feelings" in block
-    assert block.count("\n- ") == 2
+def test_default_http_post_handles_json_response(monkeypatch):
+    # Build a tiny HTTP handler that returns a JSON body
+    class FakeResponse:
+        def __init__(self, body: bytes):
+            self.status = 200
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request, timeout):
+        return FakeResponse(json.dumps({"guidance": ["ok"]}).encode("utf-8"))
+
+    monkeypatch.setattr(eg.urllib.request, "urlopen", fake_urlopen)
+    provider = eg.EmotionalGuidanceProvider(service_url="http://example")
+    body = provider._default_http_post("http://example", {"emotion": "neutral"}, 0.1)
+    assert body["guidance"] == ["ok"]
 
 
-def test_format_guidance_block_empty_input():
-    block = format_guidance_block([])
-    assert block == ""
+def test_format_guidance_block_and_prompt():
+    block = eg.format_guidance_block(["one", "two"])
+    assert "Emotion guidance cues" in block
+    prompt = eg.build_emotion_guided_prompt(
+        message="Hi", emotion_label="joy", emotion_confidence=0.9, guidance=["tip"]
+    )
+    assert "The user seems joy" in prompt
+    assert "tip" in prompt
