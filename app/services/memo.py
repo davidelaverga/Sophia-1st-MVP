@@ -69,7 +69,7 @@ class MemOClient:
 
         # Lazy load embedding model (only if enabled)
         self._embedding_model = None
-        
+
         # Task #42817: Track table availability
         self._table_available: Optional[bool] = None
 
@@ -83,14 +83,19 @@ class MemOClient:
             logger.info("MemO disabled via MEMO_ENABLED=false")
 
     def _check_table_exists(self) -> bool:
-        """Check if user_memories table exists. Task #42817."""
-        if self._table_available is not None:
-            return self._table_available
-        
+        """Check if user_memories table exists. Task #42817.
+
+        We cache the positive result to avoid repeated checks, but if the table
+        was previously missing we recheck so that newly applied migrations or
+        injected test doubles can enable the feature without restarting.
+        """
+        if self._table_available is True:
+            return True
+
         try:
             supabase_client = get_supabase()
             # Try a simple query to check if table exists
-            result = supabase_client.table("user_memories").select("id").limit(1).execute()
+            supabase_client.table("user_memories").select("id").limit(1).execute()
             self._table_available = True
             logger.info("MemO: user_memories table is available")
             return True
@@ -240,7 +245,7 @@ class MemOClient:
                 )
                 self._table_available = False
                 return True  # Return success to avoid breaking pipeline
-            
+
             logger.error(f"Memory storage failed: {e}")
             self.metrics.total_errors += 1
 
@@ -368,7 +373,7 @@ class MemOClient:
                 )
                 self._table_available = False
                 return []
-            
+
             logger.error(f"Memory search failed: {e}")
             self.metrics.total_errors += 1
             self.metrics.total_searches += 1
@@ -479,14 +484,14 @@ class MemOClient:
 
     def _run_async_in_sync(self, coro):
         """Helper to run async coroutine from sync context safely.
-        
+
         Handles the 'event loop already running' issue by using a separate thread
         when called from within an existing event loop.
         """
         import concurrent.futures
-        
+
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # Event loop is running - use thread pool
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(lambda: asyncio.run(coro)).result()

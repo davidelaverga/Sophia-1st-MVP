@@ -1501,7 +1501,7 @@ class EvalLogger:
         user_emotion: str,
     ):
         """Extract and store important memories from conversation (Task #42597, #42817)
-        
+
         Synchronous version to avoid 'event loop already running' errors.
         """
         memories_to_store = []

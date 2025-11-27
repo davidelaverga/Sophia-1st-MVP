@@ -475,7 +475,7 @@ def _phoenix_deep_text_classify(text: str) -> Optional[Dict[str, Any]]:
         config = PhoenixConfig(
             base_url="https://api.openai.com/v1",
             api_key=settings.OPENAI_API_KEY,
-            timeout_seconds=12.0
+            timeout_seconds=12.0,
         )
 
         # Create async context and run classification
@@ -485,14 +485,15 @@ def _phoenix_deep_text_classify(text: str) -> Optional[Dict[str, Any]]:
                 return {
                     "label": result.label,
                     "confidence": result.confidence,
-                    "safety_flag": result.safety_flag
+                    "safety_flag": result.safety_flag,
                 }
 
         # Run in existing event loop or create new one
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're already in an async context, create a task
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, _async_classify())
                 result = future.result(timeout=13.0)
