@@ -22,7 +22,7 @@ def _base_state():
         "evaluation_logs": [],
         "emotion_guidance": [],
         "fallback_used": {},
-        "use_voxtral_large": False,
+        "use_voxtral": False,
         "supabase_token": None,
         "cancel_check": None,
     }
@@ -32,7 +32,7 @@ def test_direct_path_returns_snippet_without_llm():
     state = _base_state()
     state["transcript"] = "hi"
     state["user_emotion"] = EmotionData(label="joy", confidence=0.9)
-    generator = ResponseGenerator(use_voxtral_large=False)
+    generator = ResponseGenerator(use_voxtral=False)
     generator._response_path_split = True
 
     with (
@@ -58,7 +58,7 @@ def test_direct_path_negative_emotion_uses_calming_message():
     state = _base_state()
     state["transcript"] = "привет"
     state["user_emotion"] = EmotionData(label="panic", confidence=0.9)
-    generator = ResponseGenerator(use_voxtral_large=False)
+    generator = ResponseGenerator(use_voxtral=False)
     generator._response_path_split = True
 
     with patch("app.langgraph_nodes.trigger_phoenix_bg"):
@@ -73,7 +73,7 @@ def test_light_path_uses_tone_and_token_limit():
     state["transcript"] = "Need a quick reset, I'm feeling a bit low."
     state["intent"] = "emotional_support"
     state["user_emotion"] = EmotionData(label="sad", confidence=0.8)
-    generator = ResponseGenerator(use_voxtral_large=False)
+    generator = ResponseGenerator(use_voxtral=False)
     generator._response_path_split = True
 
     with (
@@ -106,7 +106,7 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
     state = _base_state()
     state["transcript"] = "Explain APY versus APR for staking."
     state["intent"] = "defi_question"
-    generator = ResponseGenerator(use_voxtral_large=False)
+    generator = ResponseGenerator(use_voxtral=False)
     generator._response_path_split = True
 
     with (
@@ -172,7 +172,7 @@ def test_affect_snapshot_seeds_direct_path_emotion():
     state = _base_state()
     state["transcript"] = "hello there"
     state["user_emotion"] = EmotionData(label="neutral", confidence=0.2)
-    generator = ResponseGenerator(use_voxtral_large=False)
+    generator = ResponseGenerator(use_voxtral=False)
     generator._response_path_split = True
 
     snapshot = {"emotion": "panic", "confidence": 0.92}

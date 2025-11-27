@@ -86,9 +86,10 @@ def _run_langgraph_nodes() -> bool:
 
     except Exception as e:
         reason = f"LangGraph nodes test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            # Under pytest, let this surface as a real failure
+            raise
         return False
 
 
@@ -155,9 +156,9 @@ def _run_memory_system() -> bool:
 
     except Exception as e:
         reason = f"Memory system test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -203,9 +204,9 @@ def _run_rag_system() -> bool:
 
     except Exception as e:
         reason = f"RAG system test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -242,9 +243,9 @@ def _run_ragas_evaluation() -> bool:
 
     except Exception as e:
         reason = f"RAGAS evaluation test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -295,9 +296,9 @@ def _run_phoenix_drift_monitor() -> bool:
 
     except Exception as e:
         reason = f"Phoenix drift monitor test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -343,9 +344,9 @@ def _run_full_integration() -> bool:
 
     except Exception as e:
         reason = f"Full integration test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 

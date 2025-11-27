@@ -10,14 +10,59 @@ class TestVoxtralLargeService:
     """Test suite for VoxtralLargeService"""
 
     def test_initialization(self):
-        """Test that service initializes correctly"""
+        """Test that service initializes correctly with mode-aware model selection"""
         with patch("app.services.voxtral_large.get_settings") as mock_settings:
             mock_settings.return_value.MISTRAL_API_KEY = "test_key"
+            mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
+            mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
 
             service = VoxtralLargeService()
 
-            assert service.model == "voxtral-mini-latest"
+            assert service.fast_model == "voxtral-mini-latest"
+            assert service.accurate_model == "voxtral-small-latest"
+            assert service.model == "voxtral-mini-latest"  # Default model
             assert service.client is not None
+
+    def test_select_model_direct_mode(self):
+        """Test that UTILITY_DIRECT mode selects fast model"""
+        with patch("app.services.voxtral_large.get_settings") as mock_settings:
+            mock_settings.return_value.MISTRAL_API_KEY = "test_key"
+            mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
+            mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
+
+            service = VoxtralLargeService()
+
+            # UTILITY_DIRECT mode should select fast model
+            context = {"current_mode": "utility_direct"}
+            selected = service._select_model(context)
+            assert selected == "voxtral-mini-latest"
+
+    def test_select_model_other_modes(self):
+        """Test that non-DIRECT modes select accurate model"""
+        with patch("app.services.voxtral_large.get_settings") as mock_settings:
+            mock_settings.return_value.MISTRAL_API_KEY = "test_key"
+            mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
+            mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
+
+            service = VoxtralLargeService()
+
+            # Other modes should select accurate model
+            for mode in ["utility_light", "emotional_support", "utility_agentic", ""]:
+                context = {"current_mode": mode}
+                selected = service._select_model(context)
+                assert selected == "voxtral-small-latest", f"Mode {mode} should use accurate model"
+
+    def test_select_model_no_context(self):
+        """Test that no context defaults to accurate model"""
+        with patch("app.services.voxtral_large.get_settings") as mock_settings:
+            mock_settings.return_value.MISTRAL_API_KEY = "test_key"
+            mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
+            mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
+
+            service = VoxtralLargeService()
+
+            selected = service._select_model(None)
+            assert selected == "voxtral-small-latest"
 
     def test_build_context_prompt_basic(self):
         """Test context prompt building without context"""
@@ -128,7 +173,7 @@ class TestHybridVoxtralService:
             result = service.generate_response(audio_bytes)
 
             assert result["response"] == "Test response from Voxtral Large"
-            assert result["service_used"] == "voxtral_large"
+            assert result["service_used"] == "voxtral"
             mock_generate.assert_called_once()
 
     @patch("app.services.voxtral_large.VoxtralLargeService.generate_response")
@@ -171,7 +216,7 @@ class TestHybridVoxtralService:
             tokens = list(service.stream_response(audio_bytes))
 
             assert len(tokens) == 3
-            assert all(t["service_used"] == "voxtral_large" for t in tokens)
+            assert all(t["service_used"] == "voxtral" for t in tokens)
             assert tokens[0]["token"] == "Token1 "
 
 

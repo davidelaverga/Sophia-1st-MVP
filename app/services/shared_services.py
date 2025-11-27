@@ -32,8 +32,8 @@ class SharedServiceManager:
         return cls._hybrid_voxtral_service
 
     @classmethod
-    def is_voxtral_large_available(cls) -> bool:
-        """Check if Voxtral Large service is available"""
+    def is_voxtral_available(cls) -> bool:
+        """Check if Voxtral service is available"""
         return cls.get_hybrid_voxtral_service() is not None
 
     @classmethod

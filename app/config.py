@@ -40,6 +40,14 @@ class Settings:
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
 
+    # Voxtral configuration (Task #43xxx: Mode-aware model selection)
+    USE_VOXTRAL: bool = os.getenv("USE_VOXTRAL", "true").lower() == "true"
+    VOXTRAL_FAST_MODEL: str = os.getenv("VOXTRAL_FAST_MODEL", "voxtral-mini-latest")
+    VOXTRAL_ACCURATE_MODEL: str = os.getenv(
+        "VOXTRAL_ACCURATE_MODEL", "voxtral-small-latest"
+    )
+    VOXTRAL_TIMEOUT_MS: int = int(os.getenv("VOXTRAL_TIMEOUT_MS", "30000"))
+
     # Redis for memory caching (disabled by default to avoid connection errors)
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
