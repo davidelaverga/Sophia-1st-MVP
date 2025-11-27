@@ -4,14 +4,14 @@ import { useState, useRef, useCallback } from 'react'
 import { Mic, Square } from 'lucide-react'
 import { copy, t } from '../../copy'
 import { useSupabase } from '../providers'
+import { checkMicrophonePermission } from '../lib/microphone-permissions'
 
 interface VoiceRecorderProps {
   onMessage: (message: any) => void
   setIsLoading: (loading: boolean) => void
-  accessToken: string | null
 }
 
-export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: VoiceRecorderProps) {
+export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -24,6 +24,14 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
 
   const startRecording = useCallback(async () => {
     try {
+      // Check microphone permission before attempting access
+      const permissionState = await checkMicrophonePermission()
+      
+      if (permissionState === "denied") {
+        alert("Microphone access is blocked. Please enable it in your browser settings and refresh the page.")
+        return
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 16000,
@@ -69,7 +77,45 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
 
     } catch (error) {
       console.error('Failed to start recording:', error)
-      alert(t('voiceRecorder.errors.micDenied'))
+      
+      // Better error handling - distinguish between different error types
+      const err = error as Error
+      const errorName = err.name || ""
+      const errorMessage = err.message || ""
+      
+      let userMessage = t('voiceRecorder.errors.micDenied')
+      
+      // Check for specific permission errors
+      if (
+        errorName === "NotAllowedError" ||
+        errorName === "PermissionDeniedError" ||
+        errorMessage.includes("permission") ||
+        errorMessage.includes("denied") ||
+        errorMessage.includes("NotAllowed")
+      ) {
+        // Double-check permission state after error
+        const currentPermission = await checkMicrophonePermission()
+        if (currentPermission === "denied") {
+          userMessage = "Microphone access is blocked. Please enable it in your browser settings and refresh the page."
+        } else {
+          userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
+        }
+      } else if (
+        errorName === "NotFoundError" ||
+        errorName === "DevicesNotFoundError" ||
+        errorMessage.includes("device") ||
+        errorMessage.includes("not found")
+      ) {
+        userMessage = "No microphone found. Please connect a microphone and try again."
+      } else if (
+        errorName === "NotReadableError" ||
+        errorMessage.includes("readable") ||
+        errorMessage.includes("in use")
+      ) {
+        userMessage = "Microphone is being used by another application. Please close other apps using the microphone and try again."
+      }
+      
+      alert(userMessage)
     }
   }, [])
 
@@ -101,10 +147,6 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
     setIsLoading(true)
 
     try {
-      if (!accessToken) {
-        throw new Error('Missing Supabase access token. Please refresh the page or sign in again.')
-      }
-
       const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm;codecs=opus'
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
 
@@ -129,7 +171,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat/stream`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_API_KEY || 'dev-key'}`
         },
         body: formData
       })

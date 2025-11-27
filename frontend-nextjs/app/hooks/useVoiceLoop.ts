@@ -8,6 +8,7 @@ import { useChatStore } from "../stores/chat-store"
 import { emitTelemetry } from "../lib/telemetry"
 import type { UsageLimitError, UsageLimitInfo } from "../types/rate-limits"
 import { refreshUsage } from "./useUsageMonitor"
+import { checkMicrophonePermission, isMicrophonePermissionDenied } from "../lib/microphone-permissions"
 
 const PREBUFFER_CHUNKS = 3
 const FIRST_AUDIO_TARGET_MS = 200
@@ -555,6 +556,18 @@ export function useVoiceLoop(userId?: string) {
     setFinalReply("")
 
     try {
+      // Check microphone permission before attempting access
+      // This helps provide better error messages
+      const permissionState = await checkMicrophonePermission()
+      
+      if (permissionState === "denied") {
+        setError("Microphone access is blocked. Please enable it in your browser settings and refresh the page.")
+        setStage("error")
+        setListeningPresence(false)
+        emitTelemetry("voice.error", { message: "mic_permission_denied" })
+        return
+      }
+
       // Start connection in parallel with other operations
       const wsPromise = ensureConnection()
       
@@ -569,6 +582,8 @@ export function useVoiceLoop(userId?: string) {
       }
 
       // Get user media (can happen in parallel with connection)
+      // Note: Even if permission check says "prompt" or "unknown", we still try getUserMedia
+      // as the permission API might not be fully accurate in all browsers
       const streamPromise = navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true },
       })
@@ -617,8 +632,52 @@ export function useVoiceLoop(userId?: string) {
       emitTelemetry("voice.capture_start", { path })
     } catch (err) {
       console.error("[voice] startTalking failed", err)
-      setError("I couldn’t access your microphone. Please check your permissions.")
-      emitTelemetry("voice.error", { message: (err as Error)?.message ?? "mic_start_failed" })
+      
+      // Better error handling - distinguish between different error types
+      const error = err as Error
+      const errorName = error.name || ""
+      const errorMessage = error.message || ""
+      
+      let userMessage = "I couldn't access your microphone. Please check your permissions."
+      
+      // Check for specific permission errors
+      if (
+        errorName === "NotAllowedError" ||
+        errorName === "PermissionDeniedError" ||
+        errorMessage.includes("permission") ||
+        errorMessage.includes("denied") ||
+        errorMessage.includes("NotAllowed")
+      ) {
+        // Double-check permission state after error
+        const currentPermission = await checkMicrophonePermission()
+        if (currentPermission === "denied") {
+          userMessage = "Microphone access is blocked. Please enable it in your browser settings and refresh the page."
+        } else {
+          userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
+        }
+      } else if (
+        errorName === "NotFoundError" ||
+        errorName === "DevicesNotFoundError" ||
+        errorMessage.includes("device") ||
+        errorMessage.includes("not found")
+      ) {
+        userMessage = "No microphone found. Please connect a microphone and try again."
+      } else if (
+        errorName === "NotReadableError" ||
+        errorMessage.includes("readable") ||
+        errorMessage.includes("in use")
+      ) {
+        userMessage = "Microphone is being used by another application. Please close other apps using the microphone and try again."
+      } else if (errorMessage.includes("service unavailable") || errorMessage.includes("Voice service")) {
+        userMessage = "Voice service is temporarily unavailable. Please try again in a moment."
+      }
+      
+      setError(userMessage)
+      emitTelemetry("voice.error", { 
+        message: error.message || "mic_start_failed",
+        errorName,
+        permissionState: await checkMicrophonePermission()
+      })
       setStage("error")
       setListeningPresence(false)
       cleanupRecorder()
