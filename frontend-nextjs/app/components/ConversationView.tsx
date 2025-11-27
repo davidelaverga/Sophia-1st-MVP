@@ -1,9 +1,4 @@
-"use client"
-
-import { Fragment, useEffect, useRef, useState } from "react"
-import type { KeyboardEventHandler, RefObject, UIEvent } from "react"
-import { Send, Loader2, Volume2, Square, Mic } from "lucide-react"
-import { AppShell } from "./AppShell"
+'use client'
 import { VoicePanel } from "./VoicePanel"
 import { VoiceFocusView } from "./VoiceFocusView"
 import { VoiceCollapsed } from "./VoiceCollapsed"
@@ -21,6 +16,10 @@ import { useVoiceLoop } from "../hooks/useVoiceLoop"
 import { useSupabase } from "../providers"
 import { useUsageMonitor } from "../hooks/useUsageMonitor"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
+import { diagnoseMicrophoneAccess, isMicrophoneLikelySupported } from "../lib/microphone-debug"
+import { Loader2, Mic, Send, Square, Volume2 } from "lucide-react"
+import { Fragment, KeyboardEventHandler, RefObject, useEffect, useRef, useState } from "react"
+import { AppShell } from "./AppShell"
 
 export function ConversationView() {
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -28,6 +27,38 @@ export function ConversationView() {
   const conversationId = useChatStore((state) => state.conversationId)
   const lastCompletedTurnId = useChatStore((state) => state.lastCompletedTurnId)
   const { chunks, dismiss } = useReflectionPrompt(conversationId, lastCompletedTurnId)
+  const [micSupportWarning, setMicSupportWarning] = useState<string | null>(null)
+  
+  // Check microphone support on mount (non-blocking, just for user info)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    
+    const checkSupport = async () => {
+      try {
+        const diagnostics = await diagnoseMicrophoneAccess()
+        const supportCheck = isMicrophoneLikelySupported(diagnostics)
+        
+        if (!supportCheck.supported && supportCheck.issues.length > 0) {
+          // Only show warning for critical issues (not just "prompt" state)
+          const criticalIssues = supportCheck.issues.filter(issue => 
+            !issue.includes("prompt") && 
+            !issue.includes("unknown")
+          )
+          
+          if (criticalIssues.length > 0) {
+            setMicSupportWarning(criticalIssues[0])
+          }
+        }
+      } catch (error) {
+        // Silently fail - this is just a helpful check
+        console.log("[ConversationView] Microphone support check failed:", error)
+      }
+    }
+    
+    // Run check after a short delay to not block initial render
+    const timer = setTimeout(checkSupport, 1000)
+    return () => clearTimeout(timer)
+  }, [])
   
   // Focus mode state
   const focusMode = useFocusModeStore((state) => state.mode)
@@ -117,6 +148,14 @@ export function ConversationView() {
 
   return (
     <AppShell actionBar={focusMode !== "voice" ? <Composer textareaRef={composerRef} onFocusChange={setComposerHasFocus} /> : undefined}>
+      {/* Microphone support warning (non-blocking, informational) */}
+      {micSupportWarning && (
+        <div className="mx-auto max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 animate-fadeIn">
+          <p className="font-medium">⚠️ Microphone Access Note</p>
+          <p className="mt-1 text-xs">{micSupportWarning}</p>
+          <p className="mt-2 text-xs opacity-75">You can still try using voice - the browser will prompt for permission when needed.</p>
+        </div>
+      )}
       <div className="space-y-4 transition-all duration-500 ease-in-out">
         {/* Voice Focus Mode */}
         {focusMode === "voice" && (
@@ -163,7 +202,7 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
     }
   }, [messages.length, isLocked, shouldStickToBottom])
 
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+  const handleScroll = (event: any) => {
     const target = event.currentTarget
     const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     setShouldStickToBottom(distanceFromBottom < 80)
@@ -492,4 +531,3 @@ function Composer({
     </div>
   )
 }
-

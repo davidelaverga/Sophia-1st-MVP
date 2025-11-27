@@ -9,6 +9,7 @@ import { emitTelemetry } from "../lib/telemetry"
 import type { UsageLimitError, UsageLimitInfo } from "../types/rate-limits"
 import { refreshUsage } from "./useUsageMonitor"
 import { checkMicrophonePermission, isMicrophonePermissionDenied } from "../lib/microphone-permissions"
+import { diagnoseMicrophoneAccess, logDiagnostics, isMicrophoneLikelySupported } from "../lib/microphone-debug"
 
 const PREBUFFER_CHUNKS = 3
 const FIRST_AUDIO_TARGET_MS = 200
@@ -443,7 +444,7 @@ export function useVoiceLoop(userId?: string) {
     }
     // Use NEXT_PUBLIC_BACKEND_WS_URL if available, otherwise construct from API URL
     const wsBase = process.env.NEXT_PUBLIC_BACKEND_WS_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-    let wsUrl = wsBase.startsWith("ws") ? `${wsBase}/ws/voice` : `${httpToWs(wsBase)}/ws/voice`
+    let wsUrl = wsBase.startsWith("ws") ? `${wsBase}/ws/voice?token=dev-key` : `${httpToWs(wsBase)}/ws/voice?token=dev-key`
     
     // 💜 Add user_id query param for rate limiting (optional)
     if (userId) {
@@ -556,15 +557,40 @@ export function useVoiceLoop(userId?: string) {
     setFinalReply("")
 
     try {
-      // Check microphone permission before attempting access
-      // This helps provide better error messages
-      const permissionState = await checkMicrophonePermission()
+      // Run diagnostics on first attempt (helps debug issues)
+      if (typeof window !== "undefined" && !(window as any).__sophia_mic_diagnostics_run) {
+        console.log("[voice] Running microphone diagnostics...")
+        const diagnostics = await diagnoseMicrophoneAccess()
+        logDiagnostics(diagnostics)
+        
+        const supportCheck = isMicrophoneLikelySupported(diagnostics)
+        if (!supportCheck.supported) {
+          console.warn("[voice] Potential microphone access issues detected:", supportCheck.issues)
+        }
+        
+        (window as any).__sophia_mic_diagnostics_run = true
+      }
+
+      // Check microphone permission before attempting access (non-blocking)
+      // Only block if we're CERTAIN it's denied. Otherwise, let getUserMedia handle it.
+      let permissionState: "granted" | "denied" | "prompt" | "unknown" = "unknown"
+      try {
+        permissionState = await checkMicrophonePermission()
+        console.log("[voice] Permission check result:", permissionState)
+      } catch (permError) {
+        // Permission API not available or failed - this is OK, we'll try getUserMedia anyway
+        console.log("[voice] Permission check failed, will try getUserMedia:", permError)
+        permissionState = "unknown"
+      }
       
+      // Only block if we're CERTAIN permission is denied
+      // If it's "unknown" or "prompt", let getUserMedia handle the permission request
       if (permissionState === "denied") {
+        console.log("[voice] Permission explicitly denied, blocking access")
         setError("Microphone access is blocked. Please enable it in your browser settings and refresh the page.")
         setStage("error")
         setListeningPresence(false)
-        emitTelemetry("voice.error", { message: "mic_permission_denied" })
+        emitTelemetry("voice.error", { message: "mic_permission_denied", permissionState })
         return
       }
 
@@ -582,11 +608,57 @@ export function useVoiceLoop(userId?: string) {
       }
 
       // Get user media (can happen in parallel with connection)
-      // Note: Even if permission check says "prompt" or "unknown", we still try getUserMedia
-      // as the permission API might not be fully accurate in all browsers
-      const streamPromise = navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true },
-      })
+      // This will show the browser's permission prompt if needed
+      // Support multiple browser APIs for maximum compatibility
+      console.log("[voice] Requesting microphone access...")
+      
+      let streamPromise: Promise<MediaStream>
+      
+      // Try modern API first
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        streamPromise = navigator.mediaDevices.getUserMedia({
+          audio: { 
+            channelCount: 1, 
+            noiseSuppression: true, 
+            echoCancellation: true,
+            autoGainControl: true,
+            sampleRate: 48000
+          },
+        })
+      } 
+      // Fallback for older browsers
+      else if ((navigator as any).getUserMedia) {
+        streamPromise = new Promise((resolve, reject) => {
+          (navigator as any).getUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      // Fallback for webkit browsers
+      else if ((navigator as any).webkitGetUserMedia) {
+        streamPromise = new Promise((resolve, reject) => {
+          (navigator as any).webkitGetUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      // Fallback for moz browsers
+      else if ((navigator as any).mozGetUserMedia) {
+        streamPromise = new Promise((resolve, reject) => {
+          (navigator as any).mozGetUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      else {
+        throw new Error("getUserMedia is not supported in this browser. Please use a modern browser like Chrome, Firefox, Safari, or Edge.")
+      }
 
       // Wait for all operations in parallel
       const [ws, stream] = await Promise.all([
@@ -629,6 +701,7 @@ export function useVoiceLoop(userId?: string) {
       setStage("listening")
       setListeningPresence(true)
       speechStartAtRef.current = performance.now()
+      console.log("[voice] Microphone access granted, listening started")
       emitTelemetry("voice.capture_start", { path })
     } catch (err) {
       console.error("[voice] startTalking failed", err)
@@ -638,45 +711,71 @@ export function useVoiceLoop(userId?: string) {
       const errorName = error.name || ""
       const errorMessage = error.message || ""
       
+      console.log("[voice] Error details:", { errorName, errorMessage, error })
+      
       let userMessage = "I couldn't access your microphone. Please check your permissions."
       
       // Check for specific permission errors
       if (
         errorName === "NotAllowedError" ||
         errorName === "PermissionDeniedError" ||
-        errorMessage.includes("permission") ||
-        errorMessage.includes("denied") ||
-        errorMessage.includes("NotAllowed")
+        errorMessage.toLowerCase().includes("permission") ||
+        errorMessage.toLowerCase().includes("denied") ||
+        errorMessage.toLowerCase().includes("not allowed") ||
+        errorMessage.toLowerCase().includes("notallowed")
       ) {
-        // Double-check permission state after error
-        const currentPermission = await checkMicrophonePermission()
-        if (currentPermission === "denied") {
-          userMessage = "Microphone access is blocked. Please enable it in your browser settings and refresh the page."
-        } else {
+        console.log("[voice] Permission error detected, checking current state...")
+        // Double-check permission state after error (non-blocking)
+        try {
+          const currentPermission = await checkMicrophonePermission()
+          console.log("[voice] Current permission state after error:", currentPermission)
+          if (currentPermission === "denied") {
+            userMessage = "Microphone access is blocked. Please enable it in your browser settings and refresh the page."
+          } else {
+            userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
+          }
+        } catch (permCheckError) {
+          // Permission check failed, use generic message
+          console.warn("[voice] Permission check after error failed:", permCheckError)
           userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
         }
       } else if (
         errorName === "NotFoundError" ||
         errorName === "DevicesNotFoundError" ||
-        errorMessage.includes("device") ||
-        errorMessage.includes("not found")
+        errorMessage.toLowerCase().includes("device") ||
+        errorMessage.toLowerCase().includes("not found")
       ) {
         userMessage = "No microphone found. Please connect a microphone and try again."
       } else if (
         errorName === "NotReadableError" ||
-        errorMessage.includes("readable") ||
-        errorMessage.includes("in use")
+        errorMessage.toLowerCase().includes("readable") ||
+        errorMessage.toLowerCase().includes("in use")
       ) {
         userMessage = "Microphone is being used by another application. Please close other apps using the microphone and try again."
       } else if (errorMessage.includes("service unavailable") || errorMessage.includes("Voice service")) {
         userMessage = "Voice service is temporarily unavailable. Please try again in a moment."
+      } else if (errorMessage.includes("not supported") || errorMessage.includes("getUserMedia")) {
+        userMessage = "Your browser doesn't support microphone access. Please use Chrome, Firefox, Safari, or Edge (latest versions)."
+      } else if (errorMessage.includes("secure context") || errorMessage.includes("HTTPS")) {
+        userMessage = "Microphone access requires a secure connection (HTTPS). Please access this site using https:// or from localhost."
       }
       
+      console.log("[voice] Setting error message:", userMessage)
       setError(userMessage)
+      
+      // Get permission state for telemetry (non-blocking)
+      let finalPermissionState = "unknown"
+      try {
+        finalPermissionState = await checkMicrophonePermission()
+      } catch {
+        // Ignore
+      }
+      
       emitTelemetry("voice.error", { 
         message: error.message || "mic_start_failed",
         errorName,
-        permissionState: await checkMicrophonePermission()
+        errorMessage,
+        permissionState: finalPermissionState
       })
       setStage("error")
       setListeningPresence(false)
@@ -760,4 +859,3 @@ export function useVoiceLoop(userId?: string) {
 
 // Export return type for components that receive voice state as props
 export type VoiceLoopReturn = ReturnType<typeof useVoiceLoop>
-

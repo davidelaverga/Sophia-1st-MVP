@@ -1,5 +1,6 @@
 {
+  "/not-found": "app/not-found.js",
   "/page": "app/page.js",
-  "/api/privacy/status/route": "app/api/privacy/status/route.js",
-  "/api/privacy/consent/route": "app/api/privacy/consent/route.js"
+  "/login/page": "app/login/page.js",
+  "/api/privacy/status/route": "app/api/privacy/status/route.js"
 }
