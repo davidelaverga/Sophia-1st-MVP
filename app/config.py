@@ -48,7 +48,8 @@ class Settings:
     )
     VOXTRAL_TIMEOUT_MS: int = int(os.getenv("VOXTRAL_TIMEOUT_MS", "30000"))
 
-    # Redis for memory caching
+    # Redis for memory caching (disabled by default to avoid connection errors)
+    REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))

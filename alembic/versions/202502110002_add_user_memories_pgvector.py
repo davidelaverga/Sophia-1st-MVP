@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "202502110002"
-down_revision = "fefc279c0f5b"  # depends on RLS policies
+down_revision = "3d8db1a9f9d2"  # depends on RLS policies
 branch_labels = None
 depends_on = None
 
@@ -31,7 +31,9 @@ def upgrade() -> None:
         sa.Column("memory_text", sa.Text(), nullable=False),
         # Vector embedding for semantic search (384 dimensions for all-MiniLM-L6-v2)
         # Note: pgvector's vector type is created via raw SQL below
-        sa.Column("embedding", sa.Text(), nullable=True),  # Will be altered to vector(384)
+        sa.Column(
+            "embedding", sa.Text(), nullable=True
+        ),  # Will be altered to vector(384)
         sa.Column(
             "memory_type",
             sa.Text(),
@@ -167,12 +169,20 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Drop RLS policies
     op.execute('DROP POLICY IF EXISTS "Users can view own memories" ON user_memories;')
-    op.execute('DROP POLICY IF EXISTS "Service role can insert memories" ON user_memories;')
-    op.execute('DROP POLICY IF EXISTS "Service role can update memories" ON user_memories;')
-    op.execute('DROP POLICY IF EXISTS "Service role can delete memories" ON user_memories;')
+    op.execute(
+        'DROP POLICY IF EXISTS "Service role can insert memories" ON user_memories;'
+    )
+    op.execute(
+        'DROP POLICY IF EXISTS "Service role can update memories" ON user_memories;'
+    )
+    op.execute(
+        'DROP POLICY IF EXISTS "Service role can delete memories" ON user_memories;'
+    )
 
     # Drop trigger and function
-    op.execute("DROP TRIGGER IF EXISTS trigger_user_memories_updated_at ON user_memories;")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trigger_user_memories_updated_at ON user_memories;"
+    )
     op.execute("DROP FUNCTION IF EXISTS update_user_memories_updated_at();")
 
     # Drop indexes

@@ -86,16 +86,27 @@ class MemoryManager:
         self._affect_flash_store: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
     def _init_redis(self):
-        """Initialize Redis client"""
+        """Initialize Redis client if enabled and reachable."""
+        # Check if Redis is explicitly enabled
+        if not getattr(self.settings, "REDIS_ENABLED", False):
+            logger.info(
+                "Redis disabled (REDIS_ENABLED=false). Using in-memory fallback."
+            )
+            return None
+
         try:
             import redis
 
-            return redis.Redis(
+            client = redis.Redis(
                 host=getattr(self.settings, "REDIS_HOST", "localhost"),
                 port=getattr(self.settings, "REDIS_PORT", 6379),
                 db=getattr(self.settings, "REDIS_DB", 0),
                 decode_responses=True,
             )
+            # Verify connection is actually working
+            client.ping()
+            logger.info("Redis connection established successfully.")
+            return client
         except Exception as e:
             logger.warning(f"Redis connection failed: {e}. Using in-memory fallback.")
             return None

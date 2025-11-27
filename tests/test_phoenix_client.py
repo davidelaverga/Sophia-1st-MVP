@@ -22,7 +22,7 @@ def phoenix_config():
     return PhoenixConfig(
         base_url="https://api.openai.com/v1",
         api_key="test-api-key",
-        timeout_seconds=5.0
+        timeout_seconds=5.0,
     )
 
 
@@ -40,7 +40,7 @@ class TestPhoenixConfig:
         config = PhoenixConfig(
             base_url="https://api.openai.com/v1",
             api_key="sk-test123",
-            timeout_seconds=10.0
+            timeout_seconds=10.0,
         )
         assert config.base_url == "https://api.openai.com/v1"
         assert config.api_key == "sk-test123"
@@ -49,8 +49,7 @@ class TestPhoenixConfig:
     def test_config_default_timeout(self):
         """Test PhoenixConfig default timeout value."""
         config = PhoenixConfig(
-            base_url="https://api.openai.com/v1",
-            api_key="sk-test123"
+            base_url="https://api.openai.com/v1", api_key="sk-test123"
         )
         assert config.timeout_seconds == 12.0
 
@@ -61,10 +60,7 @@ class TestPhoenixResult:
     def test_result_creation(self):
         """Test creating PhoenixResult."""
         result = PhoenixResult(
-            label="anxious",
-            confidence=0.85,
-            safety_flag=False,
-            raw={"test": "data"}
+            label="anxious", confidence=0.85, safety_flag=False, raw={"test": "data"}
         )
         assert result.label == "anxious"
         assert result.confidence == 0.85
@@ -84,8 +80,18 @@ class TestPhoenixClient:
     def test_valid_emotions(self, phoenix_client):
         """Test valid emotion labels are defined."""
         expected_emotions = {
-            "joy", "excited", "sad", "anxious", "grief", "panic",
-            "anger", "fearful", "calm", "neutral", "hopeful", "lonely"
+            "joy",
+            "excited",
+            "sad",
+            "anxious",
+            "grief",
+            "panic",
+            "anger",
+            "fearful",
+            "calm",
+            "neutral",
+            "hopeful",
+            "lonely",
         }
         assert phoenix_client.VALID_EMOTIONS == expected_emotions
 
@@ -110,23 +116,29 @@ class TestPhoenixClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "anxious",
-                        "confidence": 0.85,
-                        "safety_flag": False
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "label": "anxious",
+                                "confidence": 0.85,
+                                "safety_flag": False,
+                            }
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = mock_response
 
             result = await phoenix_client.classify(
                 text="I'm really worried about the exam tomorrow",
-                prosody_context="pitch: high, pace: fast"
+                prosody_context="pitch: high, pace: fast",
             )
 
             assert result.label == "anxious"
@@ -140,29 +152,35 @@ class TestPhoenixClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "excited",
-                        "confidence": 0.92,
-                        "safety_flag": False
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "label": "excited",
+                                "confidence": 0.92,
+                                "safety_flag": False,
+                            }
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = mock_response
 
             result = await phoenix_client.classify(
                 text="I got the job!",
-                prosody_context="pitch: very high, energy: high, pace: fast"
+                prosody_context="pitch: very high, energy: high, pace: fast",
             )
 
             # Verify prosody was included in payload
             call_args = mock_post.call_args
-            payload = call_args[1]['json']
-            user_message = payload['messages'][1]['content']
+            payload = call_args[1]["json"]
+            user_message = payload["messages"][1]["content"]
             assert "additional_context" in user_message
             assert "pitch: very high" in user_message
 
@@ -175,18 +193,20 @@ class TestPhoenixClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "grief",
-                        "confidence": 0.88,
-                        "safety_flag": True
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {"label": "grief", "confidence": 0.88, "safety_flag": True}
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = mock_response
 
             result = await phoenix_client.classify("I don't see any point anymore")
@@ -200,18 +220,24 @@ class TestPhoenixClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "invalid_emotion",
-                        "confidence": 0.75,
-                        "safety_flag": False
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "label": "invalid_emotion",
+                                "confidence": 0.75,
+                                "safety_flag": False,
+                            }
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = mock_response
 
             result = await phoenix_client.classify("Test message")
@@ -223,7 +249,9 @@ class TestPhoenixClient:
     @pytest.mark.asyncio
     async def test_classify_timeout(self, phoenix_client):
         """Test handling of API timeout."""
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.side_effect = httpx.TimeoutException("Request timeout")
 
             result = await phoenix_client.classify("Test message")
@@ -236,11 +264,11 @@ class TestPhoenixClient:
     @pytest.mark.asyncio
     async def test_classify_api_error(self, phoenix_client):
         """Test handling of API error."""
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.side_effect = httpx.HTTPStatusError(
-                "API Error",
-                request=Mock(),
-                response=Mock(status_code=500)
+                "API Error", request=Mock(), response=Mock(status_code=500)
             )
 
             result = await phoenix_client.classify("Test message")
@@ -255,14 +283,12 @@ class TestPhoenixClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": "not valid json"
-                }
-            }]
+            "choices": [{"message": {"content": "not valid json"}}]
         }
 
-        with patch.object(phoenix_client.client, 'post', new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            phoenix_client.client, "post", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = mock_response
 
             result = await phoenix_client.classify("Test message")
@@ -287,8 +313,7 @@ class TestPhoenixClient:
     def test_build_payload_with_prosody(self, phoenix_client):
         """Test payload building with prosody context."""
         payload = phoenix_client._build_payload(
-            "I'm excited!",
-            "pitch: high, energy: high"
+            "I'm excited!", "pitch: high, energy: high"
         )
 
         user_message = payload["messages"][1]["content"]
@@ -299,15 +324,15 @@ class TestPhoenixClient:
     def test_parse_response_success(self, phoenix_client):
         """Test successful response parsing."""
         response_data = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "joy",
-                        "confidence": 0.90,
-                        "safety_flag": False
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {"label": "joy", "confidence": 0.90, "safety_flag": False}
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
         result = phoenix_client._parse_response(response_data)
@@ -320,15 +345,19 @@ class TestPhoenixClient:
     def test_parse_response_confidence_clamping(self, phoenix_client):
         """Test confidence value is clamped to [0.0, 1.0]."""
         response_data = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        "label": "calm",
-                        "confidence": 1.5,  # Invalid: too high
-                        "safety_flag": False
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "label": "calm",
+                                "confidence": 1.5,  # Invalid: too high
+                                "safety_flag": False,
+                            }
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
         result = phoenix_client._parse_response(response_data)
@@ -338,13 +367,17 @@ class TestPhoenixClient:
     def test_parse_response_missing_fields(self, phoenix_client):
         """Test parsing with missing fields uses defaults."""
         response_data = {
-            "choices": [{
-                "message": {
-                    "content": json.dumps({
-                        # Missing label, confidence, safety_flag
-                    })
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                # Missing label, confidence, safety_flag
+                            }
+                        )
+                    }
                 }
-            }]
+            ]
         }
 
         result = phoenix_client._parse_response(response_data)

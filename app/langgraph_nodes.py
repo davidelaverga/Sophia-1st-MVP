@@ -30,7 +30,11 @@ from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
-from app.prompt.composer_v2 import PromptComposerV2, TurnSnippet, AffectSnapshot  # Task #42839
+from app.prompt.composer_v2 import (
+    PromptComposerV2,
+    TurnSnippet,
+    AffectSnapshot,
+)  # Task #42839
 from app.config import get_settings
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.models import CurrentMode, Intent, UtilityPath
@@ -439,7 +443,9 @@ class ResponseGenerator:
             mode = mode_str
 
         # Get skill_id if emotional support mode
-        skill_id = state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+        skill_id = (
+            state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+        )
 
         # Build conversation turns from flash context
         flash_context = self._ensure_flash_context(state)
@@ -449,7 +455,9 @@ class ResponseGenerator:
             if turn.get("user"):
                 conversation_turns.append(TurnSnippet(role="user", text=turn["user"]))
             if turn.get("sophia"):
-                conversation_turns.append(TurnSnippet(role="assistant", text=turn["sophia"]))
+                conversation_turns.append(
+                    TurnSnippet(role="assistant", text=turn["sophia"])
+                )
 
         # Add current user message
         transcript = state.get("transcript", "")
@@ -480,7 +488,7 @@ class ResponseGenerator:
                 affect_snapshot = AffectSnapshot(
                     emotion=user_emotion.label,
                     confidence=user_emotion.confidence,
-                    source="phoenix"
+                    source="phoenix",
                 )
 
         # Build prompt using PromptComposerV2
@@ -701,31 +709,15 @@ class ResponseGenerator:
         state["context_memory"] = memory_context
 
         # Task #42597: Get MemO intelligent memory
+        # Task #42817: Use sync wrapper to avoid 'event loop already running' error
         memo_memories = []
         try:
-            # Extract user_id from session (assuming session_id format or use default)
-            user_id = state.get("user_id", state["session_id"])
+            # Extract user_id from state - prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
 
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    memo_memories = pool.submit(
-                        lambda: asyncio.run(
-                            memo_client.search_memories(
-                                user_id=user_id, query_text=state["transcript"], top_k=3
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                memo_memories = asyncio.run(
-                    memo_client.search_memories(
-                        user_id=user_id, query_text=state["transcript"], top_k=3
-                    )
-                )
+            memo_memories = memo_client.search_memories_sync(
+                user_id=user_id, query_text=state["transcript"], top_k=3
+            )
 
             if memo_memories:
                 logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
@@ -1091,24 +1083,36 @@ class ResponseGenerator:
         self, state: GraphState, cancel_check: Optional[CancelCallback]
     ) -> str:
         transcript = state.get("transcript", "")
+        user_emotion: EmotionData = state.get("user_emotion") or EmotionData(
+            label="neutral", confidence=0.5
+        )
 
-        # Task #42839: Use PromptComposerV2 for prompt building
-        try:
-            # Call async _build_prompt_v2 from sync context
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Event loop running, use ThreadPoolExecutor
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    system_prompt = pool.submit(
-                        lambda: asyncio.run(self._build_prompt_v2(state))
-                    ).result()
-            else:
-                # No event loop running, use asyncio.run
-                system_prompt = asyncio.run(self._build_prompt_v2(state))
-        except Exception as exc:
-            logger.warning(f"PromptComposerV2 failed, falling back to old composer: {exc}")
-            # Fallback to old prompt composer
+        system_prompt: Optional[str] = None
+        user_prompt: str = transcript
+
+        # Prefer PromptComposerV2 when response-path split is disabled; otherwise use legacy
+        use_prompt_v2 = not self._response_path_split
+
+        if use_prompt_v2:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        system_prompt = pool.submit(
+                            lambda: asyncio.run(self._build_prompt_v2(state))
+                        ).result()
+                else:
+                    system_prompt = asyncio.run(self._build_prompt_v2(state))
+            except Exception as exc:
+                logger.warning(
+                    f"PromptComposerV2 failed, falling back to old composer: {exc}"
+                )
+                system_prompt = None
+
+        if system_prompt is None:
+            # Legacy composer path (ensures emotion guidance + contextual prompt assembly)
             flash_context = self._ensure_flash_context(state)
             memo_context = self._ensure_memo_context(state)
             emotion_guidance = _ensure_emotion_guidance(state)
@@ -1123,9 +1127,12 @@ class ResponseGenerator:
             additional_context = self._build_agentic_additional_context(
                 flash_context, rag_context
             )
+            user_prompt = self._build_agentic_user_prompt(
+                transcript, user_emotion, flash_context, rag_context
+            )
             system_prompt = prompt_composer.compose_system_prompt(
                 memory_context=memo_context,
-                user_emotion=state["user_emotion"].label,
+                user_emotion=user_emotion.label,
                 additional_context=additional_context,
                 emotion_guidance=emotion_guidance,
             )
@@ -1133,9 +1140,9 @@ class ResponseGenerator:
         if cancel_check:
             cancel_check()
         return generate_llm_reply(
-            transcript,  # Current user message
+            user_prompt,  # User prompt enriched with recent turns/knowledge
             cancel_check=cancel_check,
-            system_prompt=system_prompt,  # Full context from PromptComposerV2
+            system_prompt=system_prompt,
             max_tokens=256,
         )
 
@@ -1158,13 +1165,13 @@ class ResponseGenerator:
         if memo_context.get("memories"):
             return memo_context
         try:
-            user_id = state.get("user_id", state["session_id"])
-            memo_context = asyncio.run(
-                memo_client.get_context_for_llm(
-                    user_id=user_id,
-                    current_query=state.get("transcript", ""),
-                    access_token=state.get("supabase_token"),
-                )
+            # Task #42817: Use sync wrapper to avoid 'event loop already running' error
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            memo_context = memo_client.get_context_for_llm_sync(
+                user_id=user_id,
+                current_query=state.get("transcript", ""),
+                access_token=state.get("supabase_token"),
             )
         except Exception as exc:
             logger.warning("MemO context retrieval failed: %s", exc)
@@ -1569,39 +1576,18 @@ class EvalLogger:
         )
 
         # Task #42597: Extract and store important information in MemO
+        # Task #42817: Use sync methods to avoid 'event loop already running' error
         try:
-            user_id = state.get("user_id", state["session_id"])
-
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    pool.submit(
-                        lambda: asyncio.run(
-                            self._extract_and_store_memories(
-                                user_id=user_id,
-                                session_id=state["session_id"],
-                                transcript=state["transcript"],
-                                response=state["llm_response"],
-                                intent=state["intent"],
-                                user_emotion=state["user_emotion"].label,
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                asyncio.run(
-                    self._extract_and_store_memories(
-                        user_id=user_id,
-                        session_id=state["session_id"],
-                        transcript=state["transcript"],
-                        response=state["llm_response"],
-                        intent=state["intent"],
-                        user_emotion=state["user_emotion"].label,
-                    )
-                )
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            self._extract_and_store_memories_sync(
+                user_id=user_id,
+                session_id=state["session_id"],
+                transcript=state["transcript"],
+                response=state["llm_response"],
+                intent=state["intent"],
+                user_emotion=state["user_emotion"].label,
+            )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
 
@@ -1610,7 +1596,7 @@ class EvalLogger:
 
         return state
 
-    async def _extract_and_store_memories(
+    def _extract_and_store_memories_sync(
         self,
         user_id: str,
         session_id: str,
@@ -1619,7 +1605,10 @@ class EvalLogger:
         intent: str,
         user_emotion: str,
     ):
-        """Extract and store important memories from conversation (Task #42597)"""
+        """Extract and store important memories from conversation (Task #42597, #42817)
+
+        Synchronous version to avoid 'event loop already running' errors.
+        """
         memories_to_store = []
 
         # Extract preferences from transcript
@@ -1661,10 +1650,10 @@ class EvalLogger:
                 {"text": transcript, "type": "fact", "importance": 0.9}
             )
 
-        # Store all extracted memories
+        # Store all extracted memories using sync method
         for memory in memories_to_store:
             try:
-                await memo_client.store_memory(
+                memo_client.store_memory_sync(
                     user_id=user_id,
                     session_id=session_id,
                     memory_text=memory["text"],
