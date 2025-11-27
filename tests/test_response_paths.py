@@ -226,3 +226,29 @@ def test_mode_direct_complex_input_falls_back_to_light():
 
     mock_light.assert_called_once_with(state)
     assert result_state is state
+
+
+def test_mode_direct_pure_ack_uses_ack_template():
+    state = _base_state()
+    state["transcript"] = "ok"
+    generator = ResponseGenerator(use_voxtral=False)
+
+    result_state = generator._process_direct_mode(state)
+
+    assert result_state["llm_response"] == "Got it. I'm right here with you."
+
+
+def test_mode_direct_prefaced_question_not_treated_as_ack():
+    state = _base_state()
+    state["transcript"] = "Ok, can you explain staking?"
+    generator = ResponseGenerator(use_voxtral=False)
+
+    with patch.object(
+        ResponseGenerator,
+        "_process_light_mode",
+        return_value=state,
+    ) as mock_light:
+        result_state = generator._process_direct_mode(state)
+
+    mock_light.assert_called_once_with(state)
+    assert result_state is state

@@ -1021,15 +1021,27 @@ class ResponseGenerator:
 
     @staticmethod
     def _looks_like_ack(transcript: str) -> bool:
+        """Detect pure acknowledgment turns (not prefaced questions).
+
+        We only treat the turn as an ack when it is exactly an ack token
+        (optionally followed by punctuation/whitespace), not when the token
+        is followed by additional words like "ok can you explain...".
+        """
         normalized = (transcript or "").strip().lower()
         if not normalized:
             return False
         acks = {"ok", "okay", "cool", "got it", "alright"}
         if normalized in acks:
             return True
+
+        # Allow trailing punctuation/emoji, but no extra lexical content
         for token in ("ok", "okay", "cool", "got it", "alright"):
-            if normalized.startswith(f"{token} "):
-                return True
+            if normalized.startswith(token):
+                rest = normalized[len(token) :].strip()
+                # Strip common punctuation characters
+                rest = rest.strip(" .,!?:;~")
+                if not rest:
+                    return True
         return False
 
     _DIRECT_NEGATIVE_EMOTIONS = {"sad", "anxious", "grief", "panic"}
