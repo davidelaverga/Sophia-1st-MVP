@@ -51,6 +51,7 @@ def avg_abs_pcm16(buf: bytes) -> float:
         return 0.0
     return sum(abs(value) for value in samples) / len(samples)
 
+
 def pcm16_to_wav(
     pcm_bytes: bytes, *, sample_rate: int = 48000, channels: int = 1
 ) -> bytes:

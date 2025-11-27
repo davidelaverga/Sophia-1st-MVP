@@ -69,6 +69,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
       timestamp: new Date()
     }
 
+    console.log('📝 Sending message - PromptComposerV2 will build prompt on backend')
     setMessages([...messages, userMessage])
     setInputText('')
     setIsLoading(true)
@@ -147,8 +148,16 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
           } else if (event === 'reply_done') {
             const payload = JSON.parse(data)
             accumulated = payload.reply || accumulated
+            console.log('✅ Response received - built with PromptComposerV2 (check backend logs for details)')
             updateSophia({ content: accumulated, isStreaming: false })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Emotion Classification Result:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false,
+                source: 'PhoenixClient (OpenAI gpt-4o-mini)'
+              })
+              console.log('😊 User emotion detected:', payload.user_emotion)
               updateUserEmotion(payload.user_emotion)
             }
             if (payload.session_id) {
@@ -158,6 +167,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             replyFinished = true
           } else if (event === 'audio_url') {
             const payload = JSON.parse(data)
+            console.log('🔊 Audio synthesis complete')
             updateSophia({
               content: accumulated,
               audioUrl: payload.audio_url,
@@ -165,6 +175,11 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               isSynthesizing: false
             })
             if (payload.user_emotion) {
+              console.log('🧠 [PHOENIX] Final Emotion State:', {
+                label: payload.user_emotion.label,
+                confidence: `${(payload.user_emotion.confidence * 100).toFixed(0)}%`,
+                safety_flag: payload.user_emotion.safety_flag || false
+              })
               updateUserEmotion(payload.user_emotion)
             }
             if (payload.session_id) {

@@ -5,7 +5,13 @@ Tracks intent classification, mode routing, and utility path selection
 for M3 milestone routing system.
 """
 
+import logging
+
 from prometheus_client import Counter
+
+from app.routing.emotional_router import EmotionalSkill
+
+logger = logging.getLogger(__name__)
 
 # Intent classification metrics
 intent_total = Counter(
@@ -18,7 +24,9 @@ intent_total = Counter(
 mode_total = Counter(
     "mode_total",
     "Total number of mode routings",
-    ["mode"],  # Values: EMOTIONAL_SUPPORT, UTILITY_DIRECT, UTILITY_LIGHT, UTILITY_AGENTIC
+    [
+        "mode"
+    ],  # Values: EMOTIONAL_SUPPORT, UTILITY_DIRECT, UTILITY_LIGHT, UTILITY_AGENTIC
 )
 
 # Utility path selection metrics
@@ -84,3 +92,67 @@ def track_utility_path(path: str) -> None:
         path: Path value (DIRECT, LIGHT, AGENTIC)
     """
     utility_path_total.labels(path=path).inc()
+
+
+# Emotional skill distribution metrics
+EMOTIONAL_SKILL_IDS = tuple(skill.value for skill in EmotionalSkill)
+
+skill_total = Counter(
+    "skill_total",
+    "Total number of emotional skill routings",
+    [
+        "skill_id"
+    ],  # Values: CRISIS_REDIRECT, BOUNDARY_HOLDING, CELEBRATING_BREAKTHROUGH, etc.
+)
+
+# Pre-register all emotional skills so each label exists in metrics output
+for _skill_id in EMOTIONAL_SKILL_IDS:
+    skill_total.labels(skill_id=_skill_id)
+
+# Crisis and boundary override metrics (required for customer validation)
+crisis_override_total = Counter(
+    "crisis_override_total",
+    "Total number of crisis override activations (CRISIS_REDIRECT skill)",
+)
+
+boundary_override_total = Counter(
+    "boundary_override_total",
+    "Total number of boundary override activations (BOUNDARY_HOLDING skill)",
+)
+
+
+def track_skill_distribution(skill_id: str) -> None:
+    """
+    Track emotional skill distribution.
+
+    Args:
+        skill_id: Skill identifier (e.g., CRISIS_REDIRECT, BOUNDARY_HOLDING, etc.)
+    """
+    skill_id = str(skill_id)
+    if skill_id not in EMOTIONAL_SKILL_IDS:
+        logger.warning(
+            "Unknown emotional skill_id '%s' passed to metrics; skipping.", skill_id
+        )
+        return
+
+    skill_total.labels(skill_id=skill_id).inc()
+
+
+def track_crisis_override() -> None:
+    """
+    Track crisis override activation.
+
+    Called when CRISIS_REDIRECT skill is activated due to crisis markers.
+    This metric is required for customer validation and acceptance testing.
+    """
+    crisis_override_total.inc()
+
+
+def track_boundary_override() -> None:
+    """
+    Track boundary override activation.
+
+    Called when BOUNDARY_HOLDING skill is activated due to boundary violations.
+    This metric is required for customer validation and acceptance testing.
+    """
+    boundary_override_total.inc()

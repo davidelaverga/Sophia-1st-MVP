@@ -12,6 +12,8 @@ import asyncio
 import logging
 from unittest.mock import patch
 
+from app.services.memory import memory_manager
+
 try:
     import pytest
 
@@ -101,7 +103,7 @@ class TestDatabaseFallback:
         simulator = ServiceFailureSimulator()
 
         # Mock Supabase client
-        with patch("app.services.supabase.get_supabase_client") as mock_client:
+        with patch("app.services.supabase.init_supabase") as mock_client:
             mock_client.side_effect = simulator.simulate_database_failure
 
             try:
@@ -118,7 +120,7 @@ class TestDatabaseFallback:
         logger.info("Testing memory system fallback chain...")
 
         # Simulate Redis failure
-        with patch("app.services.memory.redis_client") as mock_redis:
+        with patch.object(memory_manager, "redis_client") as mock_redis:
             mock_redis.get.side_effect = Exception("Redis connection failed")
 
             # Should fall back to Supabase

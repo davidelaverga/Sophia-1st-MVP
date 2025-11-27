@@ -22,10 +22,9 @@ from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocketState
 from app.routers.audio_receiver import receive_audio_chunks
 from opentelemetry import trace
-from slowapi.errors import RateLimitExceeded
 
 from app.helpers import extract_audio, sse_event, validate_audio_upload
-from app.audio_utils import avg_abs_pcm16, pcm16_to_wav, wav_header_pcm16
+from app.audio_utils import pcm16_to_wav
 from app.deps import (
     verify_api_key,
     limiter,
@@ -47,7 +46,6 @@ from app.services import supabase as supabase_service
 from app.services.audio_queue import get_audio_queue_manager, AudioSegment
 from app.services.langgraph_service import langgraph_service
 from app.services.shared_services import shared_services
-from app.services.emotional_guidance import build_emotion_guided_prompt
 from app.services.memory import memory_manager, ConversationTurn
 from app import chat as chat_service
 from app.config import get_settings
@@ -55,7 +53,6 @@ from app.config import get_settings
 router = APIRouter()
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 
 async def _ws_send_json(ws: WebSocket, obj: dict) -> None:
@@ -206,8 +203,8 @@ async def ws_voice(websocket: WebSocket):
                     "interrupted_turn_id": interrupted_turn_id,
                 },
             )
-        except:
-            logger.warning('Failed to send barge-in notification')
+        except Exception:
+            logger.warning("Failed to send barge-in notification")
 
     async def websocket_audio_producer(websocket, session_id, audio_input_queue: asyncio.Queue, manager, audio_output_queue, barge_in_callback):
         try:
@@ -720,6 +717,7 @@ async def defi_chat(
                 collect_evaluation_data=True,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
             )
 
             turn_state.set_status("synthesizing")
@@ -944,6 +942,7 @@ async def text_chat(
                 collect_evaluation_data=True,
                 supabase_token=supabase_token,
                 cancel_check=cancel_check,
+                user_id=user_id,
             )
 
             turn_state.set_status("synthesizing")
@@ -1084,31 +1083,48 @@ async def text_chat_stream(
 
             try:
                 # Send meta event with session_id first
-                yield sse_event('meta', {
-                    'session_id': session_identifier
-                })
-
+                yield sse_event("meta", {"session_id": session_identifier})
                 result = langgraph_service.process_text_conversation(
                     body.message,
                     session_identifier,
                     collect_evaluation_data=True,
                     supabase_token=supabase_token,
-                    cancel_check=cancel_check
+                    cancel_check=cancel_check,
+                    user_id=user_id,
                 )
-                yield sse_event('token', result['reply'].replace('\n', ' '))
-                yield sse_event('reply_done', {
-                    'reply': result['reply'],
-                    'user_emotion': result['user_emotion'],
-                    'session_id': session_identifier
-                })
-                yield sse_event('audio_url', {
-                    "audio_url": result.get('audio_url'),
-                    "sophia_emotion": result['sophia_emotion'],
-                    "mock_audio": result['is_mock_audio'],
-                    "user_emotion": result['user_emotion'],
-                    'session_id': session_identifier
-                })
-
+                yield sse_event("token", result["reply"].replace("\n", " "))
+                yield sse_event(
+                    "reply_done",
+                    {"reply": result["reply"], "user_emotion": result["user_emotion"]},
+                )
+                yield sse_event(
+                    "audio_url",
+                    {
+                        "audio_url": result.get("audio_url"),
+                        "sophia_emotion": result["sophia_emotion"],
+                        "mock_audio": result["is_mock_audio"],
+                        "user_emotion": result["user_emotion"],
+                    },
+                )
+                yield sse_event("token", result["reply"].replace("\n", " "))
+                yield sse_event(
+                    "reply_done",
+                    {
+                        "reply": result["reply"],
+                        "user_emotion": result["user_emotion"],
+                        "session_id": session_identifier,
+                    },
+                )
+                yield sse_event(
+                    "audio_url",
+                    {
+                        "audio_url": result.get("audio_url"),
+                        "sophia_emotion": result["sophia_emotion"],
+                        "mock_audio": result["is_mock_audio"],
+                        "user_emotion": result["user_emotion"],
+                        "session_id": session_identifier,
+                    },
+                )
                 # user_emotion = chat_service.analyze_emotion_by_text(body.message)
                 # flash_context = memory_manager.get_context_for_llm(
                 #     session_identifier, access_token=supabase_token

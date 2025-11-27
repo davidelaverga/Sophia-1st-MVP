@@ -19,6 +19,8 @@ from datetime import datetime
 import psutil
 import os
 
+import pytest
+
 # Authentication token for load test user
 # user_id: 3e76a701-083f-46aa-be0c-f932c93971b6 (loadtest@example.com)
 # discord_id: 1132301438966566943 (has consent)
@@ -40,6 +42,11 @@ def create_jwt_token():
         "exp": int(time.time()) + 3600,
     }
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+
+
+@pytest.fixture()
+def jwt_token():
+    return create_jwt_token()
 
 
 @dataclass
@@ -144,7 +151,12 @@ def generate_silence(duration_sec: float = 0.7) -> bytes:
     return audio
 
 
-async def test_websocket_session(
+@pytest.fixture
+def ws_url(jwt_token) -> str:
+    return f"ws://localhost:8000/ws/voice?token={jwt_token}"
+
+
+async def _run_websocket_session(
     ws_url: str, session_id: str, num_messages: int, monitor: PerformanceMonitor
 ) -> SessionMetrics:
     """Тест одной WebSocket сессии с voice pipeline"""
@@ -258,15 +270,13 @@ async def test_parallel_websockets(num_sessions: int = 10):
     print(f"   Запуск {num_sessions} параллельных сессий...")
 
     # Create JWT token for authentication
-    token = create_jwt_token()
-    ws_url = f"ws://localhost:8000/ws/voice?token={token}"
     monitor = PerformanceMonitor()
 
     # Создаем параллельные сессии
     tasks = []
     for i in range(num_sessions):
         session_id = f"load_test_{i + 1}"
-        task = test_websocket_session(
+        task = _run_websocket_session(
             ws_url, session_id, num_messages=2, monitor=monitor
         )
         tasks.append(task)

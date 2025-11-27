@@ -40,7 +40,8 @@ class Settings:
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
 
-    # Redis for memory caching
+    # Redis for memory caching (disabled by default to avoid connection errors)
+    REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
@@ -88,7 +89,7 @@ class Settings:
 
     _public_raw = os.getenv(
         "API_PUBLIC_PATHS",
-        "/,/health,/docs,/openapi.json,/api",
+        "/,/health,/metrics,/docs,/openapi.json,/api",
     )
     API_PUBLIC_PATHS: List[str] = [
         path.strip() for path in _public_raw.split(",") if path.strip()

@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Callable, Dict, Any, Optional, List, TypedDict, Sequence
+from typing import Callable, Dict, Any, Optional, List, TypedDict, Sequence, NotRequired
 from dataclasses import dataclass
 
 from langgraph.graph import StateGraph, START, END
@@ -30,9 +30,15 @@ from app.services.memory import memory_manager, ConversationTurn
 from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
+from app.prompt.composer_v2 import (
+    PromptComposerV2,
+    TurnSnippet,
+    AffectSnapshot,
+)  # Task #42839
 from app.config import get_settings
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.models import CurrentMode, Intent, UtilityPath
+from app.graph.nodes import EmotionalSkillRouterNode
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +69,14 @@ class GraphState(TypedDict):
     audio_bytes: bytes
     transcript: str
     user_emotion: EmotionData
+    conversation_count: int
+    last_skill: Optional[str]
+    user_id: Optional[str]
+    skill_id: NotRequired[str]
+    skill_variant: NotRequired[str]
+    skill_reasoning: NotRequired[str]
+    had_crisis: NotRequired[bool]
+    had_boundary: NotRequired[bool]
     intent: str
     current_mode: str  # Task #42729: Routing mode
     utility_path: Optional[str]
@@ -417,6 +431,82 @@ class ResponseGenerator:
         logger.info(
             f"ResponseGenerator initialized (Voxtral Large preference: {use_voxtral_large})"
         )
+        self._prompt_composer_v2 = PromptComposerV2()  # Task #42839
+
+    async def _build_prompt_v2(self, state: GraphState) -> str:
+        """Build prompt using PromptComposerV2 (Task #42839)"""
+        # Get current mode
+        mode_str = state.get("current_mode", MODE_LIGHT)
+        if isinstance(mode_str, str):
+            mode = CurrentMode(mode_str)
+        else:
+            mode = mode_str
+
+        # Get skill_id if emotional support mode
+        skill_id = (
+            state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+        )
+
+        # Build conversation turns from flash context
+        flash_context = self._ensure_flash_context(state)
+        conversation_turns = []
+        recent_turns = flash_context.get("recent_turns", [])
+        for turn in recent_turns[-5:]:  # Last 5 turns
+            if turn.get("user"):
+                conversation_turns.append(TurnSnippet(role="user", text=turn["user"]))
+            if turn.get("sophia"):
+                conversation_turns.append(
+                    TurnSnippet(role="assistant", text=turn["sophia"])
+                )
+
+        # Add current user message
+        transcript = state.get("transcript", "")
+        if transcript:
+            conversation_turns.append(TurnSnippet(role="user", text=transcript))
+
+        # Get mem0 snippets from memo context
+        memo_context = self._ensure_memo_context(state)
+        memories = memo_context.get("memories", [])
+        mem0_snippets = []
+        for mem in memories[:3]:  # Top 3 memories
+            mem_text = mem.get("text") or mem.get("memory_text", "")
+            if mem_text:
+                mem0_snippets.append(mem_text)
+
+        # Get RAG snippets if DeFi question
+        rag_snippets = []
+        if state.get("intent") == "defi_question":
+            rag_context = rag_system.get_context_for_llm(transcript)
+            if rag_context:
+                rag_snippets = [rag_context]
+
+        # Build affect snapshot if emotional support mode
+        affect_snapshot = None
+        if mode == CurrentMode.EMOTIONAL_SUPPORT:
+            user_emotion = state.get("user_emotion")
+            if user_emotion:
+                affect_snapshot = AffectSnapshot(
+                    emotion=user_emotion.label,
+                    confidence=user_emotion.confidence,
+                    source="phoenix",
+                )
+
+        # Build prompt using PromptComposerV2
+        result = await self._prompt_composer_v2.build_prompt(
+            current_mode=mode,
+            skill_id=skill_id,
+            conversation_turns=conversation_turns,
+            mem0_snippets=mem0_snippets,
+            rag_snippets=rag_snippets,
+            affect_snapshot=affect_snapshot,
+        )
+
+        logger.info(
+            f"PromptComposerV2: Built prompt (length={len(result.prompt)}, "
+            f"truncated={result.truncated}, mode={mode.value}, skill={skill_id})"
+        )
+
+        return result.prompt
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"ResponseGenerator processing session {state['session_id']}")
@@ -619,15 +709,16 @@ class ResponseGenerator:
         state["context_memory"] = memory_context
 
         # Task #42597: Get MemO intelligent memory
+        # Task #42817: Use sync wrapper to avoid 'event loop already running' error
         memo_memories = []
         try:
-            # Extract user_id from session (assuming session_id format or use default)
-            user_id = state.get("user_id", state["session_id"])
-            memo_memories = asyncio.run(
-                memo_client.search_memories(
-                    user_id=user_id, query_text=state["transcript"], top_k=3
-                )
+            # Extract user_id from state - prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+
+            memo_memories = memo_client.search_memories_sync(
+                user_id=user_id, query_text=state["transcript"], top_k=3
             )
+
             if memo_memories:
                 logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
         except Exception as e:
@@ -931,41 +1022,64 @@ class ResponseGenerator:
         self, state: GraphState, cancel_check: Optional[CancelCallback]
     ) -> str:
         transcript = state.get("transcript", "")
-        flash_context = self._ensure_flash_context(state)
-        memo_context = self._ensure_memo_context(state)
-        emotion_guidance = _ensure_emotion_guidance(state)
+        user_emotion: EmotionData = state.get("user_emotion") or EmotionData(
+            label="neutral", confidence=0.5
+        )
 
-        rag_context = ""
-        if (state.get("intent") or "").lower() == "defi_question":
+        system_prompt: Optional[str] = None
+        user_prompt: str = transcript
+
+        # Prefer PromptComposerV2 when response-path split is disabled; otherwise use legacy
+        use_prompt_v2 = not self._response_path_split
+
+        if use_prompt_v2:
             try:
-                rag_context = rag_system.get_context_for_llm(transcript)
-                if rag_context:
-                    logger.info(
-                        "RAG context retrieved for session %s: %d chars",
-                        state["session_id"],
-                        len(rag_context),
-                    )
-            except Exception as exc:
-                logger.warning("RAG context lookup failed: %s", exc)
-                rag_context = ""
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
 
-        additional_context = self._build_agentic_additional_context(
-            flash_context, rag_context
-        )
-        system_prompt = prompt_composer.compose_system_prompt(
-            memory_context=memo_context,
-            user_emotion=state["user_emotion"].label,
-            additional_context=additional_context,
-            emotion_guidance=emotion_guidance,
-        )
-        user_prompt = self._build_agentic_user_prompt(
-            transcript, state["user_emotion"], flash_context, rag_context
-        )
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        system_prompt = pool.submit(
+                            lambda: asyncio.run(self._build_prompt_v2(state))
+                        ).result()
+                else:
+                    system_prompt = asyncio.run(self._build_prompt_v2(state))
+            except Exception as exc:
+                logger.warning(
+                    f"PromptComposerV2 failed, falling back to old composer: {exc}"
+                )
+                system_prompt = None
+
+        if system_prompt is None:
+            # Legacy composer path (ensures emotion guidance + contextual prompt assembly)
+            flash_context = self._ensure_flash_context(state)
+            memo_context = self._ensure_memo_context(state)
+            emotion_guidance = _ensure_emotion_guidance(state)
+
+            rag_context = ""
+            if (state.get("intent") or "").lower() == "defi_question":
+                try:
+                    rag_context = rag_system.get_context_for_llm(transcript)
+                except Exception as e:
+                    logger.warning(f"RAG context lookup failed: {e}")
+
+            additional_context = self._build_agentic_additional_context(
+                flash_context, rag_context
+            )
+            user_prompt = self._build_agentic_user_prompt(
+                transcript, user_emotion, flash_context, rag_context
+            )
+            system_prompt = prompt_composer.compose_system_prompt(
+                memory_context=memo_context,
+                user_emotion=user_emotion.label,
+                additional_context=additional_context,
+                emotion_guidance=emotion_guidance,
+            )
 
         if cancel_check:
             cancel_check()
         return generate_llm_reply(
-            user_prompt,
+            user_prompt,  # User prompt enriched with recent turns/knowledge
             cancel_check=cancel_check,
             system_prompt=system_prompt,
             max_tokens=256,
@@ -990,13 +1104,13 @@ class ResponseGenerator:
         if memo_context.get("memories"):
             return memo_context
         try:
-            user_id = state.get("user_id", state["session_id"])
-            memo_context = asyncio.run(
-                memo_client.get_context_for_llm(
-                    user_id=user_id,
-                    current_query=state.get("transcript", ""),
-                    access_token=state.get("supabase_token"),
-                )
+            # Task #42817: Use sync wrapper to avoid 'event loop already running' error
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            memo_context = memo_client.get_context_for_llm_sync(
+                user_id=user_id,
+                current_query=state.get("transcript", ""),
+                access_token=state.get("supabase_token"),
             )
         except Exception as exc:
             logger.warning("MemO context retrieval failed: %s", exc)
@@ -1330,6 +1444,8 @@ class EvalLogger:
             "utility_path": state.get("utility_path"),
             "router_path": state.get("router_path"),
             "fallbacks_used": state.get("fallback_used", {}),
+            "had_crisis": state.get("had_crisis", False),
+            "had_boundary": state.get("had_boundary", False),
             "transcript_length": len(state["transcript"]),
             "response_length": len(state["llm_response"]),
         }
@@ -1355,17 +1471,17 @@ class EvalLogger:
         )
 
         # Task #42597: Extract and store important information in MemO
+        # Task #42817: Use sync methods to avoid 'event loop already running' error
         try:
-            user_id = state.get("user_id", state["session_id"])
-            asyncio.run(
-                self._extract_and_store_memories(
-                    user_id=user_id,
-                    session_id=state["session_id"],
-                    transcript=state["transcript"],
-                    response=state["llm_response"],
-                    intent=state["intent"],
-                    user_emotion=state["user_emotion"].label,
-                )
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            self._extract_and_store_memories_sync(
+                user_id=user_id,
+                session_id=state["session_id"],
+                transcript=state["transcript"],
+                response=state["llm_response"],
+                intent=state["intent"],
+                user_emotion=state["user_emotion"].label,
             )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
@@ -1375,7 +1491,7 @@ class EvalLogger:
 
         return state
 
-    async def _extract_and_store_memories(
+    def _extract_and_store_memories_sync(
         self,
         user_id: str,
         session_id: str,
@@ -1384,7 +1500,10 @@ class EvalLogger:
         intent: str,
         user_emotion: str,
     ):
-        """Extract and store important memories from conversation (Task #42597)"""
+        """Extract and store important memories from conversation (Task #42597, #42817)
+
+        Synchronous version to avoid 'event loop already running' errors.
+        """
         memories_to_store = []
 
         # Extract preferences from transcript
@@ -1426,10 +1545,10 @@ class EvalLogger:
                 {"text": transcript, "type": "fact", "importance": 0.9}
             )
 
-        # Store all extracted memories
+        # Store all extracted memories using sync method
         for memory in memories_to_store:
             try:
-                await memo_client.store_memory(
+                memo_client.store_memory_sync(
                     user_id=user_id,
                     session_id=session_id,
                     memory_text=memory["text"],
@@ -1453,6 +1572,7 @@ class SophiaLangGraph:
         # Initialize nodes
         audio_ingestor = AudioIngestor()
         intent_analyzer = IntentAnalyzer()
+        emotional_skill_router = EmotionalSkillRouterNode()
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
@@ -1463,6 +1583,7 @@ class SophiaLangGraph:
         # Add nodes
         workflow.add_node("audio_ingestor", audio_ingestor)
         workflow.add_node("intent_analyzer", intent_analyzer)
+        workflow.add_node("emotional_skill_router", emotional_skill_router)
         workflow.add_node("response_generator", response_generator)
         workflow.add_node("tts_node", tts_node)
         workflow.add_node("eval_logger", eval_logger)
@@ -1470,7 +1591,8 @@ class SophiaLangGraph:
         # Define edges (workflow sequence with intent/mode classification inside IntentAnalyzer)
         workflow.add_edge(START, "audio_ingestor")
         workflow.add_edge("audio_ingestor", "intent_analyzer")
-        workflow.add_edge("intent_analyzer", "response_generator")
+        workflow.add_edge("intent_analyzer", "emotional_skill_router")
+        workflow.add_edge("emotional_skill_router", "response_generator")
         workflow.add_edge("response_generator", "tts_node")
         workflow.add_edge("tts_node", "eval_logger")
         workflow.add_edge("eval_logger", END)
@@ -1483,11 +1605,19 @@ class SophiaLangGraph:
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
         cancel_check: Optional[CancelCallback] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process a complete conversation turn through the graph"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state
         initial_state: GraphState = {
@@ -1495,6 +1625,11 @@ class SophiaLangGraph:
             "audio_bytes": audio_bytes,
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1530,11 +1665,19 @@ class SophiaLangGraph:
         session_id: Optional[str] = None,
         supabase_token: Optional[str] = None,
         cancel_check: Optional[CancelCallback] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process a text-only conversation turn, bypassing audio processing"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state with text message directly
         initial_state: GraphState = {
@@ -1542,6 +1685,11 @@ class SophiaLangGraph:
             "audio_bytes": b"",  # Empty for text input
             "transcript": message,  # Use the text message directly
             "user_emotion": EmotionData(label="neutral", confidence=0.7),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,  # Default mode, overwritten by IntentAnalyzer
             "utility_path": UtilityPath.LIGHT.value,
@@ -1576,19 +1724,22 @@ class SophiaLangGraph:
 
         # Initialize nodes
         intent_analyzer = IntentAnalyzer()
+        emotional_skill_router = EmotionalSkillRouterNode()
         response_generator = ResponseGenerator()
         tts_node = TTSNode()
         eval_logger = EvalLogger()
 
         # Add nodes (skip audio_ingestor for text input)
         text_workflow.add_node("intent_analyzer", intent_analyzer)
+        text_workflow.add_node("emotional_skill_router", emotional_skill_router)
         text_workflow.add_node("response_generator", response_generator)
         text_workflow.add_node("tts_node", tts_node)
         text_workflow.add_node("eval_logger", eval_logger)
 
         # Define edges (workflow sequence without audio processing)
         text_workflow.add_edge(START, "intent_analyzer")
-        text_workflow.add_edge("intent_analyzer", "response_generator")
+        text_workflow.add_edge("intent_analyzer", "emotional_skill_router")
+        text_workflow.add_edge("emotional_skill_router", "response_generator")
         text_workflow.add_edge("response_generator", "tts_node")
         text_workflow.add_edge("tts_node", "eval_logger")
         text_workflow.add_edge("eval_logger", END)
@@ -1601,13 +1752,40 @@ class SophiaLangGraph:
 
         return final_state
 
+    def _infer_conversation_count(
+        self, session_id: str, supabase_token: Optional[str]
+    ) -> int:
+        """Best-effort conversation count based on stored session memory."""
+        try:
+            memory = memory_manager.get_session_memory(
+                session_id, access_token=supabase_token
+            )
+            if memory and hasattr(memory, "turns"):
+                return len(memory.turns) + 1
+        except Exception as exc:
+            logger.warning(
+                "Conversation count lookup failed for %s: %s", session_id, exc
+            )
+        return 0
+
     def process_audio_to_context(
-        self, audio_bytes: bytes, session_id: Optional[str] = None
+        self,
+        audio_bytes: bytes,
+        session_id: Optional[str] = None,
+        supabase_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_count: Optional[int] = None,
     ) -> GraphState:
         """Process audio through initial nodes to get context for streaming"""
 
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        conv_count = (
+            conversation_count
+            if conversation_count is not None
+            else self._infer_conversation_count(session_id, supabase_token)
+        )
 
         # Initialize state
         initial_state: GraphState = {
@@ -1615,6 +1793,11 @@ class SophiaLangGraph:
             "audio_bytes": audio_bytes,
             "transcript": "",
             "user_emotion": EmotionData(label="neutral", confidence=0.0),
+            "conversation_count": conv_count,
+            "last_skill": None,
+            "user_id": user_id,
+            "had_crisis": False,
+            "had_boundary": False,
             "intent": "",
             "current_mode": MODE_LIGHT,
             "utility_path": UtilityPath.LIGHT.value,

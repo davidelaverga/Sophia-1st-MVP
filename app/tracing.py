@@ -14,6 +14,7 @@ from app.config import Settings
 
 tracer = None
 
+
 def _normalize_otlp_endpoint(ep: Optional[str]) -> Optional[str]:
     if not ep:
         return None

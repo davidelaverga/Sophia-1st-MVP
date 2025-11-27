@@ -5,7 +5,7 @@ import time
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import get_settings
 from app.services.supabase import get_supabase
 
@@ -86,16 +86,27 @@ class MemoryManager:
         self._affect_flash_store: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
     def _init_redis(self):
-        """Initialize Redis client"""
+        """Initialize Redis client if enabled and reachable."""
+        # Check if Redis is explicitly enabled
+        if not getattr(self.settings, "REDIS_ENABLED", False):
+            logger.info(
+                "Redis disabled (REDIS_ENABLED=false). Using in-memory fallback."
+            )
+            return None
+
         try:
             import redis
 
-            return redis.Redis(
+            client = redis.Redis(
                 host=getattr(self.settings, "REDIS_HOST", "localhost"),
                 port=getattr(self.settings, "REDIS_PORT", 6379),
                 db=getattr(self.settings, "REDIS_DB", 0),
                 decode_responses=True,
             )
+            # Verify connection is actually working
+            client.ping()
+            logger.info("Redis connection established successfully.")
+            return client
         except Exception as e:
             logger.warning(f"Redis connection failed: {e}. Using in-memory fallback.")
             return None
@@ -118,7 +129,7 @@ class MemoryManager:
         return payload.copy()
 
     def _normalize_affect_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         snapshot = AffectSnapshot(
             emotion=str(payload.get("emotion") or "neutral"),
             confidence=float(payload.get("confidence", 0.5)),
