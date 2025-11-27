@@ -709,32 +709,15 @@ class ResponseGenerator:
         state["context_memory"] = memory_context
 
         # Task #42597: Get MemO intelligent memory
+        # Task #42817: Use sync wrapper to avoid 'event loop already running' error
         memo_memories = []
         try:
-            # Extract user_id from session (assuming session_id format or use default)
-            user_id = state.get("user_id", state["session_id"])
+            # Extract user_id from state - prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
 
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    memo_memories = pool.submit(
-                        lambda: asyncio.run(
-                            memo_client.search_memories(
-                                user_id=user_id, query_text=state["transcript"], top_k=3
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                memo_memories = asyncio.run(
-                    memo_client.search_memories(
-                        user_id=user_id, query_text=state["transcript"], top_k=3
-                    )
-                )
+            memo_memories = memo_client.search_memories_sync(
+                user_id=user_id, query_text=state["transcript"], top_k=3
+            )
 
             if memo_memories:
                 logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
@@ -1121,13 +1104,13 @@ class ResponseGenerator:
         if memo_context.get("memories"):
             return memo_context
         try:
-            user_id = state.get("user_id", state["session_id"])
-            memo_context = asyncio.run(
-                memo_client.get_context_for_llm(
-                    user_id=user_id,
-                    current_query=state.get("transcript", ""),
-                    access_token=state.get("supabase_token"),
-                )
+            # Task #42817: Use sync wrapper to avoid 'event loop already running' error
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            memo_context = memo_client.get_context_for_llm_sync(
+                user_id=user_id,
+                current_query=state.get("transcript", ""),
+                access_token=state.get("supabase_token"),
             )
         except Exception as exc:
             logger.warning("MemO context retrieval failed: %s", exc)
@@ -1488,40 +1471,18 @@ class EvalLogger:
         )
 
         # Task #42597: Extract and store important information in MemO
+        # Task #42817: Use sync methods to avoid 'event loop already running' error
         try:
-            user_id = state.get("user_id", state["session_id"])
-
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    pool.submit(
-                        lambda: asyncio.run(
-                            self._extract_and_store_memories(
-                                user_id=user_id,
-                                session_id=state["session_id"],
-                                transcript=state["transcript"],
-                                response=state["llm_response"],
-                                intent=state["intent"],
-                                user_emotion=state["user_emotion"].label,
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                asyncio.run(
-                    self._extract_and_store_memories(
-                        user_id=user_id,
-                        session_id=state["session_id"],
-                        transcript=state["transcript"],
-                        response=state["llm_response"],
-                        intent=state["intent"],
-                        user_emotion=state["user_emotion"].label,
-                    )
-                )
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            self._extract_and_store_memories_sync(
+                user_id=user_id,
+                session_id=state["session_id"],
+                transcript=state["transcript"],
+                response=state["llm_response"],
+                intent=state["intent"],
+                user_emotion=state["user_emotion"].label,
+            )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
 
@@ -1530,7 +1491,7 @@ class EvalLogger:
 
         return state
 
-    async def _extract_and_store_memories(
+    def _extract_and_store_memories_sync(
         self,
         user_id: str,
         session_id: str,
@@ -1539,7 +1500,10 @@ class EvalLogger:
         intent: str,
         user_emotion: str,
     ):
-        """Extract and store important memories from conversation (Task #42597)"""
+        """Extract and store important memories from conversation (Task #42597, #42817)
+        
+        Synchronous version to avoid 'event loop already running' errors.
+        """
         memories_to_store = []
 
         # Extract preferences from transcript
@@ -1581,10 +1545,10 @@ class EvalLogger:
                 {"text": transcript, "type": "fact", "importance": 0.9}
             )
 
-        # Store all extracted memories
+        # Store all extracted memories using sync method
         for memory in memories_to_store:
             try:
-                await memo_client.store_memory(
+                memo_client.store_memory_sync(
                     user_id=user_id,
                     session_id=session_id,
                     memory_text=memory["text"],

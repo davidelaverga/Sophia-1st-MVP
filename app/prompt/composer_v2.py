@@ -480,9 +480,6 @@ class PromptComposerV2:
         """
         Build Tier 4 context block from conversation history and memory.
 
-        CRITICAL: Filter out any DeFi transaction history or protocol references.
-        Customer requirement: NO DeFi content in memory context.
-
         Args:
             conversation_turns: Recent conversation turns
             mem0_snippets: Memory snippets from Mem0

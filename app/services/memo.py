@@ -1,5 +1,6 @@
 """MemO: Intelligent Memory with pgvector for semantic search (Task #42597)."""
 
+import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
@@ -68,13 +69,45 @@ class MemOClient:
 
         # Lazy load embedding model (only if enabled)
         self._embedding_model = None
+        
+        # Task #42817: Track table availability
+        self._table_available: Optional[bool] = None
 
         if self.enabled:
             logger.info(
                 f"MemO enabled: top_k={self.top_k}, threshold={self.similarity_threshold}"
             )
+            # Check table existence at startup
+            self._check_table_exists()
         else:
             logger.info("MemO disabled via MEMO_ENABLED=false")
+
+    def _check_table_exists(self) -> bool:
+        """Check if user_memories table exists. Task #42817."""
+        if self._table_available is not None:
+            return self._table_available
+        
+        try:
+            supabase_client = get_supabase()
+            # Try a simple query to check if table exists
+            result = supabase_client.table("user_memories").select("id").limit(1).execute()
+            self._table_available = True
+            logger.info("MemO: user_memories table is available")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            if "Could not find the table" in error_msg or "PGRST106" in error_msg:
+                logger.warning(
+                    "MemO: user_memories table NOT FOUND! "
+                    "Memory features disabled. Run migrations/create_user_memories_table.sql in Supabase."
+                )
+                self._table_available = False
+                return False
+            else:
+                # Other error - assume table exists but there's a transient issue
+                logger.warning(f"MemO: Table check failed: {e}")
+                # Don't cache the result so we can retry
+                return True
 
     def _get_embedding_model(self):
         """Lazy load sentence-transformers model"""
@@ -151,6 +184,11 @@ class MemOClient:
             logger.debug("MemO disabled, skipping memory storage")
             return True  # Return success to avoid breaking pipeline
 
+        # Task #42817: Check if table exists
+        if not self._check_table_exists():
+            logger.debug("MemO: user_memories table not available, skipping storage")
+            return True  # Return success to avoid breaking pipeline
+
         try:
             start_time = time.perf_counter()
 
@@ -193,6 +231,16 @@ class MemOClient:
             return bool(result.data)
 
         except Exception as e:
+            error_msg = str(e)
+            # Task #42817: Handle table not found error gracefully
+            if "Could not find the table" in error_msg or "PGRST106" in error_msg:
+                logger.warning(
+                    "MemO: user_memories table not found during storage. "
+                    "Run migrations/create_user_memories_table.sql in Supabase."
+                )
+                self._table_available = False
+                return True  # Return success to avoid breaking pipeline
+            
             logger.error(f"Memory storage failed: {e}")
             self.metrics.total_errors += 1
 
@@ -213,6 +261,11 @@ class MemOClient:
         """Search for relevant memories using semantic similarity"""
         if not self.enabled:
             logger.debug("MemO disabled, returning empty memories")
+            return []
+
+        # Task #42817: Check if table exists
+        if not self._check_table_exists():
+            logger.debug("MemO: user_memories table not available, returning empty")
             return []
 
         try:
@@ -306,6 +359,16 @@ class MemOClient:
             return top_memories
 
         except Exception as e:
+            error_msg = str(e)
+            # Task #42817: Handle table not found error gracefully
+            if "Could not find the table" in error_msg or "PGRST106" in error_msg:
+                logger.warning(
+                    "MemO: user_memories table not found during search. "
+                    "Run migrations/create_user_memories_table.sql in Supabase."
+                )
+                self._table_available = False
+                return []
+            
             logger.error(f"Memory search failed: {e}")
             self.metrics.total_errors += 1
             self.metrics.total_searches += 1
@@ -413,6 +476,80 @@ class MemOClient:
         except Exception as e:
             logger.error(f"Failed to get LLM context: {e}")
             return {"memories": [], "memory_summary": "Error retrieving memories"}
+
+    def _run_async_in_sync(self, coro):
+        """Helper to run async coroutine from sync context safely.
+        
+        Handles the 'event loop already running' issue by using a separate thread
+        when called from within an existing event loop.
+        """
+        import concurrent.futures
+        
+        try:
+            loop = asyncio.get_running_loop()
+            # Event loop is running - use thread pool
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(coro)).result()
+        except RuntimeError:
+            # No event loop - safe to use asyncio.run
+            return asyncio.run(coro)
+
+    def store_memory_sync(
+        self,
+        user_id: str,
+        memory_text: str,
+        memory_type: str = "context",
+        importance: float = 0.5,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        access_token: Optional[str] = None,
+    ) -> bool:
+        """Synchronous wrapper for store_memory - safe to call from any context."""
+        return self._run_async_in_sync(
+            self.store_memory(
+                user_id=user_id,
+                memory_text=memory_text,
+                memory_type=memory_type,
+                importance=importance,
+                session_id=session_id,
+                metadata=metadata,
+                access_token=access_token,
+            )
+        )
+
+    def search_memories_sync(
+        self,
+        user_id: str,
+        query_text: str,
+        top_k: Optional[int] = None,
+        memory_types: Optional[List[str]] = None,
+        access_token: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Synchronous wrapper for search_memories - safe to call from any context."""
+        return self._run_async_in_sync(
+            self.search_memories(
+                user_id=user_id,
+                query_text=query_text,
+                top_k=top_k,
+                memory_types=memory_types,
+                access_token=access_token,
+            )
+        )
+
+    def get_context_for_llm_sync(
+        self,
+        user_id: str,
+        current_query: str,
+        access_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for get_context_for_llm - safe to call from any context."""
+        return self._run_async_in_sync(
+            self.get_context_for_llm(
+                user_id=user_id,
+                current_query=current_query,
+                access_token=access_token,
+            )
+        )
 
 
 # Singleton instance
