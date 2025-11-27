@@ -25,6 +25,7 @@ class PhoenixConfig:
         api_key: OpenAI API authentication token
         timeout_seconds: Hard timeout cap for API requests (default: 12s)
     """
+
     base_url: str
     api_key: str
     timeout_seconds: float = 12.0
@@ -41,6 +42,7 @@ class PhoenixResult:
         safety_flag: Boolean indicating if crisis intervention is needed
         raw: Raw response data from the API for debugging
     """
+
     label: str
     confidence: float
     safety_flag: bool
@@ -59,8 +61,18 @@ class PhoenixClient:
 
     # Valid emotion labels from Sophia emotion rails
     VALID_EMOTIONS = {
-        "joy", "excited", "sad", "anxious", "grief", "panic",
-        "anger", "fearful", "calm", "neutral", "hopeful", "lonely"
+        "joy",
+        "excited",
+        "sad",
+        "anxious",
+        "grief",
+        "panic",
+        "anger",
+        "fearful",
+        "calm",
+        "neutral",
+        "hopeful",
+        "lonely",
     }
 
     # Neutral fallback for errors/timeouts
@@ -68,7 +80,7 @@ class PhoenixClient:
         label="neutral",
         confidence=0.3,
         safety_flag=False,
-        raw={"fallback": True, "reason": "error_or_timeout"}
+        raw={"fallback": True, "reason": "error_or_timeout"},
     )
 
     def __init__(self, config: PhoenixConfig):
@@ -84,14 +96,14 @@ class PhoenixClient:
             timeout=httpx.Timeout(config.timeout_seconds),
             headers={
                 "Authorization": f"Bearer {config.api_key}",
-                "Content-Type": "application/json"
-            }
+                "Content-Type": "application/json",
+            },
         )
         self.prompt_template = self._load_emotion_prompt()
         logger.info(
             "PhoenixClient initialized with base_url=%s, timeout=%ss",
             config.base_url,
-            config.timeout_seconds
+            config.timeout_seconds,
         )
 
     def _load_emotion_prompt(self) -> str:
@@ -101,7 +113,9 @@ class PhoenixClient:
         Returns:
             Prompt template string from sophia_phoenix_emotion_prompt.md
         """
-        prompt_path = Path(__file__).parents[2] / "prompts" / "sophia_phoenix_emotion_prompt.md"
+        prompt_path = (
+            Path(__file__).parents[2] / "prompts" / "sophia_phoenix_emotion_prompt.md"
+        )
         try:
             with open(prompt_path, "r", encoding="utf-8") as f:
                 prompt = f.read()
@@ -111,7 +125,7 @@ class PhoenixClient:
             logger.warning(
                 "Failed to load custom emotion prompt from %s: %s. Using fallback.",
                 prompt_path,
-                exc
+                exc,
             )
             # Fallback inline prompt if file not found
             return """You are an expert emotion classifier. Classify the user's emotion from their message.
@@ -119,9 +133,7 @@ Valid emotions: joy, excited, sad, anxious, grief, panic, anger, fearful, calm, 
 Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean for crisis detection)."""
 
     async def classify(
-        self,
-        text: str,
-        prosody_context: Optional[str] = None
+        self, text: str, prosody_context: Optional[str] = None
     ) -> PhoenixResult:
         """
         Classify emotion from text and optional prosody context.
@@ -153,7 +165,7 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
                 "Phoenix classification successful: label=%s, confidence=%.2f, safety_flag=%s",
                 result.label,
                 result.confidence,
-                result.safety_flag
+                result.safety_flag,
             )
             return result
 
@@ -161,7 +173,7 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
             logger.warning(
                 "Phoenix API timeout after %.1fs for text: %s",
                 self.config.timeout_seconds,
-                text[:100]
+                text[:100],
             )
             return self.NEUTRAL_FALLBACK
 
@@ -169,11 +181,13 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
             logger.warning(
                 "Phoenix classification error: %s. Returning neutral fallback. Text: %s",
                 exc,
-                text[:100]
+                text[:100],
             )
             return self.NEUTRAL_FALLBACK
 
-    def _build_payload(self, text: str, prosody_context: Optional[str]) -> Dict[str, Any]:
+    def _build_payload(
+        self, text: str, prosody_context: Optional[str]
+    ) -> Dict[str, Any]:
         """
         Build OpenAI API payload with custom Sophia emotion prompt.
 
@@ -192,21 +206,15 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
         # Build messages for chat completion
         # Note: When using response_format json_object, the system message MUST instruct to output JSON
         system_message = (
-            self.prompt_template +
-            "\n\nIMPORTANT: You MUST respond with valid JSON in this exact format:\n"
+            self.prompt_template
+            + "\n\nIMPORTANT: You MUST respond with valid JSON in this exact format:\n"
             '{"label": "emotion_name", "confidence": 0.85, "safety_flag": false}\n'
             "Do not include any other text, only the JSON object."
         )
 
         messages = [
-            {
-                "role": "system",
-                "content": system_message
-            },
-            {
-                "role": "user",
-                "content": user_input
-            }
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_input},
         ]
 
         # OpenAI API payload
@@ -215,7 +223,7 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
             "messages": messages,
             "temperature": 0.1,  # Low temperature for consistent classification
             "response_format": {"type": "json_object"},  # Force JSON response
-            "max_tokens": 150
+            "max_tokens": 150,
         }
 
     def _parse_response(self, response_data: Dict[str, Any]) -> PhoenixResult:
@@ -241,8 +249,7 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
             # Validate emotion label
             if label not in self.VALID_EMOTIONS:
                 logger.warning(
-                    "Invalid emotion label '%s' from API, defaulting to neutral",
-                    label
+                    "Invalid emotion label '%s' from API, defaulting to neutral", label
                 )
                 label = "neutral"
                 confidence = max(0.3, confidence * 0.5)  # Reduce confidence
@@ -254,7 +261,7 @@ Return JSON with: label (emotion), confidence (0.0-1.0), safety_flag (boolean fo
                 label=label,
                 confidence=confidence,
                 safety_flag=safety_flag,
-                raw=response_data
+                raw=response_data,
             )
 
         except (KeyError, json.JSONDecodeError, ValueError) as exc:

@@ -89,7 +89,9 @@ class MemoryManager:
         """Initialize Redis client if enabled and reachable."""
         # Check if Redis is explicitly enabled
         if not getattr(self.settings, "REDIS_ENABLED", False):
-            logger.info("Redis disabled (REDIS_ENABLED=false). Using in-memory fallback.")
+            logger.info(
+                "Redis disabled (REDIS_ENABLED=false). Using in-memory fallback."
+            )
             return None
 
         try:

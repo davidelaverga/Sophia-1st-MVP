@@ -120,7 +120,6 @@ You are in **emotional support mode**. Focus on:
 - Supporting personal growth and self-discovery
 - Building trust through consistent, empathetic responses
 - Recognizing when users need professional intervention""",
-
     CurrentMode.UTILITY_DIRECT: """
 ## Current Mode: Utility (Direct Answer)
 
@@ -129,7 +128,6 @@ Provide **direct, factual answers** to user queries:
 - Focus on facts and practical information
 - Minimal emotional processing unless user expresses distress
 - Keep responses under 50 words for voice interactions""",
-
     CurrentMode.UTILITY_LIGHT: """
 ## Current Mode: Utility (Light Assistance)
 
@@ -138,7 +136,6 @@ Provide **helpful guidance** with light emotional awareness:
 - Acknowledge emotional context if present
 - Offer practical suggestions and next steps
 - Balance efficiency with empathy""",
-
     CurrentMode.UTILITY_AGENTIC: """
 ## Current Mode: Utility (Agentic)
 
@@ -146,7 +143,7 @@ Engage in **multi-step problem solving** and task assistance:
 - Break down complex tasks into actionable steps
 - Proactively suggest solutions and alternatives
 - Maintain context across conversation turns
-- Check for emotional needs while staying task-focused"""
+- Check for emotional needs while staying task-focused""",
 }
 
 
@@ -174,7 +171,6 @@ DO NOT:
 - Minimize their feelings
 - Offer false reassurances
 - Attempt to solve the crisis yourself""",
-
     EmotionalSkill.BOUNDARY_HOLDING: """
 ### Active Skill: Boundary Holding
 
@@ -191,7 +187,6 @@ DO NOT:
 - Engage with inappropriate content
 - Be judgmental or harsh
 - Continue conversation on inappropriate topics""",
-
     EmotionalSkill.CELEBRATING_BREAKTHROUGH: """
 ### Active Skill: Celebrating Breakthrough
 
@@ -207,7 +202,6 @@ Focus on:
 Example: "That's a powerful realization! How does seeing it that way change things for you?"
 
 This is a high-trust moment - honor their vulnerability and growth.""",
-
     EmotionalSkill.CHALLENGING_GROWTH: """
 ### Active Skill: Challenging Growth
 
@@ -228,7 +222,6 @@ DO NOT:
 - Be harsh or judgmental
 - Push before trust is established
 - Ignore their emotional readiness""",
-
     EmotionalSkill.IDENTITY_FLUIDITY_SUPPORT: """
 ### Active Skill: Identity Fluidity Support
 
@@ -251,7 +244,6 @@ This may include:
 Example: "Your identity is yours to define, and it's okay if it evolves over time. What feels true for you right now?"
 
 Be especially affirming for LGBTQ+, immigrant, and other marginalized identities.""",
-
     EmotionalSkill.TRUST_BUILDING: """
 ### Active Skill: Trust Building
 
@@ -271,7 +263,6 @@ DO NOT:
 - Make promises you can't keep
 - Rush relationship development
 - Minimize their concerns""",
-
     EmotionalSkill.VULNERABILITY_HOLDING: """
 ### Active Skill: Vulnerability Holding
 
@@ -291,7 +282,6 @@ DO NOT:
 - Minimize or dismiss feelings
 - Change the subject away from discomfort
 - Offer toxic positivity""",
-
     EmotionalSkill.ACTIVE_LISTENING: """
 ### Active Skill: Active Listening
 
@@ -306,7 +296,7 @@ Focus on:
 
 Example: "It sounds like you're feeling overwhelmed by everything on your plate. What part feels heaviest right now?"
 
-This is the foundation of all emotional support work."""
+This is the foundation of all emotional support work.""",
 }
 
 
@@ -337,53 +327,48 @@ AFFECT_GUIDANCE_MAP = {
 - Avoid overwhelming with too much information
 - Break things down into small, manageable steps
 - Validate anxiety without amplifying it""",
-
     "sad": """
 **User is feeling sad**
 - Create space for sadness without rushing to fix it
 - Validate that sadness is a natural human emotion
 - Offer gentle companionship
 - Be patient with silence and slower responses""",
-
     "angry": """
 **User is feeling angry**
 - Validate anger as a legitimate emotion
 - Help them identify what's beneath the anger
 - Avoid being defensive or minimizing
 - Channel anger toward constructive understanding""",
-
     "happy": """
 **User is feeling happy**
 - Celebrate their joy authentically
 - Help them savor and appreciate the moment
 - Build on positive momentum
 - Connect happiness to their growth""",
-
     "scared": """
 **User is feeling scared**
 - Prioritize safety and reassurance
 - Help them assess actual vs. perceived danger
 - Offer grounding techniques if appropriate
 - Be a steady, calm presence""",
-
     "overwhelmed": """
 **User is feeling overwhelmed**
 - Simplify and slow down
 - Help them prioritize and break things down
 - Validate that overwhelm is temporary
 - Offer practical coping strategies""",
-
     "neutral": """
 **User is emotionally neutral**
 - Maintain balanced, warm tone
 - Focus on content of conversation
-- Watch for subtle emotional shifts"""
+- Watch for subtle emotional shifts""",
 }
 
 
 # ============================================================================
 # PromptComposerV2 - Main prompt assembly class
 # ============================================================================
+
 
 class PromptComposerV2:
     """
@@ -469,8 +454,7 @@ class PromptComposerV2:
             and affect_snapshot.emotion
         ):
             affect_block = AFFECT_GUIDANCE_MAP.get(
-                affect_snapshot.emotion.lower(),
-                AFFECT_GUIDANCE_MAP["neutral"]
+                affect_snapshot.emotion.lower(), AFFECT_GUIDANCE_MAP["neutral"]
             )
             blocks.append(f"\n{affect_block}")
 
@@ -547,11 +531,28 @@ class PromptComposerV2:
         """
         # DeFi keywords to filter out
         defi_keywords = [
-            "defi", "uniswap", "aave", "compound", "makerdao",
-            "yield", "staking", "liquidity", "protocol",
-            "transaction", "swap", "token", "eth", "btc",
-            "blockchain", "crypto", "wallet", "nft",
-            "smart contract", "gas fee", "dex", "amm",
+            "defi",
+            "uniswap",
+            "aave",
+            "compound",
+            "makerdao",
+            "yield",
+            "staking",
+            "liquidity",
+            "protocol",
+            "transaction",
+            "swap",
+            "token",
+            "eth",
+            "btc",
+            "blockchain",
+            "crypto",
+            "wallet",
+            "nft",
+            "smart contract",
+            "gas fee",
+            "dex",
+            "amm",
         ]
 
         filtered = []
@@ -601,7 +602,9 @@ class PromptComposerV2:
 
         # Calculate available space for context
         before_tokens = len(before_context) // 4
-        available_tokens = self.MAX_TOKENS - before_tokens - 50  # Reserve 50 for truncation notice
+        available_tokens = (
+            self.MAX_TOKENS - before_tokens - 50
+        )  # Reserve 50 for truncation notice
         available_chars = available_tokens * 4
 
         if available_chars <= 0:
@@ -613,6 +616,8 @@ class PromptComposerV2:
         context_section = prompt[context_start:]
         truncated_context = context_section[:available_chars]
 
-        truncated_prompt = before_context + truncated_context + "\n\n[Context truncated due to length]"
+        truncated_prompt = (
+            before_context + truncated_context + "\n\n[Context truncated due to length]"
+        )
 
         return truncated_prompt, True

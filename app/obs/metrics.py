@@ -5,7 +5,13 @@ Tracks intent classification, mode routing, and utility path selection
 for M3 milestone routing system.
 """
 
+import logging
+
 from prometheus_client import Counter
+
+from app.routing.emotional_router import EmotionalSkill
+
+logger = logging.getLogger(__name__)
 
 # Intent classification metrics
 intent_total = Counter(
@@ -89,11 +95,19 @@ def track_utility_path(path: str) -> None:
 
 
 # Emotional skill distribution metrics
+EMOTIONAL_SKILL_IDS = tuple(skill.value for skill in EmotionalSkill)
+
 skill_total = Counter(
     "skill_total",
     "Total number of emotional skill routings",
-    ["skill_id"],  # Values: CRISIS_REDIRECT, BOUNDARY_HOLDING, CELEBRATING_BREAKTHROUGH, etc.
+    [
+        "skill_id"
+    ],  # Values: CRISIS_REDIRECT, BOUNDARY_HOLDING, CELEBRATING_BREAKTHROUGH, etc.
 )
+
+# Pre-register all emotional skills so each label exists in metrics output
+for _skill_id in EMOTIONAL_SKILL_IDS:
+    skill_total.labels(skill_id=_skill_id)
 
 # Crisis and boundary override metrics (required for customer validation)
 crisis_override_total = Counter(
@@ -114,6 +128,13 @@ def track_skill_distribution(skill_id: str) -> None:
     Args:
         skill_id: Skill identifier (e.g., CRISIS_REDIRECT, BOUNDARY_HOLDING, etc.)
     """
+    skill_id = str(skill_id)
+    if skill_id not in EMOTIONAL_SKILL_IDS:
+        logger.warning(
+            "Unknown emotional skill_id '%s' passed to metrics; skipping.", skill_id
+        )
+        return
+
     skill_total.labels(skill_id=skill_id).inc()
 
 

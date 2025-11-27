@@ -17,26 +17,25 @@ logger = logging.getLogger(__name__)
 
 # Prometheus metrics for MemO
 memo_writes_total = Counter(
-    'memo_writes_total',
-    'Total number of memory write attempts',
-    ['status']  # status: success or failure
+    "memo_writes_total",
+    "Total number of memory write attempts",
+    ["status"],  # status: success or failure
 )
 
 memo_searches_total = Counter(
-    'memo_searches_total',
-    'Total number of memory search attempts',
-    ['status']  # status: success or failure
+    "memo_searches_total",
+    "Total number of memory search attempts",
+    ["status"],  # status: success or failure
 )
 
 memo_write_success_rate = Gauge(
-    'memo_write_success_rate',
-    'Memory write success rate (percentage)'
+    "memo_write_success_rate", "Memory write success rate (percentage)"
 )
 
 memo_search_latency_seconds = Gauge(
-    'memo_search_latency_seconds',
-    'Memory search latency in seconds',
-    ['quantile']  # quantile: avg, p95
+    "memo_search_latency_seconds",
+    "Memory search latency in seconds",
+    ["quantile"],  # quantile: avg, p95
 )
 
 
@@ -70,7 +69,7 @@ class MemOClient:
 
         # Lazy load embedding model (only if enabled)
         self._embedding_model = None
-        
+
         # Task #42817: Track table availability
         self._table_available: Optional[bool] = None
 
@@ -84,14 +83,19 @@ class MemOClient:
             logger.info("MemO disabled via MEMO_ENABLED=false")
 
     def _check_table_exists(self) -> bool:
-        """Check if user_memories table exists. Task #42817."""
-        if self._table_available is not None:
-            return self._table_available
-        
+        """Check if user_memories table exists. Task #42817.
+
+        We cache the positive result to avoid repeated checks, but if the table
+        was previously missing we recheck so that newly applied migrations or
+        injected test doubles can enable the feature without restarting.
+        """
+        if self._table_available is True:
+            return True
+
         try:
             supabase_client = get_supabase()
             # Try a simple query to check if table exists
-            result = supabase_client.table("user_memories").select("id").limit(1).execute()
+            supabase_client.table("user_memories").select("id").limit(1).execute()
             self._table_available = True
             logger.info("MemO: user_memories table is available")
             return True
@@ -138,11 +142,14 @@ class MemOClient:
         if isinstance(vector_str, str):
             try:
                 # Remove 'np.str_(' prefix and ')' suffix if present
-                if vector_str.startswith("np.str_('") or vector_str.startswith("np.str_(\""):
+                if vector_str.startswith("np.str_('") or vector_str.startswith(
+                    'np.str_("'
+                ):
                     vector_str = vector_str[9:-2]
 
                 # Parse as JSON array
                 import json
+
                 return json.loads(vector_str)
             except Exception as e:
                 logger.warning(f"Failed to parse vector string: {e}")
@@ -219,7 +226,7 @@ class MemOClient:
             self.metrics.total_stores += 1
 
             # Update Prometheus metrics
-            memo_writes_total.labels(status='success').inc()
+            memo_writes_total.labels(status="success").inc()
             self._update_write_success_rate()
 
             logger.info(
@@ -238,12 +245,12 @@ class MemOClient:
                 )
                 self._table_available = False
                 return True  # Return success to avoid breaking pipeline
-            
+
             logger.error(f"Memory storage failed: {e}")
             self.metrics.total_errors += 1
 
             # Update Prometheus metrics
-            memo_writes_total.labels(status='failure').inc()
+            memo_writes_total.labels(status="failure").inc()
             self._update_write_success_rate()
 
             return False
@@ -347,7 +354,7 @@ class MemOClient:
                 self.metrics.total_hits += 1
 
             # Update Prometheus metrics
-            memo_searches_total.labels(status='success').inc()
+            memo_searches_total.labels(status="success").inc()
 
             logger.info(
                 f"Memory search: found={len(top_memories)}/{len(result.data)}, "
@@ -366,13 +373,13 @@ class MemOClient:
                 )
                 self._table_available = False
                 return []
-            
+
             logger.error(f"Memory search failed: {e}")
             self.metrics.total_errors += 1
             self.metrics.total_searches += 1
 
             # Update Prometheus metrics
-            memo_searches_total.labels(status='failure').inc()
+            memo_searches_total.labels(status="failure").inc()
 
             return []
 
@@ -397,18 +404,18 @@ class MemOClient:
             )
 
         # Update Prometheus search latency metrics
-        memo_search_latency_seconds.labels(quantile='avg').set(
+        memo_search_latency_seconds.labels(quantile="avg").set(
             self.metrics.avg_search_latency_ms / 1000.0
         )
-        memo_search_latency_seconds.labels(quantile='p95').set(
+        memo_search_latency_seconds.labels(quantile="p95").set(
             self.metrics.p95_search_latency_ms / 1000.0
         )
 
     def _update_write_success_rate(self):
         """Update Prometheus write success rate metric"""
         # Get current counter values from Prometheus
-        success_count = memo_writes_total.labels(status='success')._value.get()
-        failure_count = memo_writes_total.labels(status='failure')._value.get()
+        success_count = memo_writes_total.labels(status="success")._value.get()
+        failure_count = memo_writes_total.labels(status="failure")._value.get()
 
         total_writes = success_count + failure_count
 
@@ -477,14 +484,14 @@ class MemOClient:
 
     def _run_async_in_sync(self, coro):
         """Helper to run async coroutine from sync context safely.
-        
+
         Handles the 'event loop already running' issue by using a separate thread
         when called from within an existing event loop.
         """
         import concurrent.futures
-        
+
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # Event loop is running - use thread pool
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(lambda: asyncio.run(coro)).result()

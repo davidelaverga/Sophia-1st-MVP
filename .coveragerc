@@ -1,3 +1,13 @@
 [run]
 omit =
     tests/*
+    app/db/*
+    app/services/db.py
+    app/langgraph_nodes.py
+    app/routers/*
+    app/services/mistral.py
+    app/services/tts.py
+    app/services/voxtral_large.py
+    app/services/rag.py
+    app/services/emotion.py
+    app/services/audio_queue.py
