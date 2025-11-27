@@ -11,7 +11,7 @@ from app.audio_utils import avg_abs_pcm16, wav_header_pcm16
 
 SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
-SILENCE_THRESHOLD = 300
+SILENCE_THRESHOLD = 1000
 SILENCE_MS = 600
 SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
 IDLE_TIMEOUT = 5
@@ -39,7 +39,7 @@ async def receive_audio_chunks(
             else:
                 msg = await websocket.receive()
         except asyncio.TimeoutError:
-            if pcm_buffer:
+            if in_speech.is_set():
                 utter_bytes = bytes(pcm_buffer[utter_start_pos:])
                 yield wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                 utter_start_pos = 0

@@ -19,6 +19,7 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import StreamingResponse
+from starlette.websockets import WebSocketState
 from app.routers.audio_receiver import receive_audio_chunks
 from opentelemetry import trace
 from slowapi.errors import RateLimitExceeded
@@ -136,21 +137,30 @@ async def ws_voice(websocket: WebSocket):
         heartbeat_task = asyncio.create_task(_heartbeat())
     except:
         logger.info('Failed to setup heartbeat coroutine')
-    SAMPLE_RATE = 16000
-    BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
-    SILENCE_THRESHOLD = 300
-    SILENCE_MS = 600
-    SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
-    last_final_text = ""
-    last_reply_text = ""
-    last_audio_url: Optional[str] = None
-
+    
     session_id = str(uuid.uuid4())
     audio_queue = get_audio_queue_manager()
     manager = shared_services.get_session_turn_manager()
     metadata: Dict[str, Any] = {"endpoint": "/ws/voice"}
     if discord_id:
         metadata["discord_id"] = discord_id
+
+    audio_input_queue = asyncio.Queue()
+    send_lock = asyncio.Lock()
+
+    async def ws_send(payload):
+        if (
+            websocket.client_state != WebSocketState.CONNECTED
+            or websocket.application_state != WebSocketState.CONNECTED
+        ):
+            return
+        async with send_lock:
+            if (
+                websocket.client_state != WebSocketState.CONNECTED
+                or websocket.application_state != WebSocketState.CONNECTED
+            ):
+                return
+            await _ws_send_json(websocket, payload)
 
     async def send_audio_callback(segment: AudioSegment):
         import base64 as _b64
@@ -172,8 +182,7 @@ async def ws_voice(websocket: WebSocket):
         b64_data = (
             _b64.b64encode(payload_bytes).decode("ascii") if payload_bytes else ""
         )
-        await _ws_send_json(
-            websocket,
+        await ws_send(
             {
                 "type": "audio_chunk",
                 "mime": mime,
@@ -185,10 +194,10 @@ async def ws_voice(websocket: WebSocket):
 
     await audio_queue.start_playback(session_id, send_audio_callback)
 
-    async def barge_in_calback(barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id):
+    async def barge_in_callback(barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id):
         try:
-            await _ws_send_json(
-                websocket,
+            logger.info('Got barge-in')
+            await ws_send(
                 {
                     "type": "barge_in",
                     "interruption_ms": barge_in_ms,
@@ -200,261 +209,237 @@ async def ws_voice(websocket: WebSocket):
         except:
             logger.warning('Failed to send barge-in notification')
 
-    try:
-        in_speech = asyncio.Event()
-        async for wav_utter in receive_audio_chunks(
-            websocket,
-            session_id,
-            in_speech,
-            manager,
-            audio_queue,
-            barge_in_calback
-        ):
+    async def websocket_audio_producer(websocket, session_id, audio_input_queue: asyncio.Queue, manager, audio_output_queue, barge_in_callback):
+        try:
+            in_speech = asyncio.Event()
+            async for wav_utter in receive_audio_chunks(
+                websocket,
+                session_id,
+                in_speech,
+                manager,
+                audio_output_queue,
+                barge_in_callback
+            ):
+                logger.info('Push utterance: %s (queue size: %s)', len(wav_utter), audio_input_queue.qsize())
+                await audio_input_queue.put(wav_utter)
+        finally:
+            await audio_input_queue.put(None)
+
+    async def websocket_audio_consumer(websocket_send, session_id, metadata, audio_input_queue: asyncio.Queue, manager, audio_output_queue):
+        while True:
+            wav_utter = await audio_input_queue.get()
+            logger.info('Audio input queue size: %s', audio_input_queue.qsize())
+            if wav_utter is None:
+                break
             logger.info(f'Got {len(wav_utter)} audio bytes')
             transcript_text: Optional[str] = None
             user_emotion_label: Optional[str] = None
             user_emotion_confidence: Optional[float] = None
-            async with manage_session_turn(
-                session_id, metadata=metadata
-            ) as turn_state:
+            try:
+                async with manage_session_turn(session_id, metadata=metadata) as turn_state:
+                    def cancel_check():
+                        manager.raise_if_cancelled(turn_state.turn_id)
 
-                def cancel_check():
-                    manager.raise_if_cancelled(turn_state.turn_id)
-
-                reply_tokens: list[str] = []
-                tokens_sent = 0
-                turn_state.set_status("streaming")
-                try:
-                    async for (
-                        tok
-                    ) in langgraph_service.stream_conversation_response(
-                        wav_utter
-                    ):
-                        cancel_check()
-                        if not tok:
-                            continue
-                        if isinstance(tok, dict) and tok.get("__tier0__"):
-                            transcript_text = tok.get('transcript')
-                            user_emotion_label = tok.get("emotion")
-                            try:
-                                if user_emotion_confidence is None and tok.get("confidence") is not None:
-                                    user_emotion_confidence = float(tok.get("confidence"))
-                            except Exception:
-                                user_emotion_confidence = user_emotion_confidence or tok.get("confidence")
-                            await _ws_send_json(
-                                websocket, {"type": "tier0_result", **tok}
-                            )
-                            logger.info(
-                                f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}"
-                            )
-                            continue
-                        reply_tokens.append(tok)
-                        await _ws_send_json(
-                            websocket,
-                            {
-                                "type": "token",
-                                "text": tok,
-                                "turn_id": turn_state.turn_id,
-                            },
-                        )
-                        tokens_sent += 1
-                except Exception as exc:
-                    logger.warning(f"WS: LangGraph streaming failed: {exc}")
-
-                if tokens_sent == 0:
-                    fallback_response = "I'm here to help with DeFi questions. Could you please repeat your question?"
-                    for i in range(0, len(fallback_response), 8):
-                        chunk_text = fallback_response[i : i + 8]
-                        reply_tokens.append(chunk_text)
-                        await _ws_send_json(
-                            websocket,
-                            {
-                                "type": "token",
-                                "text": chunk_text,
-                                "turn_id": turn_state.turn_id,
-                            },
-                        )
-                        tokens_sent += 1
-
-                reply_full = "".join(reply_tokens).strip() or "Okay."
-                await _ws_send_json(
-                    websocket,
-                    {
-                        "type": "reply_done",
-                        "text": reply_full,
-                        "turn_id": turn_state.turn_id,
-                    },
-                )
-
-                turn_state.set_status("synthesizing")
-                sentences = [
-                    s.strip()
-                    for s in re.split(r"(?<=[\.!?])\s+", reply_full)
-                    if s.strip()
-                ]
-                streamed_pcm_buffer = bytearray()
-                audio_url_last = None
-                for idx, sent in enumerate(sentences):
-                    streamed_any = False
+                    reply_tokens: list[str] = []
+                    tokens_sent = 0
+                    turn_state.set_status("streaming")
                     try:
-                        async for pcm_chunk in chat_service.synthesize_streamed_reply(
-                            sent, 48000, cancel_check
-                        ):
-                            streamed_any = True
-                            cleaned_chunk = chat_service.strip_wav_header_if_present(
-                                pcm_chunk
-                            )
-                            if cleaned_chunk:
-                                streamed_pcm_buffer.extend(cleaned_chunk)
-                            await audio_queue.enqueue(
-                                session_id=session_id,
-                                audio_data=pcm_chunk,
-                                mime_type="audio/pcm",
-                                metadata={
-                                    "turn_id": turn_state.turn_id,
-                                    "sentence": sent,
-                                    "chunk_index": idx,
-                                    "eos": False,
-                                    "sample_rate": 48000,
-                                },
-                            )
-                    except Exception:
-                        logger.exception(
-                            "WS: streaming TTS failed; falling back to full synthesis"
-                        )
-
-                    if not streamed_any:
-                        try:
-                            (
-                                audio_bytes,
-                                audio_url_last,
-                            ) = chat_service.synthesize_reply(
-                                sent, cancel_check
-                            )
+                        async for tok in langgraph_service.stream_conversation_response(wav_utter):
                             cancel_check()
-                            await audio_queue.enqueue(
-                                session_id=session_id,
-                                audio_data=audio_bytes,
-                                mime_type="audio/mpeg",
-                                metadata={
-                                    "turn_id": turn_state.turn_id,
-                                    "sentence": sent,
-                                    "chunk_index": idx,
-                                    "eos": False,
-                                },
-                            )
-                            await _ws_send_json(
-                                websocket,
+                            if not tok:
+                                continue
+                            if isinstance(tok, dict) and tok.get("__tier0__"):
+                                transcript_text = tok.get('transcript')
+                                user_emotion_label = tok.get("emotion")
+                                try:
+                                    if user_emotion_confidence is None and tok.get("confidence") is not None:
+                                        user_emotion_confidence = float(tok.get("confidence"))
+                                except Exception:
+                                    user_emotion_confidence = user_emotion_confidence or tok.get("confidence")
+                                await websocket_send({"type": "tier0_result", **tok}
+                                )
+                                logger.info(
+                                    f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}"
+                                )
+                                continue
+                            reply_tokens.append(tok)
+                            await websocket_send(
                                 {
-                                    "type": "audio_url_chunk",
-                                    "audio_url": audio_url_last,
+                                    "type": "token",
+                                    "text": tok,
+                                    "turn_id": turn_state.turn_id,
+                                }
+                            )
+                            tokens_sent += 1
+                    except Exception as exc:
+                        logger.warning(f"WS: LangGraph streaming failed: {exc}")
+                    if tokens_sent == 0:
+                        fallback_response = "I'm here to help with DeFi questions. Could you please repeat your question?"
+                        for i in range(0, len(fallback_response), 8):
+                            chunk_text = fallback_response[i : i + 8]
+                            reply_tokens.append(chunk_text)
+                            await websocket_send(
+                                {
+                                    "type": "token",
+                                    "text": chunk_text,
                                     "turn_id": turn_state.turn_id,
                                 },
                             )
+                            tokens_sent += 1
+
+                    reply_full = "".join(reply_tokens).strip() or "Okay."
+                    await websocket_send(
+                        {
+                            "type": "reply_done",
+                            "text": reply_full,
+                            "turn_id": turn_state.turn_id,
+                        },
+                    )
+
+                    turn_state.set_status("synthesizing")
+                    sentences = [
+                        s.strip()
+                        for s in re.split(r"(?<=[\.!?])\s+", reply_full)
+                        if s.strip()
+                    ]
+                    streamed_pcm_buffer = bytearray()
+                    audio_url_last = None
+                    for idx, sent in enumerate(sentences):
+                        streamed_any = False
+                        try:
+                            async for pcm_chunk in chat_service.synthesize_streamed_reply(
+                                sent, 48000, cancel_check
+                            ):
+                                streamed_any = True
+                                cleaned_chunk = chat_service.strip_wav_header_if_present(
+                                    pcm_chunk
+                                )
+                                if cleaned_chunk:
+                                    streamed_pcm_buffer.extend(cleaned_chunk)
+                                await audio_output_queue.enqueue(
+                                    session_id=session_id,
+                                    audio_data=pcm_chunk,
+                                    mime_type="audio/pcm",
+                                    metadata={
+                                        "turn_id": turn_state.turn_id,
+                                        "sentence": sent,
+                                        "chunk_index": idx,
+                                        "eos": False,
+                                        "sample_rate": 48000,
+                                    },
+                                )
                         except Exception:
                             logger.exception(
-                                "WS: fallback TTS synthesis failed"
+                                "WS: streaming TTS failed; falling back to full synthesis"
                             )
 
-                await audio_queue.enqueue(
-                    session_id=session_id,
-                    audio_data=b"",
-                    mime_type="audio/pcm",
-                    metadata={
-                        "turn_id": turn_state.turn_id,
-                        "eos": True,
-                        "sample_rate": 48000,
-                    },
-                )
-                if audio_url_last is None:
-                    try:
-                        cancel_check()
-                        if streamed_pcm_buffer:
-                            mp3_bytes = chat_service.encode_pcm_to_mp3(
-                                bytes(streamed_pcm_buffer), sample_rate=48000
-                            )
-                            file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                            audio_url_last = supabase_service.upload_audio_and_get_url(
-                                mp3_bytes, file_name=file_name
-                            )
-                        else:
-                            audio_bytes, audio_url_last = chat_service.synthesize_reply(
-                                reply_full, cancel_check=cancel_check
-                            )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "WS: failed to encode/upload streamed audio; falling back to synthesis"
-                        )
+                        if not streamed_any:
+                            try:
+                                (
+                                    audio_bytes,
+                                    audio_url_last,
+                                ) = chat_service.synthesize_reply(
+                                    sent, cancel_check
+                                )
+                                cancel_check()
+                                await audio_output_queue.enqueue(
+                                    session_id=session_id,
+                                    audio_data=audio_bytes,
+                                    mime_type="audio/mpeg",
+                                    metadata={
+                                        "turn_id": turn_state.turn_id,
+                                        "sentence": sent,
+                                        "chunk_index": idx,
+                                        "eos": False,
+                                    },
+                                )
+                                await websocket_send(
+                                    {
+                                        "type": "audio_url_chunk",
+                                        "audio_url": audio_url_last,
+                                        "turn_id": turn_state.turn_id,
+                                    },
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "WS: fallback TTS synthesis failed"
+                                )
+
+                    await audio_output_queue.enqueue(
+                        session_id=session_id,
+                        audio_data=b"",
+                        mime_type="audio/pcm",
+                        metadata={
+                            "turn_id": turn_state.turn_id,
+                            "eos": True,
+                            "sample_rate": 48000,
+                        },
+                    )
+                    if audio_url_last is None:
                         try:
                             cancel_check()
-                            _, audio_url_last = chat_service.synthesize_reply(
-                                reply_full, cancel_check=cancel_check
-                            )
+                            if streamed_pcm_buffer:
+                                mp3_bytes = chat_service.encode_pcm_to_mp3(
+                                    bytes(streamed_pcm_buffer), sample_rate=48000
+                                )
+                                file_name = f"sophia_{int(time.time() * 1000)}.mp3"
+                                audio_url_last = supabase_service.upload_audio_and_get_url(
+                                    mp3_bytes, file_name=file_name
+                                )
+                            else:
+                                audio_bytes, audio_url_last = chat_service.synthesize_reply(
+                                    reply_full, cancel_check=cancel_check
+                                )
+                        except asyncio.CancelledError:
+                            raise
                         except Exception:
                             logger.warning(
-                                "WS: failed to synthesize/upload archival audio for reply"
+                                "WS: failed to encode/upload streamed audio; falling back to synthesis"
                             )
+                            try:
+                                cancel_check()
+                                _, audio_url_last = chat_service.synthesize_reply(
+                                    reply_full, cancel_check=cancel_check
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "WS: failed to synthesize/upload archival audio for reply"
+                                )
 
-                await _ws_send_json(
-                    websocket,
-                    {
-                        "type": "audio_url",
-                        "audio_url": audio_url_last,
-                        "turn_id": turn_state.turn_id,
-                    },
-                )
-
-                last_final_text = transcript_text or f"[Audio processed: {len(wav_utter)} bytes]"
-                last_reply_text = reply_full
-                last_audio_url = audio_url_last
-                turn_state.set_status("completed")
-                try:
-                    _record_text_stream_turn(
-                        session_id,
-                        transcript_text,
-                        reply_full,
-                        { 'label': user_emotion_label, 'confidence': user_emotion_confidence },
-                        { 'label': '', 'confidence': 0.0 },
-                        audio_url_last,
-                        supabase_token,
-                        supabase_user_id,
+                    await websocket_send(
+                        {
+                            "type": "audio_url",
+                            "audio_url": audio_url_last,
+                            "turn_id": turn_state.turn_id,
+                        },
                     )
-                    # supabase_service.persist_conversation_turn(
-                    #     session_id=session_id,
-                    #     user_id=supabase_user_id,
-                    #     messages=[
-                    #         {
-                    #             "role": "user",
-                    #             "transcript": transcript_text,
-                    #             "content": transcript_text,
-                    #             "input_type": "audio",
-                    #             "emotion_label": user_emotion_label,
-                    #             "emotion_confidence": user_emotion_confidence,
-                    #         },
-                    #         {
-                    #             "role": "sophia",
-                    #             "content": reply_full,
-                    #             "audio_url": audio_url_last,
-                    #             "input_type": "audio",
-                    #             "emotion_label": None,
-                    #             "emotion_confidence": 0.0,
-                    #         },
-                    #     ],
-                    #     session_metadata={
-                    #         "last_user_emotion_label": user_emotion_label,
-                    #         "last_user_emotion_confidence": user_emotion_confidence,
-                    #     },
-                    #     access_token=supabase_token,
-                    # )
-                except Exception as exc:
-                    logger.warning("WS persist conversation turn failed; continuing: %s", exc)
-            in_speech.clear()
+                    turn_state.set_status("completed")
+                    try:
+                        _record_text_stream_turn(
+                            session_id,
+                            transcript_text,
+                            reply_full,
+                            { 'label': user_emotion_label, 'confidence': user_emotion_confidence },
+                            { 'label': '', 'confidence': 0.0 },
+                            audio_url_last,
+                            supabase_token,
+                            supabase_user_id,
+                        )
+                    except Exception as exc:
+                        logger.warning("WS persist conversation turn failed; continuing: %s", exc)
+            except asyncio.CancelledError:
+                logger.info("WS voice turn cancelled; skipping remaining processing")
+                continue
+
+    try:
+        producer_task = asyncio.create_task(websocket_audio_producer(websocket, session_id, audio_input_queue, manager, audio_queue, barge_in_callback))
+        consumer_task = asyncio.create_task(websocket_audio_consumer(ws_send, session_id, metadata, audio_input_queue, manager, audio_queue))
+        await asyncio.gather(producer_task, consumer_task)
     except WebSocketDisconnect:
-        pass
+        logger.warning('WEBSOCKET DISCONNECT')
     except Exception as exc:
-        await _ws_send_json(websocket, {"type": "error", "detail": str(exc)})
+        logger.warning('EXCEPTION: %s', str(exc))
+        await ws_send({"type": "error", "detail": str(exc)})
         try:
             await websocket.close()
         except Exception:
@@ -477,29 +462,29 @@ async def ws_voice(websocket: WebSocket):
         except Exception as exc:
             logger.warning(f"WS Session {session_id}: cleanup error: {exc}")
 
-    try:
-        if last_final_text or last_reply_text:
-            supabase_service.persist_conversation_turn(
-                session_id=session_id,
-                user_id=supabase_user_id,
-                messages=[
-                    {
-                        "role": "user",
-                        "transcript": last_final_text,
-                        "content": last_final_text,
-                        "input_type": "audio",
-                    },
-                    {
-                        "role": "sophia",
-                        "content": last_reply_text,
-                        "audio_url": last_audio_url or None,
-                        "input_type": "audio",
-                    },
-                ],
-                access_token=supabase_token,
-            )
-    except Exception:
-        pass
+    # try:
+    #     if last_final_text or last_reply_text:
+    #         supabase_service.persist_conversation_turn(
+    #             session_id=session_id,
+    #             user_id=supabase_user_id,
+    #             messages=[
+    #                 {
+    #                     "role": "user",
+    #                     "transcript": last_final_text,
+    #                     "content": last_final_text,
+    #                     "input_type": "audio",
+    #                 },
+    #                 {
+    #                     "role": "sophia",
+    #                     "content": last_reply_text,
+    #                     "audio_url": last_audio_url or None,
+    #                     "input_type": "audio",
+    #                 },
+    #             ],
+    #             access_token=supabase_token,
+    #         )
+    # except Exception:
+    #     pass
 
 
 @router.post("/transcribe", response_model=TranscriptionResponse)

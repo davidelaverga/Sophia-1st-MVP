@@ -199,6 +199,10 @@ async def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Op
                 text, sample_rate_hz=samplerate, cancel_check=cancel_check
             ):
                 asyncio.run_coroutine_threadsafe(queue.put(pcm_chunk), loop)
+        except asyncio.CancelledError:
+            # Turn was cancelled; stop streaming and signal consumer to exit
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+            return
         except Exception:
             logger.exception("Streamed synthesis failed in chat (thread)")
             asyncio.run_coroutine_threadsafe(queue.put(None), loop)
