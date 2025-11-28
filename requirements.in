@@ -19,6 +19,5 @@ opentelemetry-exporter-otlp
 opentelemetry-instrumentation-fastapi
 sentence-transformers
 alembic
-nest-asyncio
 psutil
 prometheus-client

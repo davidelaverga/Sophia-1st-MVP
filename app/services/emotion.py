@@ -1,19 +1,5 @@
 """Emotion classification utilities powered by Phoenix and fallback LLM heuristics."""
 
-# ========================================
-# CRITICAL: Apply nest_asyncio FIRST - before ANY other imports
-# ========================================
-try:
-    import nest_asyncio
-
-    nest_asyncio.apply()
-    _NEST_ASYNC_APPLIED = True
-except Exception:  # pragma: no cover - diagnostic only
-    _NEST_ASYNC_APPLIED = False
-
-# ========================================
-# NOW import everything else
-# ========================================
 import asyncio
 import logging
 import threading
@@ -41,12 +27,6 @@ _DEEP_EMOTION_RAILS = [
     "hopeful",
     "lonely",
 ]
-
-# Log nest_asyncio status AFTER logger is ready
-if _NEST_ASYNC_APPLIED:
-    logger.info("✅ nest_asyncio applied successfully at module import")
-else:
-    logger.warning("⚠️ nest_asyncio not available - emotion analysis may fail")
 
 
 class Emotion(BaseModel):
@@ -545,6 +525,13 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         return Emotion(label="neutral", confidence=0.5)
 
     try:
+        settings = get_settings()
+        if not getattr(settings, "GOOGLE_API_KEY", None):
+            logger.warning(
+                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
+            )
+            return Emotion(label="neutral", confidence=0.5)
+
         import base64
         import pandas as pd
         from phoenix.evals import llm_classify
@@ -560,13 +547,6 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
             logger.info(
                 "Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: %s",
                 e,
-            )
-            return Emotion(label="neutral", confidence=0.5)
-
-        settings = get_settings()
-        if not getattr(settings, "GOOGLE_API_KEY", None):
-            logger.warning(
-                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
             )
             return Emotion(label="neutral", confidence=0.5)
 
