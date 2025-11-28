@@ -115,8 +115,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute('DROP POLICY IF EXISTS session_memory_user_select ON session_memory;')
-    op.execute('DROP POLICY IF EXISTS session_memory_service_role ON session_memory;')
+    op.execute("DROP POLICY IF EXISTS session_memory_user_select ON session_memory;")
+    op.execute("DROP POLICY IF EXISTS session_memory_service_role ON session_memory;")
     op.execute("ALTER TABLE session_memory DISABLE ROW LEVEL SECURITY;")
 
     op.execute(

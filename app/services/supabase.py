@@ -262,7 +262,9 @@ def persist_session_memory(
         return
 
     try:
-        with _supabase_span("supabase.persist_session_memory", session_id=str(session_id)):
+        with _supabase_span(
+            "supabase.persist_session_memory", session_id=str(session_id)
+        ):
             client.table("session_memory").upsert(
                 payload, on_conflict="session_id"
             ).execute()
@@ -336,7 +338,10 @@ def persist_conversation_turn(
     client = get_supabase(access_token)
 
     # Build session payload; rely on DB defaults for started_at/turn_count.
-    session_payload: Dict[str, Any] = {"id": session_uuid, "last_activity_at": datetime.utcnow().isoformat()}
+    session_payload: Dict[str, Any] = {
+        "id": session_uuid,
+        "last_activity_at": datetime.utcnow().isoformat(),
+    }
     if user_id:
         session_payload["user_id"] = user_id
     if session_metadata:
@@ -375,7 +380,7 @@ def persist_conversation_turn(
             .limit(1)
             .execute()
         )
-        last_row = (getattr(result, "data", None) or [])
+        last_row = getattr(result, "data", None) or []
         if last_row:
             next_turn_index = int(last_row[0].get("turn_index", -1)) + 1
     except Exception as exc:

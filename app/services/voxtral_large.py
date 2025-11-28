@@ -1,7 +1,6 @@
 """Voxtral Large service offering unified audio-to-response handling with intelligent fallbacks."""
 
 import base64
-import io
 import logging
 from typing import Optional, Generator, Dict, Any, Callable
 from mistralai import Mistral
@@ -65,10 +64,14 @@ class VoxtralLargeService:
         if context:
             current_mode = context.get("current_mode", "").lower()
             if current_mode == self.MODE_DIRECT:
-                logger.debug(f"Model selection: DIRECT mode → fast model ({self.fast_model})")
+                logger.debug(
+                    f"Model selection: DIRECT mode → fast model ({self.fast_model})"
+                )
                 return self.fast_model
 
-        logger.debug(f"Model selection: default → accurate model ({self.accurate_model})")
+        logger.debug(
+            f"Model selection: default → accurate model ({self.accurate_model})"
+        )
         return self.accurate_model
 
     def generate_response(

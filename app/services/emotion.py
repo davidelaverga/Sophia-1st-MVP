@@ -1,19 +1,5 @@
 """Emotion classification utilities powered by Phoenix and fallback LLM heuristics."""
 
-# ========================================
-# CRITICAL: Apply nest_asyncio FIRST - before ANY other imports
-# ========================================
-try:
-    import nest_asyncio
-
-    nest_asyncio.apply()
-    _NEST_ASYNC_APPLIED = True
-except Exception:  # pragma: no cover - diagnostic only
-    _NEST_ASYNC_APPLIED = False
-
-# ========================================
-# NOW import everything else
-# ========================================
 import asyncio
 import logging
 import threading
@@ -41,12 +27,6 @@ _DEEP_EMOTION_RAILS = [
     "hopeful",
     "lonely",
 ]
-
-# Log nest_asyncio status AFTER logger is ready
-if _NEST_ASYNC_APPLIED:
-    logger.info("✅ nest_asyncio applied successfully at module import")
-else:
-    logger.warning("⚠️ nest_asyncio not available - emotion analysis may fail")
 
 
 class Emotion(BaseModel):
@@ -361,7 +341,8 @@ def _classify_with_llm(text: str) -> Emotion:
         # Validate label is in allowed set
         if label not in _DEEP_EMOTION_RAILS:
             logger.warning(
-                "LLM fallback returned invalid emotion '%s', defaulting to neutral", label
+                "LLM fallback returned invalid emotion '%s', defaulting to neutral",
+                label,
             )
             label = "neutral"
             conf = max(0.3, conf * 0.5)
@@ -389,14 +370,16 @@ def analyze_emotion_text(text: str) -> Emotion:
     if phoenix:
         logger.debug(
             "analyze_emotion_text: using Phoenix result -> %s (%.2f)",
-            phoenix.label, phoenix.confidence
+            phoenix.label,
+            phoenix.confidence,
         )
         return phoenix
 
     result = _classify_with_llm(text)
     logger.debug(
         "analyze_emotion_text: using LLM fallback result -> %s (%.2f)",
-        result.label, result.confidence
+        result.label,
+        result.confidence,
     )
     return result
 
@@ -595,6 +578,13 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
         return Emotion(label="neutral", confidence=0.5)
 
     try:
+        settings = get_settings()
+        if not getattr(settings, "GOOGLE_API_KEY", None):
+            logger.warning(
+                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
+            )
+            return Emotion(label="neutral", confidence=0.5)
+
         import base64
         import pandas as pd
         from phoenix.evals import llm_classify

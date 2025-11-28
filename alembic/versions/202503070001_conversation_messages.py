@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "202503070001"
-down_revision = "202502110002"
+down_revision = "202502110003"  # after merge of 202502110002 and 3d8db1a9f9d2
 branch_labels = None
 depends_on = None
 
@@ -233,9 +233,15 @@ def downgrade() -> None:
     op.execute(
         "DROP TRIGGER IF EXISTS conversation_messages_set_updated_at ON conversation_messages"
     )
-    op.drop_index("ix_conversation_messages_created_at", table_name="conversation_messages")
-    op.drop_index("ix_conversation_messages_turn_index", table_name="conversation_messages")
-    op.drop_index("ix_conversation_messages_session_id", table_name="conversation_messages")
+    op.drop_index(
+        "ix_conversation_messages_created_at", table_name="conversation_messages"
+    )
+    op.drop_index(
+        "ix_conversation_messages_turn_index", table_name="conversation_messages"
+    )
+    op.drop_index(
+        "ix_conversation_messages_session_id", table_name="conversation_messages"
+    )
     op.drop_table("conversation_messages")
 
     # Remove added columns from conversation_sessions
@@ -279,7 +285,9 @@ def downgrade() -> None:
     op.add_column(
         "conversation_sessions", sa.Column("audio_url", sa.Text(), nullable=True)
     )
-    op.add_column("conversation_sessions", sa.Column("intent", sa.Text(), nullable=True))
+    op.add_column(
+        "conversation_sessions", sa.Column("intent", sa.Text(), nullable=True)
+    )
     op.add_column(
         "conversation_sessions", sa.Column("context_memory", sa.Text(), nullable=True)
     )

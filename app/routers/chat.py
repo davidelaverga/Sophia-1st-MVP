@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Dict, Optional, Union, Sequence
+from typing import Any, Dict, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -120,6 +120,7 @@ async def ws_voice(websocket: WebSocket):
     await websocket.accept()
     heartbeat_task = None
     try:
+
         async def _heartbeat():
             while True:
                 try:
@@ -132,9 +133,9 @@ async def ws_voice(websocket: WebSocket):
                     break
 
         heartbeat_task = asyncio.create_task(_heartbeat())
-    except:
-        logger.info('Failed to setup heartbeat coroutine')
-    
+    except Exception:
+        logger.info("Failed to setup heartbeat coroutine")
+
     session_id = str(uuid.uuid4())
     audio_queue = get_audio_queue_manager()
     manager = shared_services.get_session_turn_manager()
@@ -191,9 +192,11 @@ async def ws_voice(websocket: WebSocket):
 
     await audio_queue.start_playback(session_id, send_audio_callback)
 
-    async def barge_in_callback(barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id):
+    async def barge_in_callback(
+        barge_in_ms, current_cancelled, queue_cleared, interrupted_turn_id
+    ):
         try:
-            logger.info('Got barge-in')
+            logger.info("Got barge-in")
             await ws_send(
                 {
                     "type": "barge_in",
@@ -206,7 +209,14 @@ async def ws_voice(websocket: WebSocket):
         except Exception:
             logger.warning("Failed to send barge-in notification")
 
-    async def websocket_audio_producer(websocket, session_id, audio_input_queue: asyncio.Queue, manager, audio_output_queue, barge_in_callback):
+    async def websocket_audio_producer(
+        websocket,
+        session_id,
+        audio_input_queue: asyncio.Queue,
+        manager,
+        audio_output_queue,
+        barge_in_callback,
+    ):
         try:
             in_speech = asyncio.Event()
             async for wav_utter in receive_audio_chunks(
@@ -215,25 +225,39 @@ async def ws_voice(websocket: WebSocket):
                 in_speech,
                 manager,
                 audio_output_queue,
-                barge_in_callback
+                barge_in_callback,
             ):
-                logger.info('Push utterance: %s (queue size: %s)', len(wav_utter), audio_input_queue.qsize())
+                logger.info(
+                    "Push utterance: %s (queue size: %s)",
+                    len(wav_utter),
+                    audio_input_queue.qsize(),
+                )
                 await audio_input_queue.put(wav_utter)
         finally:
             await audio_input_queue.put(None)
 
-    async def websocket_audio_consumer(websocket_send, session_id, metadata, audio_input_queue: asyncio.Queue, manager, audio_output_queue):
+    async def websocket_audio_consumer(
+        websocket_send,
+        session_id,
+        metadata,
+        audio_input_queue: asyncio.Queue,
+        manager,
+        audio_output_queue,
+    ):
         while True:
             wav_utter = await audio_input_queue.get()
-            logger.info('Audio input queue size: %s', audio_input_queue.qsize())
+            logger.info("Audio input queue size: %s", audio_input_queue.qsize())
             if wav_utter is None:
                 break
-            logger.info(f'Got {len(wav_utter)} audio bytes')
+            logger.info(f"Got {len(wav_utter)} audio bytes")
             transcript_text: Optional[str] = None
             user_emotion_label: Optional[str] = None
             user_emotion_confidence: Optional[float] = None
             try:
-                async with manage_session_turn(session_id, metadata=metadata) as turn_state:
+                async with manage_session_turn(
+                    session_id, metadata=metadata
+                ) as turn_state:
+
                     def cancel_check():
                         manager.raise_if_cancelled(turn_state.turn_id)
 
@@ -241,20 +265,28 @@ async def ws_voice(websocket: WebSocket):
                     tokens_sent = 0
                     turn_state.set_status("streaming")
                     try:
-                        async for tok in langgraph_service.stream_conversation_response(wav_utter, session_id, supabase_token, supabase_user_id):
+                        async for tok in langgraph_service.stream_conversation_response(
+                            wav_utter, session_id, supabase_token, supabase_user_id
+                        ):
                             cancel_check()
                             if not tok:
                                 continue
                             if isinstance(tok, dict) and tok.get("__tier0__"):
-                                transcript_text = tok.get('transcript')
+                                transcript_text = tok.get("transcript")
                                 user_emotion_label = tok.get("emotion")
                                 try:
-                                    if user_emotion_confidence is None and tok.get("confidence") is not None:
-                                        user_emotion_confidence = float(tok.get("confidence"))
+                                    if (
+                                        user_emotion_confidence is None
+                                        and tok.get("confidence") is not None
+                                    ):
+                                        user_emotion_confidence = float(
+                                            tok.get("confidence")
+                                        )
                                 except Exception:
-                                    user_emotion_confidence = user_emotion_confidence or tok.get("confidence")
-                                await websocket_send({"type": "tier0_result", **tok}
-                                )
+                                    user_emotion_confidence = (
+                                        user_emotion_confidence or tok.get("confidence")
+                                    )
+                                await websocket_send({"type": "tier0_result", **tok})
                                 logger.info(
                                     f"📤 Sent tier-0 result to frontend: intent={tok.get('intent')}, emotion={tok.get('emotion')}"
                                 )
@@ -304,12 +336,14 @@ async def ws_voice(websocket: WebSocket):
                     for idx, sent in enumerate(sentences):
                         streamed_any = False
                         try:
-                            async for pcm_chunk in chat_service.synthesize_streamed_reply(
+                            async for (
+                                pcm_chunk
+                            ) in chat_service.synthesize_streamed_reply(
                                 sent, 48000, cancel_check
                             ):
                                 streamed_any = True
-                                cleaned_chunk = chat_service.strip_wav_header_if_present(
-                                    pcm_chunk
+                                cleaned_chunk = (
+                                    chat_service.strip_wav_header_if_present(pcm_chunk)
                                 )
                                 if cleaned_chunk:
                                     streamed_pcm_buffer.extend(cleaned_chunk)
@@ -335,9 +369,7 @@ async def ws_voice(websocket: WebSocket):
                                 (
                                     audio_bytes,
                                     audio_url_last,
-                                ) = chat_service.synthesize_reply(
-                                    sent, cancel_check
-                                )
+                                ) = chat_service.synthesize_reply(sent, cancel_check)
                                 cancel_check()
                                 await audio_output_queue.enqueue(
                                     session_id=session_id,
@@ -358,9 +390,7 @@ async def ws_voice(websocket: WebSocket):
                                     },
                                 )
                             except Exception:
-                                logger.exception(
-                                    "WS: fallback TTS synthesis failed"
-                                )
+                                logger.exception("WS: fallback TTS synthesis failed")
 
                     await audio_output_queue.enqueue(
                         session_id=session_id,
@@ -380,12 +410,16 @@ async def ws_voice(websocket: WebSocket):
                                     bytes(streamed_pcm_buffer), sample_rate=48000
                                 )
                                 file_name = f"sophia_{int(time.time() * 1000)}.mp3"
-                                audio_url_last = supabase_service.upload_audio_and_get_url(
-                                    mp3_bytes, file_name=file_name
+                                audio_url_last = (
+                                    supabase_service.upload_audio_and_get_url(
+                                        mp3_bytes, file_name=file_name
+                                    )
                                 )
                             else:
-                                audio_bytes, audio_url_last = chat_service.synthesize_reply(
-                                    reply_full, cancel_check=cancel_check
+                                audio_bytes, audio_url_last = (
+                                    chat_service.synthesize_reply(
+                                        reply_full, cancel_check=cancel_check
+                                    )
                                 )
                         except asyncio.CancelledError:
                             raise
@@ -416,26 +450,44 @@ async def ws_voice(websocket: WebSocket):
                             session_id,
                             transcript_text,
                             reply_full,
-                            { 'label': user_emotion_label, 'confidence': user_emotion_confidence },
-                            { 'label': '', 'confidence': 0.0 },
+                            {
+                                "label": user_emotion_label,
+                                "confidence": user_emotion_confidence,
+                            },
+                            {"label": "", "confidence": 0.0},
                             audio_url_last,
                             supabase_token,
                             supabase_user_id,
                         )
                     except Exception as exc:
-                        logger.warning("WS persist conversation turn failed; continuing: %s", exc)
+                        logger.warning(
+                            "WS persist conversation turn failed; continuing: %s", exc
+                        )
             except asyncio.CancelledError:
                 logger.info("WS voice turn cancelled; skipping remaining processing")
                 continue
 
     try:
-        producer_task = asyncio.create_task(websocket_audio_producer(websocket, session_id, audio_input_queue, manager, audio_queue, barge_in_callback))
-        consumer_task = asyncio.create_task(websocket_audio_consumer(ws_send, session_id, metadata, audio_input_queue, manager, audio_queue))
+        producer_task = asyncio.create_task(
+            websocket_audio_producer(
+                websocket,
+                session_id,
+                audio_input_queue,
+                manager,
+                audio_queue,
+                barge_in_callback,
+            )
+        )
+        consumer_task = asyncio.create_task(
+            websocket_audio_consumer(
+                ws_send, session_id, metadata, audio_input_queue, manager, audio_queue
+            )
+        )
         await asyncio.gather(producer_task, consumer_task)
     except WebSocketDisconnect:
-        logger.warning('WEBSOCKET DISCONNECT')
+        logger.warning("WEBSOCKET DISCONNECT")
     except Exception as exc:
-        logger.warning('EXCEPTION: %s', str(exc))
+        logger.warning("EXCEPTION: %s", str(exc))
         await ws_send({"type": "error", "detail": str(exc)})
         try:
             await websocket.close()
@@ -744,15 +796,21 @@ async def defi_chat(
                             "input_type": "audio",
                             "intent": result.get("intent"),
                             "emotion_label": result["sophia_emotion"]["label"],
-                            "emotion_confidence": result["sophia_emotion"]["confidence"],
+                            "emotion_confidence": result["sophia_emotion"][
+                                "confidence"
+                            ],
                         },
                     ],
                     session_metadata={
                         "last_intent": result.get("intent"),
                         "last_user_emotion_label": result["user_emotion"]["label"],
-                        "last_user_emotion_confidence": result["user_emotion"]["confidence"],
+                        "last_user_emotion_confidence": result["user_emotion"][
+                            "confidence"
+                        ],
                         "last_sophia_emotion_label": result["sophia_emotion"]["label"],
-                        "last_sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
+                        "last_sophia_emotion_confidence": result["sophia_emotion"][
+                            "confidence"
+                        ],
                     },
                     access_token=supabase_token,
                 )
@@ -877,7 +935,9 @@ async def defi_chat_stream(
                         access_token=supabase_token,
                     )
                 except Exception as exc:
-                    logger.warning("Persist conversation turn failed; continuing: %s", exc)
+                    logger.warning(
+                        "Persist conversation turn failed; continuing: %s", exc
+                    )
 
                 turn_state.set_status("completed")
 
@@ -968,15 +1028,21 @@ async def text_chat(
                             "input_type": "text",
                             "intent": result.get("intent"),
                             "emotion_label": result["sophia_emotion"]["label"],
-                            "emotion_confidence": result["sophia_emotion"]["confidence"],
+                            "emotion_confidence": result["sophia_emotion"][
+                                "confidence"
+                            ],
                         },
                     ],
                     session_metadata={
                         "last_intent": result.get("intent"),
                         "last_user_emotion_label": result["user_emotion"]["label"],
-                        "last_user_emotion_confidence": result["user_emotion"]["confidence"],
+                        "last_user_emotion_confidence": result["user_emotion"][
+                            "confidence"
+                        ],
                         "last_sophia_emotion_label": result["sophia_emotion"]["label"],
-                        "last_sophia_emotion_confidence": result["sophia_emotion"]["confidence"],
+                        "last_sophia_emotion_confidence": result["sophia_emotion"][
+                            "confidence"
+                        ],
                     },
                     access_token=supabase_token,
                 )
@@ -1024,7 +1090,16 @@ def _record_text_stream_turn(
     supabase_token: Optional[str],
     user_id: Optional[str] = None,
 ):
-    logger.info('RECORDING TURN session_id=%s user_text=%s reply=%s user_emotion=%s sophia_emotion=%s audio_url=%s user_id=%s', session_id, user_text, reply, user_emotion, sophia_emotion, audio_url, user_id)
+    logger.info(
+        "RECORDING TURN session_id=%s user_text=%s reply=%s user_emotion=%s sophia_emotion=%s audio_url=%s user_id=%s",
+        session_id,
+        user_text,
+        reply,
+        user_emotion,
+        sophia_emotion,
+        audio_url,
+        user_id,
+    )
     try:
         supabase_service.persist_conversation_turn(
             session_id=session_id,
@@ -1042,8 +1117,8 @@ def _record_text_stream_turn(
                     "content": reply,
                     "audio_url": audio_url,
                     "input_type": "text",
-                    "emotion_label": sophia_emotion.get('label'),
-                    "emotion_confidence": sophia_emotion.get('confidence', 0.0),
+                    "emotion_label": sophia_emotion.get("label"),
+                    "emotion_confidence": sophia_emotion.get("confidence", 0.0),
                 },
             ],
             session_metadata={
@@ -1051,7 +1126,7 @@ def _record_text_stream_turn(
                 "last_user_emotion_label": user_emotion.get("label"),
                 "last_user_emotion_confidence": user_emotion.get("confidence"),
                 "last_sophia_emotion_label": sophia_emotion.get("label"),
-                "last_sophia_emotion_confidence": sophia_emotion.get('confidence', 0.0),
+                "last_sophia_emotion_confidence": sophia_emotion.get("confidence", 0.0),
             },
             access_token=supabase_token,
         )
@@ -1180,10 +1255,10 @@ async def text_chat_stream(
                 _record_text_stream_turn(
                     session_identifier,
                     body.message,
-                    result['reply'],
-                    result['user_emotion'],
-                    result['sophia_emotion'],
-                    result.get('audio_url'),
+                    result["reply"],
+                    result["user_emotion"],
+                    result["sophia_emotion"],
+                    result.get("audio_url"),
                     supabase_token,
                     user_id,
                 )

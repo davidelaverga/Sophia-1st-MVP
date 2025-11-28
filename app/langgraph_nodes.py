@@ -137,9 +137,7 @@ class AudioIngestor:
     def __init__(self, use_voxtral: bool = True):
         self.settings = get_settings()
         self.use_voxtral = use_voxtral
-        logger.info(
-            f"AudioIngestor initialized (Voxtral preference: {use_voxtral})"
-        )
+        logger.info(f"AudioIngestor initialized (Voxtral preference: {use_voxtral})")
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
@@ -729,7 +727,9 @@ class ResponseGenerator:
         # Build context dictionary (includes current_mode for mode-aware model selection)
         context = {
             "intent": state["intent"],
-            "current_mode": state.get("current_mode", ""),  # For VoxtralLargeService._select_model
+            "current_mode": state.get(
+                "current_mode", ""
+            ),  # For VoxtralLargeService._select_model
             "user_emotion": {
                 "label": state["user_emotion"].label,
                 "confidence": state["user_emotion"].confidence,
@@ -1841,7 +1841,9 @@ class SophiaLangGraph:
         cancel_check = state.get("cancel_check")
         try:
             # Check if we should use Voxtral streaming
-            if getattr(self.settings, "USE_VOXTRAL", True) and state.get("use_voxtral", False):
+            if getattr(self.settings, "USE_VOXTRAL", True) and state.get(
+                "use_voxtral", False
+            ):
                 from app.services.shared_services import shared_services
 
                 hybrid_service = shared_services.get_hybrid_voxtral_service()
@@ -1925,7 +1927,9 @@ class SophiaLangGraph:
 
         context = {
             "intent": state.get("intent", ""),
-            "current_mode": state.get("current_mode", ""),  # For VoxtralLargeService._select_model
+            "current_mode": state.get(
+                "current_mode", ""
+            ),  # For VoxtralLargeService._select_model
             "user_emotion": {
                 "label": state["user_emotion"].label,
                 "confidence": state["user_emotion"].confidence,

@@ -50,7 +50,9 @@ class TestVoxtralLargeService:
             for mode in ["utility_light", "emotional_support", "utility_agentic", ""]:
                 context = {"current_mode": mode}
                 selected = service._select_model(context)
-                assert selected == "voxtral-small-latest", f"Mode {mode} should use accurate model"
+                assert selected == "voxtral-small-latest", (
+                    f"Mode {mode} should use accurate model"
+                )
 
     def test_select_model_no_context(self):
         """Test that no context defaults to accurate model"""

@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import sys
 from logging.config import fileConfig
-from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Ensure the application package is importable when running via the Alembic CLI.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from app.config import get_settings  # noqa: E402
+from app.config import get_settings
 from app.db import Base  # noqa: E402
-
 
 config = context.config
 

@@ -34,9 +34,7 @@ async def receive_audio_chunks(
         try:
             # Use timeout only when we've already buffered enough to consider an utterance in progress.
             if len(pcm_buffer) > 0:
-                msg = await asyncio.wait_for(
-                    websocket.receive(), timeout=IDLE_TIMEOUT
-                )
+                msg = await asyncio.wait_for(websocket.receive(), timeout=IDLE_TIMEOUT)
             else:
                 msg = await websocket.receive()
         except asyncio.TimeoutError:
@@ -94,5 +92,5 @@ async def receive_audio_chunks(
                 utter_start_pos = 0
                 last_voice_activity = 0
                 in_speech.clear()
-        elif 'type' in msg and msg['type'] == 'websocket.disconnect':
+        elif "type" in msg and msg["type"] == "websocket.disconnect":
             break

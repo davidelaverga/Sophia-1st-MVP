@@ -186,7 +186,10 @@ def synthesize_reply(reply: str, cancel_check: Optional[Callable] = None):
         logger.exception("Synthesis or upload failed in chat")
         raise HTTPException(status_code=500, detail="Synthesis failed")
 
-async def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Optional[Callable] = None):
+
+async def synthesize_streamed_reply(
+    text: str, samplerate: int, cancel_check: Optional[Callable] = None
+):
     """Stream TTS without blocking the event loop by offloading to a thread."""
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
@@ -217,6 +220,7 @@ async def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Op
             cancel_check()
         yield pcm_chunk
 
+
 def strip_wav_header_if_present(chunk: bytes) -> bytes:
     """Remove a WAV header if the streamed chunk includes one."""
     if len(chunk) >= 12 and chunk[:4] == b"RIFF" and chunk[8:12] == b"WAVE":
@@ -224,6 +228,7 @@ def strip_wav_header_if_present(chunk: bytes) -> bytes:
         header_len = 44 if len(chunk) >= 44 else 0
         return chunk[header_len:]
     return chunk
+
 
 def encode_pcm_to_mp3(
     pcm_data: bytes,
@@ -263,9 +268,12 @@ def encode_pcm_to_mp3(
     )
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="ignore")
-        raise RuntimeError(f"ffmpeg encoding failed (code {result.returncode}): {stderr}")
+        raise RuntimeError(
+            f"ffmpeg encoding failed (code {result.returncode}): {stderr}"
+        )
 
     return result.stdout
+
 
 def persist_conversation_session(
     supabase_token: str,
