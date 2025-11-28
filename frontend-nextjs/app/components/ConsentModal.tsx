@@ -125,7 +125,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
                 <p style={{ color: '#fde68a', fontWeight: '500', marginBottom: '0.25rem' }}>Data Processing Notice</p>
                 <p style={{ color: 'rgba(253, 230, 138, 0.8)' }}>
                   Sophia logs and processes your voice to improve your experience. 
-                  We use this data for AI-generated DeFi education with voice analytics.
+                  We use this data for AI-generated experience with voice analytics.
                 </p>
               </div>
             </div>
@@ -144,7 +144,7 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
           <div style={{ fontSize: '0.875rem', color: '#d1d5db' }}>
             <h4 style={{ fontWeight: '500', color: 'white', marginBottom: '0.5rem' }}>How we use it:</h4>
             <ul style={{ listStyleType: 'disc', paddingLeft: '1.25rem', color: '#9ca3af', lineHeight: '1.6' }}>
-              <li>Provide personalized DeFi education</li>
+              <li>Provide personalized AI experience</li>
               <li>Improve AI response quality</li>
               <li>Analyze conversation effectiveness</li>
               <li>Ensure system security and compliance</li>

@@ -5,8 +5,8 @@ import { Providers } from './providers'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata = {
-  title: 'Sophia - DeFi AI Assistant',
-  description: 'Your intelligent voice assistant for DeFi education and guidance',
+  title: 'Sophia - AI exploring consciousness emergence through genuine human connection',
+  description: 'Your intelligent voice assistant for exploring consciousness emergence',
 }
 
 export default function RootLayout({

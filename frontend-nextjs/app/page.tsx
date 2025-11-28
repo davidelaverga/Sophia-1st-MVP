@@ -133,7 +133,7 @@ export default function Home() {
               <span className="text-3xl font-bold text-white">S</span>
             </div>
             <h1 className="text-3xl font-bold text-white mb-2">Sophia</h1>
-            <p className="text-gray-300 text-lg">DeFi AI Assistant</p>
+            <p className="text-gray-300 text-lg">AI Assistant</p>
           </div>
           
           <button
@@ -159,7 +159,7 @@ export default function Home() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-white">Sophia</h1>
-                <p className="text-sm text-gray-300">DeFi AI Assistant</p>
+                <p className="text-sm text-gray-300">AI Assistant</p>
               </div>
             </div>
             
@@ -231,7 +231,7 @@ export default function Home() {
                     <span className="text-4xl font-bold text-white">S</span>
                   </div>
                   <div>
-                    <h1 className="text-4xl font-bold text-white mb-2">Welcome to Sophia DeFi</h1>
+                    <h1 className="text-4xl font-bold text-white mb-2">Welcome to Sophia</h1>
                     <div className="flex items-center gap-3">
                       <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
                       <span className="text-xl text-green-400 font-semibold">✨ AI Ready</span>
@@ -240,9 +240,9 @@ export default function Home() {
                 </div>
                 
                 <p className="text-gray-300 text-xl mb-8">
-                  Your intelligent DeFi companion is ready to help you navigate decentralized finance.
+                  Your intelligent companion is ready to help you connect with AI authentically.
                 </p>
-                
+                { /*
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-gradient-to-r from-purple-500/20 to-purple-600/20 border border-purple-500/30 rounded-xl p-6 cursor-pointer">
                     <h3 className="text-xl font-bold text-white mb-2">Yield Farming Guide</h3>
@@ -255,7 +255,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              
+              */ }
               {/* Live, phone-call style interface */}
               <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
                 <h3 className="text-xl font-bold text-white mb-4">Live Voice Call</h3>
