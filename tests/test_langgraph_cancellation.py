@@ -12,7 +12,7 @@ from app.langgraph_nodes import AudioIngestor
 
 def test_audio_ingestor_whisper_fallback_honours_cancellation(monkeypatch):
     """When a turn is cancelled, the Whisper fallback should not run."""
-    ingestor = AudioIngestor(use_voxtral_large=False)
+    ingestor = AudioIngestor(use_voxtral=False)
 
     call_counter = {"count": 0}
 

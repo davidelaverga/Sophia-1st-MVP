@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "202502110002"
-down_revision = "fefc279c0f5b"  # depends on RLS policies
+down_revision = "3d8db1a9f9d2"  # depends on RLS policies
 branch_labels = None
 depends_on = None
 

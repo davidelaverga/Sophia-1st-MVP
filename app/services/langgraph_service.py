@@ -96,6 +96,7 @@ class LangGraphService:
                 "conversation_status": evaluation_manager.get_conversation_status(
                     final_state["session_id"]
                 ),
+                "evaluation_report": final_state.get("evaluation_report"),
             }
 
             logger.info(

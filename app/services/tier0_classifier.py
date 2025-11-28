@@ -167,6 +167,45 @@ def _get_mistral_client() -> Mistral:
     return Mistral(api_key=settings.MISTRAL_API_KEY)
 
 
+def _parse_json_from_content(raw: str) -> Dict[str, Any]:
+    """Extract a JSON object from an LLM chat completion string.
+
+    Handles common cases like:
+    - Bare JSON: '{"intent": "...", ...}'
+    - JSON wrapped in ``` or ```json fences
+    - JSON with surrounding whitespace or commentary (we take the first {...} block).
+
+    Raises ValueError if no JSON object can be located or parsed.
+    """
+
+    if raw is None:
+        raise ValueError("Empty response from Mistral API")
+
+    text = raw.strip()
+    if not text:
+        raise ValueError("Empty response from Mistral API")
+
+    # Strip Markdown code fences if present
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[-1].strip().startswith("```"):
+            # Drop first (``` or ```json) and last (```)
+            inner = "\n".join(lines[1:-1]).strip()
+            if inner:
+                text = inner
+
+    # Take substring spanning the outermost JSON object
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(
+            f"Could not locate JSON object in Mistral response: {text[:80]!r}"
+        )
+
+    json_str = text[start : end + 1]
+    return json.loads(json_str)
+
+
 def _detect_crisis(text: str) -> bool:
     """Detect crisis/self-harm phrases in text (rule-based, always fast)"""
     text_lower = text.lower()
