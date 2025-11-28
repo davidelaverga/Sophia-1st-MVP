@@ -238,6 +238,38 @@ def insert_emotion_score(
         # Don't raise the exception, just log it and continue
 
 
+def persist_session_memory(
+    memory_record: Dict[str, Any], access_token: Optional[str] = None
+) -> None:
+    """Upsert a session-level memory summary into session_memory."""
+    session_id = memory_record.get("session_id")
+    if not session_id:
+        logger.warning("session_memory upsert skipped: missing session_id")
+        return
+
+    payload = {
+        "session_id": str(session_id),
+        "topics": memory_record.get("topics") or [],
+        "turn_count": int(memory_record.get("turn_count", 0)),
+        "last_user_emotion": memory_record.get("last_user_emotion") or "neutral",
+        "last_sophia_emotion": memory_record.get("last_sophia_emotion") or "neutral",
+    }
+
+    try:
+        client = get_supabase(access_token)
+    except Exception as exc:
+        logger.warning("session_memory upsert skipped (client init failed): %s", exc)
+        return
+
+    try:
+        with _supabase_span("supabase.persist_session_memory", session_id=str(session_id)):
+            client.table("session_memory").upsert(
+                payload, on_conflict="session_id"
+            ).execute()
+    except Exception as exc:
+        logger.warning("session_memory upsert failed: %s", exc)
+
+
 def insert_conversation_session(
     data: Dict[str, Any], access_token: Optional[str] = None
 ) -> None:
