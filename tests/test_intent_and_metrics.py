@@ -90,6 +90,17 @@ class TestIntentEmotionalVsUtility:
                 f"Ambiguous message '{msg}' should bias to EMOTIONAL_SUPPORT"
             )
 
+    @pytest.mark.asyncio
+    async def test_greeting_ambiguous_biases_to_direct_utility(self):
+        """Greetings with slight ambiguity should route to direct utility, not emotional."""
+        msg = "Hello, Sofia. How are you today?"
+
+        result = await classify_intent_and_mode(msg, session_id="greeting-test")
+
+        assert result.intent == Intent.UTILITY
+        assert result.current_mode == CurrentMode.UTILITY_DIRECT
+        assert result.utility_path == UtilityPath.DIRECT
+
 
 class TestUtilityDirectVsLight:
     """Test utility path classification between DIRECT and LIGHT."""
