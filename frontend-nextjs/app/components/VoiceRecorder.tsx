@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react'
 import { Mic, Square } from 'lucide-react'
 import { copy, t } from '../../copy'
 import { useSupabase } from '../providers'
+import { checkMicrophonePermission } from '../lib/microphone-permissions'
 
 interface VoiceRecorderProps {
   onMessage: (message: any) => void
@@ -23,14 +24,75 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
 
   const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
-      })
+      // Check microphone permission before attempting access (non-blocking)
+      // Only block if we're CERTAIN it's denied
+      let permissionState: "granted" | "denied" | "prompt" | "unknown" = "unknown"
+      try {
+        permissionState = await checkMicrophonePermission()
+        console.log("[VoiceRecorder] Permission check result:", permissionState)
+      } catch (permError) {
+        // Permission API not available - this is OK, we'll try getUserMedia anyway
+        console.log("[VoiceRecorder] Permission check failed, will try getUserMedia:", permError)
+        permissionState = "unknown"
+      }
+      
+      // Only block if we're CERTAIN permission is denied
+      if (permissionState === "denied") {
+        console.log("[VoiceRecorder] Permission explicitly denied, blocking access")
+        alert("Microphone access is blocked. Please enable it in your browser settings and refresh the page.")
+        return
+      }
+
+      console.log("[VoiceRecorder] Requesting microphone access...")
+      
+      // Support multiple browser APIs for maximum compatibility
+      let stream: MediaStream
+      
+      // Try modern API first
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: 16000,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        })
+      }
+      // Fallback for older browsers
+      else if ((navigator as any).getUserMedia) {
+        stream = await new Promise<MediaStream>((resolve, reject) => {
+          (navigator as any).getUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      // Fallback for webkit browsers
+      else if ((navigator as any).webkitGetUserMedia) {
+        stream = await new Promise<MediaStream>((resolve, reject) => {
+          (navigator as any).webkitGetUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      // Fallback for moz browsers
+      else if ((navigator as any).mozGetUserMedia) {
+        stream = await new Promise<MediaStream>((resolve, reject) => {
+          (navigator as any).mozGetUserMedia(
+            { audio: true },
+            resolve,
+            reject
+          )
+        })
+      }
+      else {
+        throw new Error("getUserMedia is not supported in this browser. Please use a modern browser like Chrome, Firefox, Safari, or Edge.")
+      }
 
       streamRef.current = stream
       audioChunksRef.current = []
@@ -60,6 +122,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       mediaRecorder.start()
       setIsRecording(true)
       setRecordingTime(0)
+      console.log("[VoiceRecorder] Microphone access granted, recording started")
 
       // Start timer
       timerRef.current = setInterval(() => {
@@ -67,8 +130,62 @@ export default function VoiceRecorder({ onMessage, setIsLoading }: VoiceRecorder
       }, 1000)
 
     } catch (error) {
-      console.error('Failed to start recording:', error)
-      alert(t('voiceRecorder.errors.micDenied'))
+      console.error('[VoiceRecorder] Failed to start recording:', error)
+      
+      // Better error handling - distinguish between different error types
+      const err = error as Error
+      const errorName = err.name || ""
+      const errorMessage = err.message || ""
+      
+      console.log('[VoiceRecorder] Error details:', { errorName, errorMessage, error })
+      
+      let userMessage = t('voiceRecorder.errors.micDenied')
+      
+      // Check for specific permission errors
+      if (
+        errorName === "NotAllowedError" ||
+        errorName === "PermissionDeniedError" ||
+        errorMessage.toLowerCase().includes("permission") ||
+        errorMessage.toLowerCase().includes("denied") ||
+        errorMessage.toLowerCase().includes("not allowed") ||
+        errorMessage.toLowerCase().includes("notallowed")
+      ) {
+        console.log('[VoiceRecorder] Permission error detected, checking current state...')
+        // Double-check permission state after error (non-blocking)
+        try {
+          const currentPermission = await checkMicrophonePermission()
+          console.log('[VoiceRecorder] Current permission state after error:', currentPermission)
+          if (currentPermission === "denied") {
+            userMessage = "Microphone access is blocked. Please enable it in your browser settings and refresh the page."
+          } else {
+            userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
+          }
+        } catch (permCheckError) {
+          // Permission check failed, use generic message
+          console.warn('[VoiceRecorder] Permission check after error failed:', permCheckError)
+          userMessage = "Microphone permission was denied. Please allow access when prompted and try again."
+        }
+      } else if (
+        errorName === "NotFoundError" ||
+        errorName === "DevicesNotFoundError" ||
+        errorMessage.toLowerCase().includes("device") ||
+        errorMessage.toLowerCase().includes("not found")
+      ) {
+        userMessage = "No microphone found. Please connect a microphone and try again."
+      } else if (
+        errorName === "NotReadableError" ||
+        errorMessage.toLowerCase().includes("readable") ||
+        errorMessage.toLowerCase().includes("in use")
+      ) {
+        userMessage = "Microphone is being used by another application. Please close other apps using the microphone and try again."
+      } else if (errorMessage.includes("not supported") || errorMessage.includes("getUserMedia")) {
+        userMessage = "Your browser doesn't support microphone access. Please use Chrome, Firefox, Safari, or Edge (latest versions)."
+      } else if (errorMessage.includes("secure context") || errorMessage.includes("HTTPS")) {
+        userMessage = "Microphone access requires a secure connection (HTTPS). Please access this site using https:// or from localhost."
+      }
+      
+      console.log('[VoiceRecorder] Showing error message:', userMessage)
+      alert(userMessage)
     }
   }, [])
 

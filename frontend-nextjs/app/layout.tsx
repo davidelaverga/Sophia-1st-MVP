@@ -2,6 +2,7 @@ import "./globals.css"
 import { Providers } from "./providers"
 import { copy } from "../copy"
 import { inter } from "./fonts"
+import { ThemeBootstrap } from "./ThemeBootstrap"
 
 export const metadata = {
   title: `${copy.brand.name} – ${copy.brand.tagline}`,
@@ -17,6 +18,7 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className="bg-sophia-bg text-sophia-text antialiased">
         <Providers>
+          <ThemeBootstrap />
           <div className="min-h-[100svh]">
             {children}
           </div>

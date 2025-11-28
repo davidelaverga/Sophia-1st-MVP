@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 🌤️ Default (Light) theme */
 :root {
   --sophia-purple: #8b7ab8;
   --sophia-glow: #b896d4;
@@ -15,6 +16,48 @@
   --radius-md: 12px;
   --radius-xl: 24px;
   --shadow-soft: 0 8px 24px rgba(26, 7, 50, 0.08);
+}
+
+/* 🌙 Dark Mode – Proposal 1: Midnight Serenity */
+:root[data-sophia-theme="midnight"] {
+  --sophia-purple: #a78bf5;        /* brighter violet */
+  --sophia-glow: #c4a5f5;          /* stronger glow */
+  --bg: #0f0b1a;                   /* deep night background */
+  --text: #e8e3f0;                 /* soft almost-white text */
+  --text-2: #9d94b0;
+  --user-bubble: #1a1525;
+  --sophia-bubble: #1f1830;
+  --btn-active: #b896d4;
+  --error: #f48c8c;
+  --shadow-soft: 0 8px 24px rgba(167, 139, 250, 0.15);
+}
+
+/* 🌙 Dark Mode – Proposal 2: Twilight Calm */
+:root[data-sophia-theme="twilight"] {
+  --sophia-purple: #9d8bc7;
+  --sophia-glow: #b8a4d8;
+  --bg: #1a1625;
+  --text: #e0d9eb;
+  --text-2: #8b7fa0;
+  --user-bubble: #252030;
+  --sophia-bubble: #2a2435;
+  --btn-active: #a68aca;
+  --error: #e8a09a;
+  --shadow-soft: 0 8px 24px rgba(139, 92, 246, 0.12);
+}
+
+/* 🌙 Dark Mode – Proposal 3: Deep Space */
+:root[data-sophia-theme="deep-space"] {
+  --sophia-purple: #b794f6;
+  --sophia-glow: #d6b3ff;
+  --bg: #0a0714;
+  --text: #f0ebff;
+  --text-2: #a594c7;
+  --user-bubble: #151020;
+  --sophia-bubble: #1a1528;
+  --btn-active: #c4a5f5;
+  --error: #ff9f9f;
+  --shadow-soft: 0 8px 24px rgba(183, 148, 246, 0.2);
 }
 
 * {

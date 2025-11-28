@@ -121,11 +121,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const userMessage = createMessage("user", text)
     const replyId = createMessageId()
 
+    // Accumulate tokens in memory but don't show them until done
+    let accumulatedContent = ""
+
     set((state) => ({
       messages: [...state.messages, userMessage, {
         id: replyId,
         role: "sophia",
-        content: "",
+        content: "", // Start empty - will only show when done
         createdAt: Date.now(),
         status: "streaming",
         turnId: replyId,
@@ -217,34 +220,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
         },
         onToken: (token) => {
+          // Accumulate tokens but don't update UI - user won't see tokens
+          accumulatedContent += token
           usePresenceStore.getState().setListening(false)
           usePresenceStore.getState().setMetaStage("thinking")
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === replyId
-                ? { ...message, content: `${message.content}${token}` }
-                : message
-            ),
-          }))
+          // Don't update message content - wait for onDone
         },
         onDone: (payload) => {
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === replyId
-                ? {
-                    ...message,
-                    status: "complete",
-                    content: payload?.message ?? message.content,
-                    audioUrl: payload?.audioUrl ?? payload?.audio_url,
-                  }
-                : message
-            ),
-            isLocked: false,
-            activeReplyId: undefined,
-            conversationId: payload?.conversationId ?? payload?.conversation_id ?? state.conversationId,
-            feedbackGate: state.feedbackGate?.turnId === replyId ? undefined : state.feedbackGate,
-            lastCompletedTurnId: replyId,
-          }))
+          // Show the final reply - use accumulated content or payload message
+          const finalContent = payload?.message ?? accumulatedContent.trim()
+          set((state) => {
+            const currentMessage = state.messages.find(m => m.id === replyId)
+            const finalText = finalContent || currentMessage?.content || ""
+            return {
+              messages: state.messages.map((message) =>
+                message.id === replyId
+                  ? {
+                      ...message,
+                      status: "complete",
+                      content: finalText,
+                      audioUrl: payload?.audioUrl ?? payload?.audio_url,
+                    }
+                  : message
+              ),
+              isLocked: false,
+              activeReplyId: undefined,
+              conversationId: payload?.conversationId ?? payload?.conversation_id ?? state.conversationId,
+              feedbackGate: state.feedbackGate?.turnId === replyId ? undefined : state.feedbackGate,
+              lastCompletedTurnId: replyId,
+            }
+          })
           if (!sawFeedbackGate) {
             get().openSessionFeedback(replyId)
           }

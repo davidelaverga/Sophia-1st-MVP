@@ -21,6 +21,7 @@ import { useVoiceLoop } from "../hooks/useVoiceLoop"
 import { useSupabase } from "../providers"
 import { useUsageMonitor } from "../hooks/useUsageMonitor"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
+import { diagnoseMicrophoneAccess, isMicrophoneLikelySupported } from "../lib/microphone-debug"
 
 export function ConversationView() {
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -28,9 +29,54 @@ export function ConversationView() {
   const conversationId = useChatStore((state) => state.conversationId)
   const lastCompletedTurnId = useChatStore((state) => state.lastCompletedTurnId)
   const { chunks, dismiss } = useReflectionPrompt(conversationId, lastCompletedTurnId)
+  const [micSupportWarning, setMicSupportWarning] = useState<string | null>(null)
   
-  // Focus mode state
+  // Focus mode state - must be declared before useEffect that uses it
   const focusMode = useFocusModeStore((state) => state.mode)
+  
+  // Check microphone support ONLY when user enters voice mode
+  useEffect(() => {
+    if (typeof window === "undefined" || focusMode !== "voice") {
+      // Clear warning when leaving voice mode
+      if (focusMode !== "voice") {
+        setMicSupportWarning(null)
+      }
+      return
+    }
+    
+    const checkSupport = async () => {
+      try {
+        const diagnostics = await diagnoseMicrophoneAccess()
+        const supportCheck = isMicrophoneLikelySupported(diagnostics)
+        
+        if (!supportCheck.supported && supportCheck.issues.length > 0) {
+          // Only show warning for critical issues (not just "prompt" state)
+          const criticalIssues = supportCheck.issues.filter(issue => 
+            !issue.includes("prompt") && 
+            !issue.includes("unknown")
+          )
+          
+          if (criticalIssues.length > 0) {
+            setMicSupportWarning(criticalIssues[0])
+            
+            // Auto-dismiss after 4 seconds
+            const dismissTimer = setTimeout(() => {
+              setMicSupportWarning(null)
+            }, 4000)
+            
+            return () => clearTimeout(dismissTimer)
+          }
+        }
+      } catch (error) {
+        // Silently fail - this is just a helpful check
+        console.log("[ConversationView] Microphone support check failed:", error)
+      }
+    }
+    
+    // Run check when entering voice mode
+    const timer = setTimeout(checkSupport, 300)
+    return () => clearTimeout(timer)
+  }, [focusMode])
   const setMode = useFocusModeStore((state) => state.setMode)
   const isManualOverride = useFocusModeStore((state) => state.isManualOverride)
   const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
@@ -117,6 +163,32 @@ export function ConversationView() {
 
   return (
     <AppShell actionBar={focusMode !== "voice" ? <Composer textareaRef={composerRef} onFocusChange={setComposerHasFocus} /> : undefined}>
+      {/* Microphone support warning - only in voice mode, elegant Sophia styling */}
+      {micSupportWarning && focusMode === "voice" && (
+        <div className="mx-auto max-w-2xl animate-fadeIn">
+          <div className="rounded-2xl border border-sophia-purple/20 bg-gradient-to-br from-sophia-purple/5 via-sophia-purple/3 to-transparent px-4 py-3 shadow-soft backdrop-blur-sm">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-sophia-purple/10">
+                <Mic className="h-3 w-3 text-sophia-purple" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium text-sophia-text">Microphone Access</p>
+                <p className="text-xs leading-relaxed text-sophia-text2">{micSupportWarning}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMicSupportWarning(null)}
+                className="flex-shrink-0 rounded-lg p-1 text-sophia-text2/60 transition-colors hover:bg-sophia-purple/10 hover:text-sophia-purple"
+                aria-label="Dismiss"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="space-y-4 transition-all duration-500 ease-in-out">
         {/* Voice Focus Mode */}
         {focusMode === "voice" && (
