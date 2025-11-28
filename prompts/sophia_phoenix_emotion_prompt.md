@@ -65,38 +65,38 @@ Return your classification as:
 - confidence: 0.80
 - safety_flag: false
 
-## Russian Crisis Examples
+## Crisis Examples
 
-**CRITICAL**: Russian suicidal/crisis messages MUST trigger safety_flag=true:
+**CRITICAL**: Suicidal/crisis messages MUST trigger safety_flag=true:
 
-**Input**: "я хочу умереть"
+**Input**: "I want to die"
 **Output**:
 - label: grief
 - confidence: 0.90
 - safety_flag: true
 
-**Input**: "не хочу больше жить"
+**Input**: "I don't want to live anymore"
 **Output**:
 - label: grief
 - confidence: 0.90
 - safety_flag: true
 
-**Input**: "мне очень страшно, я боюсь"
+**Input**: "I'm really scared, I'm afraid"
 **Output**:
 - label: fearful
 - confidence: 0.85
 - safety_flag: false
 
-**Input**: "мне грустно и одиноко"
+**Input**: "I feel sad and lonely"
 **Output**:
 - label: sad
 - confidence: 0.80
 - safety_flag: false
 
-## Russian Crisis Keywords (always safety_flag=true)
-- "хочу умереть", "не хочу жить", "покончить с собой", "убить себя"
-- "суицид", "самоубийство", "уйти из жизни", "конец всему"
-- "зачем мне жить", "всем будет лучше без меня", "я обуза"
+## Crisis Keywords (always safety_flag=true)
+- "want to die", "don't want to live", "end my life", "kill myself"
+- "suicide", "suicidal", "no reason to live", "better off dead"
+- "what's the point", "everyone would be better off without me", "I'm a burden"
 
 ## Special Cases
 

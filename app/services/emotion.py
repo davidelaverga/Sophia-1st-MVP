@@ -288,15 +288,15 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
 
             # Use detailed emotion labels that match emotional_guidance.yaml (Task #42867)
             emotion_labels = ", ".join(_DEEP_EMOTION_RAILS)
-            # Enhanced prompt with Russian crisis detection (Task #42867)
+            # Enhanced prompt with crisis detection (Task #42867)
             result = llm_classify(
                 model=model,
                 data=[{"input": text}],
                 template=(
                     f"Classify the primary emotion of the INPUT as one of: {emotion_labels}. "
                     "Consider the emotional tone, word choice, and context. "
-                    "CRITICAL: For Russian crisis messages like 'хочу умереть', 'не хочу жить', "
-                    "'покончить с собой', 'суицид' - classify as 'grief' or 'panic'. "
+                    "CRITICAL: For crisis messages about suicide, self-harm, or wanting to die "
+                    "- classify as 'grief' or 'panic'. "
                     "Return only the emotion label, nothing else."
                 ),
                 rails=list(_DEEP_EMOTION_RAILS),
@@ -355,7 +355,7 @@ def _classify_with_llm(text: str) -> Emotion:
             return Emotion(label="neutral", confidence=0.5)
         client = Mistral(api_key=settings.MISTRAL_API_KEY)
 
-        # Use detailed emotion labels with Russian crisis detection (Task #42867)
+        # Use detailed emotion labels with crisis detection (Task #42867)
         emotion_labels = ", ".join(_DEEP_EMOTION_RAILS)
         r = client.chat.complete(
             model="mistral-small-latest",
@@ -364,8 +364,8 @@ def _classify_with_llm(text: str) -> Emotion:
                     "role": "user",
                     "content": (
                         f"Classify the primary emotion of the following text as one of: {emotion_labels}. "
-                        "CRITICAL: For Russian crisis messages like 'хочу умереть', 'не хочу жить', "
-                        "'покончить с собой', 'суицид' - classify as 'grief' or 'panic', NOT neutral. "
+                        "CRITICAL: For crisis messages about suicide, self-harm, or wanting to die "
+                        "- classify as 'grief' or 'panic', NOT neutral. "
                         'Respond with JSON: {"label": "emotion_name", "confidence": 0.0-1.0}. '
                         f"Text: {text}"
                     ),
