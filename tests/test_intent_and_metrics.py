@@ -86,19 +86,16 @@ class TestIntentEmotionalVsUtility:
                 type=intent_router.INTENT_GREETING, emotion="neutral", confidence=0.8
             )
 
-        monkeypatch.setattr(intent_router, "classify_tier0_fast", fake_tier0)
+    @pytest.mark.asyncio
+    async def test_greeting_ambiguous_biases_to_direct_utility(self):
+        """Greetings with slight ambiguity should route to direct utility, not emotional."""
+        msg = "Hello, Sofia. How are you today?"
 
-        msg = "Hello, how are you?"
-        result = await classify_intent_and_mode(msg, session_id="test-session")
-        assert result.intent == Intent.UTILITY, (
-            f"Message '{msg}' should bias to UTILITY, got {result.intent}"
-        )
-        assert result.current_mode in [
-            CurrentMode.UTILITY_DIRECT,
-            CurrentMode.UTILITY_LIGHT,
-            CurrentMode.UTILITY_AGENTIC,
-        ]
-        assert result.utility_path is not None
+        result = await classify_intent_and_mode(msg, session_id="greeting-test")
+
+        assert result.intent == Intent.UTILITY
+        assert result.current_mode == CurrentMode.UTILITY_DIRECT
+        assert result.utility_path == UtilityPath.DIRECT
 
 
 class TestUtilityDirectVsLight:
