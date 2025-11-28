@@ -4,7 +4,6 @@ Prompt Data Structures and Composer V2 for Sophia
 This module defines core data structures for the prompt composition system
 and implements the PromptComposerV2 class for dynamic prompt assembly.
 
-Tasks: #42785, #42839, #42811
 """
 
 from dataclasses import dataclass
