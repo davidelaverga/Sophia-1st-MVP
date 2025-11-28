@@ -193,7 +193,7 @@ async def synthesize_streamed_reply(text: str, samplerate: int, cancel_check: Op
 
     def _run_blocking_stream():
         try:
-            for pcm_chunk in synthesize_inworld_stream(
+            for pcm_chunk in tts_service.synthesize_inworld_stream(
                 text, sample_rate_hz=samplerate, cancel_check=cancel_check
             ):
                 asyncio.run_coroutine_threadsafe(queue.put(pcm_chunk), loop)
