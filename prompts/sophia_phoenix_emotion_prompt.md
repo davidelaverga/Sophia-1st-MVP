@@ -65,11 +65,44 @@ Return your classification as:
 - confidence: 0.80
 - safety_flag: false
 
+## Russian Crisis Examples
+
+**CRITICAL**: Russian suicidal/crisis messages MUST trigger safety_flag=true:
+
+**Input**: "я хочу умереть"
+**Output**:
+- label: grief
+- confidence: 0.90
+- safety_flag: true
+
+**Input**: "не хочу больше жить"
+**Output**:
+- label: grief
+- confidence: 0.90
+- safety_flag: true
+
+**Input**: "мне очень страшно, я боюсь"
+**Output**:
+- label: fearful
+- confidence: 0.85
+- safety_flag: false
+
+**Input**: "мне грустно и одиноко"
+**Output**:
+- label: sad
+- confidence: 0.80
+- safety_flag: false
+
+## Russian Crisis Keywords (always safety_flag=true)
+- "хочу умереть", "не хочу жить", "покончить с собой", "убить себя"
+- "суицид", "самоубийство", "уйти из жизни", "конец всему"
+- "зачем мне жить", "всем будет лучше без меня", "я обуза"
+
 ## Special Cases
 
 - **Mixed emotions**: Choose the strongest or most actionable emotion
 - **Implicit emotions**: Infer from context and word choice
-- **Crisis indicators**: Always flag if detecting suicidal ideation, self-harm, or immediate danger
+- **Crisis indicators**: Always flag if detecting suicidal ideation, self-harm, or immediate danger - IN ANY LANGUAGE
 - **Ambiguous text**: Default to "neutral" with lower confidence (0.5-0.7)
 
 Your role is critical for Sophia to provide appropriate emotional support. Be accurate, thoughtful, and prioritize user safety.
