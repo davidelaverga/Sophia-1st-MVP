@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from app.routing.models import (
     CurrentMode,
@@ -62,7 +62,7 @@ def _prosody_intensity(prosody: Dict[str, float]) -> float:
 
 
 async def classify_intent_and_mode(
-    user_message: str, session_id: str, prosody: Optional[Dict[str, float]] = None
+    user_message: str, session_id: str, tier0_result: Optional[Dict[str, Any]] = None, prosody: Optional[Dict[str, float]] = None
 ) -> IntentResult:
     """
     Primary routing entrypoint.
@@ -80,11 +80,18 @@ async def classify_intent_and_mode(
     tier0_confidence = 0.6
 
     try:
-        tier0 = await classify_tier0_fast(text, prosody=prosody)
-        tier0_intent = tier0.type
-        tier0_confidence = tier0.confidence
+        tier0_emotion = None
+        if tier0_result is None:
+            tier0 = await classify_tier0_fast(text, prosody=prosody)
+            tier0_intent = tier0.type
+            tier0_confidence = tier0.confidence
+            tier0_emotion = tier0.emotion
+        else:
+            tier0_intent = tier0_result.get('intent', tier0_intent)
+            tier0_confidence = tier0_result.get('confidence', tier0_confidence)
+            tier0_emotion = tier0_result.get('emotion', tier0_emotion)
         reason_chunks.append(
-            f"Tier-0 intent={tier0_intent}, emotion={tier0.emotion}, conf={tier0_confidence:.2f}."
+            f"Tier-0 intent={tier0_intent}, emotion={tier0_emotion}, conf={tier0_confidence:.2f}."
         )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Tier-0 classifier failed, continuing with heuristics: %s", exc)
@@ -128,8 +135,8 @@ async def classify_intent_and_mode(
     )
 
     if abs(utility_score - emotional_score) < 0.25:
-        chosen_intent = Intent.EMOTIONAL_SUPPORT
-        reason_chunks.append("Ambiguous intent; biasing toward emotional support.")
+        chosen_intent = Intent.UTILITY
+        reason_chunks.append("Ambiguous intent; biasing toward utility.")
 
     confidence_gap = abs(utility_score - emotional_score)
     base_conf = max(0.55, tier0_confidence)

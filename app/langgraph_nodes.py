@@ -93,6 +93,7 @@ class GraphState(TypedDict):
     emotion_guidance: List[str]
     fallback_used: Dict[str, str]
     use_voxtral: bool  # Flag to indicate if Voxtral audio pipeline is active
+    tier0_result: Optional[Dict[str, Any]]
     cancel_check: Optional[CancelCallback]
 
 
@@ -369,6 +370,7 @@ class IntentAnalyzer:
             return await classify_intent_and_mode(
                 user_message=transcript,
                 session_id=state["session_id"],
+                tier0_result=state.get("tier0_result"),
                 prosody=None,
             )
 
@@ -1781,6 +1783,7 @@ class SophiaLangGraph:
         supabase_token: Optional[str] = None,
         user_id: Optional[str] = None,
         conversation_count: Optional[int] = None,
+        tier0_result: Optional[Dict[str, Any]] = None,
     ) -> GraphState:
         """Process audio through initial nodes to get context for streaming"""
 
@@ -1820,6 +1823,7 @@ class SophiaLangGraph:
             "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral": False,
+            "tier0_result": tier0_result,
             "cancel_check": None,
         }
 
