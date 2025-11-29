@@ -23,7 +23,7 @@ def _base_state(transcript: str = "Please summarize this.") -> dict:
         "evaluation_logs": [],
         "emotion_guidance": [],
         "fallback_used": {},
-        "use_voxtral_large": False,
+        "use_voxtral": False,
         "supabase_token": None,
         "cancel_check": None,
     }

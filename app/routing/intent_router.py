@@ -83,7 +83,7 @@ async def classify_intent_and_mode(
 
     - Uses tier-0 classifier for coarse intent.
     - Applies lightweight hint checks for emotional vs utility.
-    - Biases ambiguous messages toward emotional support.
+    - Biases ambiguous messages toward emotional support, unless it's a casual/greeting.
     """
 
     text = (user_message or "").strip()
@@ -140,10 +140,18 @@ async def classify_intent_and_mode(
     chosen_intent = (
         Intent.UTILITY if utility_score > emotional_score else Intent.EMOTIONAL_SUPPORT
     )
+    force_direct_utility = False
 
     if abs(utility_score - emotional_score) < 0.25:
-        chosen_intent = Intent.EMOTIONAL_SUPPORT
-        reason_chunks.append("Ambiguous intent; biasing toward emotional support.")
+        if tier0_intent in (INTENT_GREETING, INTENT_CASUAL):
+            chosen_intent = Intent.UTILITY
+            force_direct_utility = True
+            reason_chunks.append(
+                "Ambiguous greeting/casual intent; biasing to direct utility."
+            )
+        else:
+            chosen_intent = Intent.EMOTIONAL_SUPPORT
+            reason_chunks.append("Ambiguous intent; biasing toward emotional support.")
 
     confidence_gap = abs(utility_score - emotional_score)
     base_conf = max(0.55, tier0_confidence)
@@ -164,7 +172,14 @@ async def classify_intent_and_mode(
             reasoning=reasoning,
         )
 
-    utility_path_result: UtilityPathResult = classify_utility_path(text)
+    if force_direct_utility:
+        utility_path_result = UtilityPathResult(
+            path=UtilityPath.DIRECT,
+            confidence=max(final_confidence, 0.78),
+            reasoning="Greeting/casual ambiguity; using direct utility path.",
+        )
+    else:
+        utility_path_result = classify_utility_path(text)
     utility_path = utility_path_result.path
     if utility_path == UtilityPath.DIRECT:
         current_mode = CurrentMode.UTILITY_DIRECT

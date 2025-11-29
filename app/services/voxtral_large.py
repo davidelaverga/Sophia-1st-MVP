@@ -1,7 +1,6 @@
 """Voxtral Large service offering unified audio-to-response handling with intelligent fallbacks."""
 
 import base64
-import io
 import logging
 from typing import Optional, Generator, Dict, Any, Callable
 from mistralai import Mistral
@@ -22,21 +21,58 @@ def _ensure_cancel(cb: Optional[CancelCallback]) -> CancelCallback:
 
 class VoxtralLargeService:
     """
-    Unified audio-to-response service using Voxtral Large.
+    Unified audio-to-response service using Voxtral.
 
     This service processes audio input and generates responses in a single pass,
     eliminating the need for separate STT and LLM coordination.
+
+    Model selection is mode-aware:
+    - UTILITY_DIRECT: Uses fast model (voxtral-mini-latest) for <1.5s latency
+    - UTILITY_LIGHT/EMOTIONAL_SUPPORT/UTILITY_AGENTIC: Uses accurate model (voxtral-small-latest)
     """
+
+    # Mode constants for model selection
+    MODE_DIRECT = "utility_direct"
 
     def __init__(self):
         self.settings = get_settings()
         if not self.settings.MISTRAL_API_KEY:
             raise RuntimeError("MISTRAL_API_KEY is not set")
         self.client = Mistral(api_key=self.settings.MISTRAL_API_KEY)
-        # Voxtral currently exposes its unified audio model as "voxtral-mini-latest".
-        # The previous "voxtral-large-latest" identifier is invalid and causes the API
-        # to reject requests, so we point to the supported model here.
-        self.model = "voxtral-mini-latest"
+
+        # Mode-aware model selection from settings
+        self.fast_model = getattr(
+            self.settings, "VOXTRAL_FAST_MODEL", "voxtral-mini-latest"
+        )
+        self.accurate_model = getattr(
+            self.settings, "VOXTRAL_ACCURATE_MODEL", "voxtral-small-latest"
+        )
+        # Default model for backward compatibility
+        self.model = self.fast_model
+
+        logger.info(
+            f"VoxtralLargeService initialized: fast={self.fast_model}, accurate={self.accurate_model}"
+        )
+
+    def _select_model(self, context: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Select the appropriate model based on current_mode in context.
+
+        - UTILITY_DIRECT: Use fast model for speed (<1.5s latency target)
+        - All other modes: Use accurate model for quality
+        """
+        if context:
+            current_mode = context.get("current_mode", "").lower()
+            if current_mode == self.MODE_DIRECT:
+                logger.debug(
+                    f"Model selection: DIRECT mode → fast model ({self.fast_model})"
+                )
+                return self.fast_model
+
+        logger.debug(
+            f"Model selection: default → accurate model ({self.accurate_model})"
+        )
+        return self.accurate_model
 
     def generate_response(
         self,
@@ -46,11 +82,11 @@ class VoxtralLargeService:
         cancel_check: Optional[CancelCallback] = None,
     ) -> str:
         """
-        Generate a complete response from audio input using Voxtral Large.
+        Generate a complete response from audio input using Voxtral.
 
         Args:
             audio_bytes: Raw audio data
-            context: Optional conversation context (memory, intent, emotion)
+            context: Optional conversation context (memory, intent, emotion, current_mode)
             system_prompt: Optional system instructions
 
         Returns:
@@ -63,6 +99,9 @@ class VoxtralLargeService:
 
             # Build enriched prompt with context
             text_context = self._build_context_prompt(context, system_prompt)
+
+            # Select model based on mode
+            selected_model = self._select_model(context)
 
             messages = [
                 {
@@ -78,17 +117,17 @@ class VoxtralLargeService:
             ]
 
             logger.info(
-                f"Calling Voxtral Large with context length: {len(text_context)}"
+                f"Calling Voxtral ({selected_model}) with context length: {len(text_context)}"
             )
 
             response = self.client.chat.complete(
-                model=self.model,
+                model=selected_model,
                 messages=messages,
             )
             cancel()
             # Extract response content
             content = self._extract_response_content(response)
-            logger.info(f"Voxtral Large response: {content[:100]}...")
+            logger.info(f"Voxtral ({selected_model}) response: {content[:100]}...")
 
             return content
 
@@ -104,11 +143,11 @@ class VoxtralLargeService:
         cancel_check: Optional[CancelCallback] = None,
     ) -> Generator[str, None, None]:
         """
-        Stream response tokens from audio input using Voxtral Large.
+        Stream response tokens from audio input using Voxtral.
 
         Args:
             audio_bytes: Raw audio data
-            context: Optional conversation context (memory, intent, emotion)
+            context: Optional conversation context (memory, intent, emotion, current_mode)
             system_prompt: Optional system instructions
 
         Yields:
@@ -121,6 +160,9 @@ class VoxtralLargeService:
 
             # Build enriched prompt with context
             text_context = self._build_context_prompt(context, system_prompt)
+
+            # Select model based on mode
+            selected_model = self._select_model(context)
 
             messages = [
                 {
@@ -136,11 +178,11 @@ class VoxtralLargeService:
             ]
 
             logger.info(
-                f"Starting Voxtral Large streaming with context length: {len(text_context)}"
+                f"Starting Voxtral ({selected_model}) streaming with context length: {len(text_context)}"
             )
 
             stream = self.client.chat.stream(
-                model=self.model,
+                model=selected_model,
                 messages=messages,
             )
 
@@ -176,12 +218,12 @@ class VoxtralLargeService:
                     continue
 
             logger.info(
-                f"Voxtral Large streaming completed, yielded {tokens_yielded} tokens"
+                f"Voxtral ({selected_model}) streaming completed, yielded {tokens_yielded} tokens"
             )
 
             if tokens_yielded == 0:
-                logger.warning("No tokens yielded from Voxtral Large stream")
-                raise Exception("Empty stream from Voxtral Large")
+                logger.warning("No tokens yielded from Voxtral stream")
+                raise Exception("Empty stream from Voxtral")
 
         except Exception as e:
             logger.error(f"VoxtralLargeService.stream_response failed: {e}")
@@ -222,16 +264,16 @@ class VoxtralLargeService:
     def _transcribe_audio(self, audio_bytes: bytes) -> str:
         """
         Internal method to transcribe audio when transcript is needed separately.
-        Uses Voxtral's transcription endpoint.
+        Uses Voxtral's transcription endpoint with fast model for low latency.
         """
         try:
             file_name = f"audio{self._detect_audio_extension(audio_bytes)}"
-            bio = io.BytesIO(audio_bytes)
 
+            # Always use fast model for transcription (speed priority)
             resp = self.client.audio.transcriptions.complete(
-                model=self.model,
+                model=self.fast_model,
                 file={
-                    "content": bio,
+                    "content": audio_bytes,
                     "file_name": file_name,
                 },
             )
@@ -405,8 +447,8 @@ class HybridVoxtralService:
 
             return {
                 "response": response,
-                "service_used": "voxtral_large",
-                "transcript": None,  # Voxtral Large doesn't separate these
+                "service_used": "voxtral",
+                "transcript": None,  # Voxtral unified pipeline doesn't separate these
             }
 
         except Exception as e:
@@ -447,7 +489,7 @@ class HybridVoxtralService:
                 cancel_check=cancel,
             ):
                 cancel()
-                yield {"token": token, "service_used": "voxtral_large"}
+                yield {"token": token, "service_used": "voxtral"}
 
             return  # Success, no fallback needed
 

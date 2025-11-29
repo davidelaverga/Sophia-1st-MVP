@@ -12,24 +12,30 @@ Tests all 5 parts of the specification:
 import sys
 import logging
 import os
+import io
+import wave
 from pathlib import Path
 import pytest
 
-try:
-    from app.services.langgraph_service import langgraph_service
-    from app.services.evaluations import evaluation_manager
-    from app.services.rag import rag_system
-    from app.services.memory import memory_manager
+_IMPORT_ERROR: Exception | None = None
+_LANGGRAPH_AVAILABLE = False
 
-    _LANGGRAPH_AVAILABLE = True
-    _IMPORT_ERROR: Exception | None = None
-except ModuleNotFoundError as exc:
-    _LANGGRAPH_AVAILABLE = False
-    _IMPORT_ERROR = exc
+if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
+    try:
+        from app.services.langgraph_service import langgraph_service
+        from app.services.evaluations import evaluation_manager
+        from app.services.rag import rag_system
+        from app.services.memory import memory_manager
+
+        _LANGGRAPH_AVAILABLE = True
+    except Exception as exc:  # noqa: BLE001 - broader to catch config errors
+        _IMPORT_ERROR = exc
+else:
+    _IMPORT_ERROR = RuntimeError("Supabase credentials not configured")
 
 pytestmark = pytest.mark.skipif(
     not _LANGGRAPH_AVAILABLE,
-    reason=f"LangGraph dependencies not installed: {_IMPORT_ERROR}",
+    reason=f"LangGraph not available: {_IMPORT_ERROR}",
 )
 
 # Add project root to path
@@ -49,10 +55,18 @@ def load_test_audio(filename: str) -> bytes:
     if audio_path.exists():
         with open(audio_path, "rb") as f:
             return f.read()
-    else:
-        # Return mock audio bytes for testing
-        logger.warning(f"Audio file {filename} not found, using mock data")
-        return b"mock_audio_data_" + filename.encode()
+    # Return a tiny valid WAV (silence) so downstream ASR doesn't reject
+    logger.warning(f"Audio file {filename} not found, generating silent WAV bytes")
+    buffer = io.BytesIO()
+    sample_rate = 16000
+    duration_sec = 1.0
+    num_frames = int(sample_rate * duration_sec)
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit samples
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * num_frames)
+    return buffer.getvalue()
 
 
 def _run_langgraph_nodes() -> bool:
@@ -86,9 +100,10 @@ def _run_langgraph_nodes() -> bool:
 
     except Exception as e:
         reason = f"LangGraph nodes test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            # Under pytest, let this surface as a real failure
+            raise
         return False
 
 
@@ -155,9 +170,9 @@ def _run_memory_system() -> bool:
 
     except Exception as e:
         reason = f"Memory system test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -203,9 +218,9 @@ def _run_rag_system() -> bool:
 
     except Exception as e:
         reason = f"RAG system test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -242,9 +257,9 @@ def _run_ragas_evaluation() -> bool:
 
     except Exception as e:
         reason = f"RAGAS evaluation test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -295,9 +310,9 @@ def _run_phoenix_drift_monitor() -> bool:
 
     except Exception as e:
         reason = f"Phoenix drift monitor test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 
@@ -343,9 +358,9 @@ def _run_full_integration() -> bool:
 
     except Exception as e:
         reason = f"Full integration test failed: {e}"
-        print(f"[SKIP] {reason}")
+        print(f"[FAIL] {reason}")
         if "PYTEST_CURRENT_TEST" in os.environ:
-            pytest.skip(reason)
+            raise
         return False
 
 

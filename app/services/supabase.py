@@ -4,7 +4,8 @@ import logging
 import os
 import uuid
 from contextlib import contextmanager
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 try:
     from dotenv import load_dotenv, find_dotenv
@@ -237,6 +238,40 @@ def insert_emotion_score(
         # Don't raise the exception, just log it and continue
 
 
+def persist_session_memory(
+    memory_record: Dict[str, Any], access_token: Optional[str] = None
+) -> None:
+    """Upsert a session-level memory summary into session_memory."""
+    session_id = memory_record.get("session_id")
+    if not session_id:
+        logger.warning("session_memory upsert skipped: missing session_id")
+        return
+
+    payload = {
+        "session_id": str(session_id),
+        "topics": memory_record.get("topics") or [],
+        "turn_count": int(memory_record.get("turn_count", 0)),
+        "last_user_emotion": memory_record.get("last_user_emotion") or "neutral",
+        "last_sophia_emotion": memory_record.get("last_sophia_emotion") or "neutral",
+    }
+
+    try:
+        client = get_supabase(access_token)
+    except Exception as exc:
+        logger.warning("session_memory upsert skipped (client init failed): %s", exc)
+        return
+
+    try:
+        with _supabase_span(
+            "supabase.persist_session_memory", session_id=str(session_id)
+        ):
+            client.table("session_memory").upsert(
+                payload, on_conflict="session_id"
+            ).execute()
+    except Exception as exc:
+        logger.warning("session_memory upsert failed: %s", exc)
+
+
 def insert_conversation_session(
     data: Dict[str, Any], access_token: Optional[str] = None
 ) -> None:
@@ -271,6 +306,163 @@ def insert_conversation_session(
 
         logging.warning(f"conversation_sessions insert failed: {e}")
         # Don't raise the exception, just log it and continue
+
+
+def persist_conversation_turn(
+    session_id: Optional[str],
+    user_id: Optional[str],
+    messages: List[Dict[str, Any]],
+    session_metadata: Optional[Dict[str, Any]] = None,
+    access_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Ensure a session exists and append one or more messages to it.
+
+    Args:
+        session_id: Conversation session UUID (generated if missing).
+        user_id: Owning user UUID for RLS. Optional for service-role writes.
+        messages: List of message payloads with at least `role` and either
+                  `content` or `transcript`. Optional fields match the
+                  conversation_messages schema.
+        session_metadata: Optional session-level fields to upsert
+                          (status, last_intent, last_*_emotion, title, context_summary).
+        access_token: User-scoped token to satisfy RLS.
+
+    Returns:
+        Dict containing the session_id used and any inserted message_ids.
+    """
+
+    if not messages:
+        return {"session_id": session_id, "message_ids": []}
+
+    session_uuid = str(session_id or uuid.uuid4())
+    client = get_supabase(access_token)
+
+    # Build session payload; rely on DB defaults for started_at/turn_count.
+    session_payload: Dict[str, Any] = {
+        "id": session_uuid,
+        "last_activity_at": datetime.utcnow().isoformat(),
+    }
+    if user_id:
+        session_payload["user_id"] = user_id
+    if session_metadata:
+        allowed_fields = {
+            "status",
+            "last_intent",
+            "last_user_emotion_label",
+            "last_user_emotion_confidence",
+            "last_sophia_emotion_label",
+            "last_sophia_emotion_confidence",
+            "title",
+            "context_summary",
+            "turn_count",
+            "ended_at",
+        }
+        for key, value in session_metadata.items():
+            if key in allowed_fields:
+                session_payload[key] = value
+
+    try:
+        with _supabase_span("supabase.upsert_session", session_id=session_uuid):
+            client.table("conversation_sessions").upsert(
+                session_payload, on_conflict="id"
+            ).execute()
+    except Exception as exc:
+        logging.warning("conversation_sessions upsert failed: %s", exc)
+
+    # Determine the starting turn index when not provided.
+    next_turn_index = 0
+    try:
+        result = (
+            client.table("conversation_messages")
+            .select("turn_index")
+            .eq("session_id", session_uuid)
+            .order("turn_index", desc=True)
+            .limit(1)
+            .execute()
+        )
+        last_row = getattr(result, "data", None) or []
+        if last_row:
+            next_turn_index = int(last_row[0].get("turn_index", -1)) + 1
+    except Exception as exc:
+        logging.warning("conversation_messages turn_index lookup failed: %s", exc)
+
+    message_rows: List[Dict[str, Any]] = []
+    for offset, msg in enumerate(messages):
+        turn_index = msg.get("turn_index")
+        if turn_index is None:
+            turn_index = next_turn_index + offset
+
+        payload = {
+            "session_id": session_uuid,
+            "turn_index": turn_index,
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+            "transcript": msg.get("transcript"),
+            "audio_url": msg.get("audio_url"),
+            "intent": msg.get("intent"),
+            "input_type": msg.get("input_type"),
+            "emotion_label": msg.get("emotion_label"),
+            "emotion_confidence": msg.get("emotion_confidence"),
+            "token_count": msg.get("token_count"),
+            "latency_ms": msg.get("latency_ms"),
+        }
+        message_rows.append(payload)
+
+    message_ids: List[str] = []
+    inserted_rows: List[Dict[str, Any]] = []
+    try:
+        with _supabase_span(
+            "supabase.insert_conversation_messages",
+            session_id=session_uuid,
+            message_count=len(message_rows),
+        ):
+            insert_result = (
+                client.table("conversation_messages").insert(message_rows).execute()
+            )
+            inserted_rows = getattr(insert_result, "data", None) or []
+            for row in inserted_rows:
+                row_id = row.get("id")
+                if row_id:
+                    message_ids.append(str(row_id))
+    except Exception as exc:
+        logging.warning("conversation_messages insert failed: %s", exc)
+
+    # Opportunistically insert emotion_scores per message
+    try:
+        emotion_rows: List[Dict[str, Any]] = []
+        if inserted_rows and len(inserted_rows) == len(messages):
+            for msg, row in zip(messages, inserted_rows):
+                role = msg.get("role")
+                if not role:
+                    continue
+                message_id = row.get("id")
+                if not message_id:
+                    continue
+                label = msg.get("emotion_label")
+                confidence = msg.get("emotion_confidence")
+                if label is None or confidence is None:
+                    continue
+                emotion_rows.append(
+                    {
+                        "session_id": session_uuid,
+                        "message_id": message_id,
+                        "role": role,
+                        "label": label,
+                        "confidence": float(confidence),
+                        "user_id": user_id,
+                    }
+                )
+        if emotion_rows:
+            with _supabase_span(
+                "supabase.insert_emotion_scores",
+                session_id=session_uuid,
+                count=len(emotion_rows),
+            ):
+                client.table("emotion_scores").insert(emotion_rows).execute()
+    except Exception as exc:
+        logging.warning("emotion_scores insert failed: %s", exc)
+
+    return {"session_id": session_uuid, "message_ids": message_ids}
 
 
 def has_user_consent(discord_id: str, access_token: Optional[str] = None) -> bool:

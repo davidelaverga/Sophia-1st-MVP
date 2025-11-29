@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from app.config import get_settings
-from app.services.supabase import get_supabase
+from app.services.supabase import get_supabase, persist_session_memory
 
 logger = logging.getLogger(__name__)
 
@@ -437,10 +437,10 @@ class MemoryManager:
                 "updated_at": memory.updated_at,
             }
 
-            # Upsert to session_memory table (would need to create this table)
-            # For now, just log the memory state
+            # Upsert to session_memory table
+            persist_session_memory(memory_record)
             logger.info(
-                f"Memory persisted for session {memory.session_id}: {memory_record}"
+                f"Memory persistence attempted for session {memory.session_id}: {memory_record}"
             )
 
         except Exception as e:
