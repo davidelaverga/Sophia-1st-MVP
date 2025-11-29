@@ -24,12 +24,26 @@ logger = logging.getLogger("sophia-backend")
 
 # Explicit substring cues (client-provided phrases only)
 EMOTIONAL_HINTS = [
+    # English
     r"\bi feel\b",
     r"\bi'm scared\b",
     r"\bi'm afraid\b",
     r"\bi'm sad\b",
     r"\bi'm lost\b",
     r"\bi'm anxious\b",
+    # Russian - Task #42811: Support Russian emotional expressions
+    r"\bмне грустно\b",
+    r"\bмне плохо\b",
+    r"\bмне страшно\b",
+    r"\bя боюсь\b",
+    r"\bя переживаю\b",
+    r"\bмне тревожно\b",
+    r"\bя чувствую\b",
+    r"\bодиноко\b",
+    r"\bпотерян\b",
+    r"\bгрустно\b",
+    r"\bтяжело\b",
+    r"\bбольно\b",
 ]
 
 UTILITY_HINTS = [
