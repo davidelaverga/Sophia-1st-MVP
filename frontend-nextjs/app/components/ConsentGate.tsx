@@ -61,7 +61,7 @@ export function ConsentGate({ onReady }: { onReady: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-sophia-text/50 px-3 backdrop-blur-sm">
-      <div className="w-full max-w-full rounded-3xl bg-white p-5 text-sophia-text shadow-soft sm:max-w-lg sm:p-6">
+      <div className="w-full max-w-full rounded-3xl bg-sophia-card p-5 text-sophia-text shadow-soft sm:max-w-lg sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Shield className="h-8 w-8 text-sophia-purple" />
           <div>

@@ -86,6 +86,25 @@ export function ConversationView() {
   const voiceState = useVoiceLoop(user?.id)
   const voiceStage = voiceState.stage
   
+  // Reset voice state when leaving voice mode to prevent stuck states
+  // Also prevent auto-start when entering voice mode if coming from a stuck state
+  useEffect(() => {
+    if (focusMode !== "voice") {
+      // If we're leaving voice mode and voice is active, reset it
+      if (voiceStage === "thinking" || voiceStage === "connecting" || voiceStage === "listening" || voiceStage === "speaking") {
+        console.log("[ConversationView] Leaving voice mode, resetting voice state")
+        voiceState.resetVoiceState?.()
+      }
+    } else {
+      // When entering voice mode, ensure we're in a clean state (not stuck in thinking)
+      if (voiceStage === "thinking") {
+        // Check if we've been thinking for too long (should be caught by timeout, but double-check)
+        console.log("[ConversationView] Entering voice mode but voice is in thinking state, resetting")
+        voiceState.resetVoiceState?.()
+      }
+    }
+  }, [focusMode, voiceStage, voiceState])
+  
   // Monitor usage and trigger alerts
   useUsageMonitor()
   
@@ -213,7 +232,8 @@ export function ConversationView() {
           </div>
         )}
       </div>
-      {!chunks && <SessionFeedbackToast />}
+      {/* Only show feedback toast in chat mode, not voice mode */}
+      {!chunks && focusMode !== "voice" && <SessionFeedbackToast />}
       {chunks && conversationId && (
         <ReflectionModal conversationId={conversationId} chunks={chunks} onClose={dismiss} />
       )}
@@ -250,7 +270,7 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
   }
 
   return (
-    <div className="rounded-3xl bg-white p-4 shadow-soft">
+    <div className="rounded-3xl bg-sophia-card p-4 shadow-soft">
       <div
         ref={scrollContainerRef}
         role="log"
@@ -312,7 +332,7 @@ function EmptyState({ onPromptSelect }: { onPromptSelect: (prompt: string) => vo
             <button
               key={prompt.id}
               type="button"
-              className="group rounded-2xl border border-sophia-text/10 bg-white/70 px-4 py-2.5 text-sm font-medium text-sophia-text shadow-sm transition-all duration-300 ease-out hover:scale-[1.02] hover:border-sophia-purple/40 hover:bg-white hover:text-sophia-purple hover:shadow-md active:scale-[0.98]"
+              className="group rounded-2xl border border-sophia-text/10 bg-sophia-button/70 px-4 py-2.5 text-sm font-medium text-sophia-text shadow-sm transition-all duration-300 ease-out hover:scale-[1.02] hover:border-sophia-purple/40 hover:bg-sophia-button-hover hover:text-sophia-purple hover:shadow-md active:scale-[0.98]"
               onClick={() => onPromptSelect(prompt.label)}
               style={{ animationDelay: `${index * 50}ms` }}
             >
@@ -525,7 +545,7 @@ function Composer({
 
   return (
     <div className="space-y-2 composer-container">
-      <div className="rounded-2xl bg-white p-4 shadow-soft transition-all duration-300">
+      <div className="rounded-2xl bg-sophia-card p-4 shadow-soft transition-all duration-300">
         <div className="flex flex-col gap-3">
           <textarea
             ref={textareaRef}
@@ -540,7 +560,8 @@ function Composer({
             onKeyDown={onKeyDown}
             onFocus={handleFocus}
             onBlur={handleBlur}
-            className={`w-full resize-none rounded-2xl border border-sophia-text/10 bg-sophia-user px-4 py-3 text-base text-sophia-text outline-none transition-all duration-300 ease-out focus:border-sophia-purple/60 focus:shadow-sm ${
+            style={{ backgroundColor: 'var(--input-bg)' }}
+            className={`w-full resize-none rounded-2xl border border-sophia-input-border px-4 py-3 text-base text-sophia-text placeholder:text-sophia-text2 outline-none transition-all duration-300 ease-out focus:border-sophia-purple/60 focus:shadow-sm ${
               isModalOpen ? "opacity-50 cursor-not-allowed" : ""
             }`}
           />

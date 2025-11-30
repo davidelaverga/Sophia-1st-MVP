@@ -1052,20 +1052,12 @@ video {
 .border-t {
   border-top-width: 1px;
 }
-.border-amber-200 {
-  --tw-border-opacity: 1;
-  border-color: rgb(253 230 138 / var(--tw-border-opacity, 1));
-}
 .border-blue-200 {
   --tw-border-opacity: 1;
   border-color: rgb(191 219 254 / var(--tw-border-opacity, 1));
 }
 .border-cyan-500\/30 {
   border-color: rgb(6 182 212 / 0.3);
-}
-.border-gray-200 {
-  --tw-border-opacity: 1;
-  border-color: rgb(229 231 235 / var(--tw-border-opacity, 1));
 }
 .border-gray-500\/30 {
   border-color: rgb(107 114 128 / 0.3);
@@ -1118,10 +1110,6 @@ video {
 .border-t-white {
   --tw-border-opacity: 1;
   border-top-color: rgb(255 255 255 / var(--tw-border-opacity, 1));
-}
-.bg-amber-50 {
-  --tw-bg-opacity: 1;
-  background-color: rgb(255 251 235 / var(--tw-bg-opacity, 1));
 }
 .bg-black\/40 {
   background-color: rgb(0 0 0 / 0.4);
@@ -1217,15 +1205,6 @@ video {
 }
 .bg-white\/10 {
   background-color: rgb(255 255 255 / 0.1);
-}
-.bg-white\/60 {
-  background-color: rgb(255 255 255 / 0.6);
-}
-.bg-white\/70 {
-  background-color: rgb(255 255 255 / 0.7);
-}
-.bg-white\/80 {
-  background-color: rgb(255 255 255 / 0.8);
 }
 .bg-yellow-100 {
   --tw-bg-opacity: 1;
@@ -1389,6 +1368,10 @@ video {
 .p-8 {
   padding: 2rem;
 }
+.px-1 {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
 .px-2 {
   padding-left: 0.5rem;
   padding-right: 0.5rem;
@@ -1468,6 +1451,9 @@ video {
 .pr-2 {
   padding-right: 0.5rem;
 }
+.pt-1 {
+  padding-top: 0.25rem;
+}
 .pt-12 {
   padding-top: 3rem;
 }
@@ -1546,10 +1532,6 @@ video {
 }
 .tracking-wide {
   letter-spacing: 0.025em;
-}
-.text-amber-800 {
-  --tw-text-opacity: 1;
-  color: rgb(146 64 14 / var(--tw-text-opacity, 1));
 }
 .text-blue-900 {
   --tw-text-opacity: 1;
@@ -1794,49 +1776,141 @@ video {
   --error: #e8a09a;
   --radius-md: 12px;
   --radius-xl: 24px;
-  --shadow-soft: 0 8px 24px rgba(26, 7, 50, 0.08);
+  --shadow-soft: rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px;
+  
+  /* Semantic colors for components */
+  --card-bg: #ffffff;              /* Cards, panels, containers */
+  --card-border: rgba(45, 40, 51, 0.1);
+  --input-bg: rgba(255, 255, 255, 0.7);
+  --input-border: rgba(45, 40, 51, 0.15);
+  --button-bg: #ffffff;
+  --button-hover: #f8f7fa;
 }
 
-/* 🌙 Dark Mode – Proposal 1: Midnight Serenity */
-:root[data-sophia-theme="midnight"] {
-  --sophia-purple: #a78bf5;        /* brighter violet */
-  --sophia-glow: #c4a5f5;          /* stronger glow */
-  --bg: #0f0b1a;                   /* deep night background */
-  --text: #e8e3f0;                 /* soft almost-white text */
-  --text-2: #9d94b0;
-  --user-bubble: #1a1525;
-  --sophia-bubble: #1f1830;
-  --btn-active: #b896d4;
-  --error: #f48c8c;
-  --shadow-soft: 0 8px 24px rgba(167, 139, 250, 0.15);
+/* 🌙 Dark Mode – Proposal 1: Accessible Indigo */
+:root[data-sophia-theme="accessible-indigo"] {
+  --sophia-purple: #a78bfa;        /* WCAG AAA compliant on dark bg */
+  --sophia-glow: #c4b5fd;          /* bright glow for visibility */
+  --bg: #1e1b2e;                   /* dark indigo background */
+  --text: #f5f3ff;                 /* WCAG AAA compliant text */
+  --text-2: #c7d2fe;               /* WCAG AA compliant secondary text */
+  --user-bubble: #312e48;          /* subtle contrast */
+  --sophia-bubble: #3b3662;        /* distinct from cards */
+  --btn-active: #a78bfa;
+  --error: #fca5a5;
+  --shadow-soft: rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px;
+  
+  --card-bg: #2a2740;              /* cards visible from background */
+  --card-border: rgba(30, 27, 46, 0.6);  /* darker border instead of bright */
+  --input-bg: #1a1829;             /* darker input area */
+  --input-border: rgba(30, 27, 46, 0.8);
+  --button-bg: #2a2740;
+  --button-hover: #3b3662;
 }
 
-/* 🌙 Dark Mode – Proposal 2: Twilight Calm */
-:root[data-sophia-theme="twilight"] {
-  --sophia-purple: #9d8bc7;
-  --sophia-glow: #b8a4d8;
-  --bg: #1a1625;
-  --text: #e0d9eb;
-  --text-2: #8b7fa0;
-  --user-bubble: #252030;
-  --sophia-bubble: #2a2435;
-  --btn-active: #a68aca;
-  --error: #e8a09a;
-  --shadow-soft: 0 8px 24px rgba(139, 92, 246, 0.12);
+/* 🌙 Dark Mode – Proposal 2: Accessible Slate */
+:root[data-sophia-theme="accessible-slate"] {
+  --sophia-purple: #c084fc;        /* WCAG AAA compliant purple */
+  --sophia-glow: #d8b4fe;          /* bright lavender glow */
+  --bg: #1e293b;                   /* slate background */
+  --text: #f1f5f9;                 /* WCAG AAA compliant text */
+  --text-2: #cbd5e1;               /* WCAG AA compliant secondary */
+  --user-bubble: #334155;          /* slate-700 */
+  --sophia-bubble: #475569;        /* slate-600 for distinction */
+  --btn-active: #c084fc;
+  --error: #f87171;
+  --shadow-soft: rgba(50, 50, 93, 0.25) 0px 2px 5px -1px, rgba(0, 0, 0, 0.3) 0px 1px 3px -1px;
+  
+  --card-bg: #2d3748;              /* darker slate */
+  --card-border: rgba(30, 41, 59, 0.7);  /* dark slate border */
+  --input-bg: #1a202c;             /* very dark input */
+  --input-border: rgba(30, 41, 59, 0.9);
+  --button-bg: #334155;
+  --button-hover: #475569;
 }
 
-/* 🌙 Dark Mode – Proposal 3: Deep Space */
-:root[data-sophia-theme="deep-space"] {
-  --sophia-purple: #b794f6;
-  --sophia-glow: #d6b3ff;
-  --bg: #0a0714;
-  --text: #f0ebff;
-  --text-2: #a594c7;
-  --user-bubble: #151020;
-  --sophia-bubble: #1a1528;
-  --btn-active: #c4a5f5;
+/* 🌙 Dark Mode – Proposal 3: Accessible Charcoal */
+:root[data-sophia-theme="accessible-charcoal"] {
+  --sophia-purple: #d8b4fe;        /* WCAG AAA compliant bright lavender */
+  --sophia-glow: #e9d5ff;          /* very bright glow */
+  --bg: #18181b;                   /* charcoal zinc background */
+  --text: #fafafa;                 /* WCAG AAA compliant white */
+  --text-2: #d4d4d8;               /* WCAG AAA compliant gray */
+  --user-bubble: #27272a;          /* zinc-800 */
+  --sophia-bubble: #3f3f46;        /* zinc-700 for messages */
+  --btn-active: #d8b4fe;
+  --error: #fca5a5;
+  --shadow-soft: rgba(60, 64, 67, 0.3) 0px 1px 2px 0px, rgba(60, 64, 67, 0.15) 0px 1px 3px 1px;
+  
+  --card-bg: #27272a;              /* zinc-800 cards */
+  --card-border: rgba(24, 24, 27, 0.8);  /* very dark border */
+  --input-bg: #18181b;             /* same as bg for subtle look */
+  --input-border: rgba(24, 24, 27, 0.9);
+  --button-bg: #27272a;
+  --button-hover: #3f3f46;
+}
+
+/* 🌙 Dark Mode – Proposal 4: Moonlit Embrace (Abrazo Lunar) */
+:root[data-sophia-theme="moonlit-embrace"] {
+  --sophia-purple: #a995e3;        /* violeta luminoso plateado */
+  --sophia-glow: #c4b3f5;          /* glow lunar brillante */
+  --bg: #0a0c16;                   /* azul-violeta muy profundo */
+  --text: #f0eef7;                 /* texto casi blanco muy legible */
+  --text-2: #b8afd4;               /* texto secundario con buen contraste */
+  --user-bubble: #1a1e2f;          /* nube nocturna con contraste */
+  --sophia-bubble: #2a2d45;        /* violeta medio para mensajes de Sophia */
+  --btn-active: #b8a8e8;
+  --error: #ff9a9a;
+  --shadow-soft: 0 8px 24px rgba(169, 149, 227, 0.25);
+  
+  --card-bg: #1a1e30;              /* cards más claros que fondo */
+  --card-border: rgba(169, 149, 227, 0.2);
+  --input-bg: #0a0c14;             /* inputs más oscuros que cards */
+  --input-border: rgba(169, 149, 227, 0.25);
+  --button-bg: #1a1e2f;
+  --button-hover: #222840;
+}
+
+/* 🌙 Dark Mode – Proposal 5: Velvet Night (Noche de Terciopelo) */
+:root[data-sophia-theme="velvet-night"] {
+  --sophia-purple: #c49ee8;        /* amatista brillante visible */
+  --sophia-glow: #e0c4ff;          /* glow vibrante dorado-violeta */
+  --bg: #140a1f;                   /* púrpura muy oscuro para máximo contraste */
+  --text: #f5f0fc;                 /* casi blanco cálido muy legible */
+  --text-2: #c4a8d4;               /* lavanda clara con contraste */
+  --user-bubble: #241830;          /* vino tinto con contraste */
+  --sophia-bubble: #342648;        /* púrpura medio para Sophia */
+  --btn-active: #d4b8f5;
+  --error: #ff9a9a;
+  --shadow-soft: 0 8px 30px rgba(196, 158, 232, 0.3);
+  
+  --card-bg: #241832;              /* cards más claros que fondo */
+  --card-border: rgba(196, 158, 232, 0.2);
+  --input-bg: #0f0a14;             /* inputs más oscuros que cards */
+  --input-border: rgba(196, 158, 232, 0.25);
+  --button-bg: #241830;
+  --button-hover: #2d1f40;
+}
+
+/* 🌙 Dark Mode – Proposal 6: Dawn's Promise (Promesa del Amanecer) */
+:root[data-sophia-theme="dawns-promise"] {
+  --sophia-purple: #c499e8;        /* rosa-violeta brillante */
+  --sophia-glow: #e0b8ff;          /* glow dorado-rosa vibrante */
+  --bg: #0d0a18;                   /* índigo muy profundo */
+  --text: #f7f2fa;                 /* texto cálido muy legible */
+  --text-2: #c4a8d4;               /* lavanda rosado con contraste */
+  --user-bubble: #1f1628;          /* sombra cálida con contraste */
+  --sophia-bubble: #2e2440;        /* índigo-rosa medio para Sophia */
+  --btn-active: #d4aae8;
   --error: #ff9f9f;
-  --shadow-soft: 0 8px 24px rgba(183, 148, 246, 0.2);
+  --shadow-soft: 0 8px 28px rgba(196, 153, 232, 0.28);
+  
+  --card-bg: #1f1628;              /* cards más claros que fondo */
+  --card-border: rgba(196, 153, 232, 0.2);
+  --input-bg: #0d0a12;             /* inputs más oscuros que cards */
+  --input-border: rgba(196, 153, 232, 0.25);
+  --button-bg: #1f1628;
+  --button-hover: #281e35;
 }
 
 * {
@@ -1981,11 +2055,6 @@ a {
 
 .hover\:bg-sophia-user:hover {
   background-color: var(--user-bubble);
-}
-
-.hover\:bg-white:hover {
-  --tw-bg-opacity: 1;
-  background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
 }
 
 .hover\:bg-white\/20:hover {

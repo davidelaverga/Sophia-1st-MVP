@@ -24,7 +24,6 @@ type VoicePanelProps = {
 export function VoicePanel({ voiceState }: VoicePanelProps) {
   const { stage, partialReply, finalReply, error, path, needsUnlock, stream, startTalking, stopTalking, bargeIn, unlockAudio } =
     voiceState
-  const isRecordingRef = useRef(false)
   
   // Focus mode management
   const setMode = useFocusModeStore((state) => state.setMode)
@@ -35,11 +34,11 @@ export function VoicePanel({ voiceState }: VoicePanelProps) {
   
   // Stop recording if modal opens
   useEffect(() => {
-    if (isModalOpen && isRecordingRef.current) {
-      isRecordingRef.current = false
+    const isRecording = stage === "listening"
+    if (isModalOpen && isRecording) {
       stopTalking()
     }
-  }, [isModalOpen, stopTalking])
+  }, [isModalOpen, stopTalking, stage])
   
   // Map voice stage to presence state for waveform
   const getWaveformState = () => {
@@ -61,22 +60,21 @@ export function VoicePanel({ voiceState }: VoicePanelProps) {
       return
     }
 
-    if (isRecordingRef.current) {
+    const isRecording = stage === "listening"
+    
+    if (isRecording) {
       // Stop recording - immediate feedback
-      isRecordingRef.current = false
       stopTalking()
     } else {
       // Start recording - immediate visual feedback
-      isRecordingRef.current = true
-      
-      // Switch to voice focus mode when user starts talking
+      // Switch to voice focus mode for smooth transition
       setMode("voice")
       setManualOverride(true)
       
       // Start async operations in background (don't await)
       // This allows immediate visual feedback
-      startTalking().catch(() => {
-        isRecordingRef.current = false
+      startTalking().catch((error) => {
+        console.error("[VoicePanel] Failed to start talking:", error)
       })
     }
   }
@@ -93,7 +91,7 @@ export function VoicePanel({ voiceState }: VoicePanelProps) {
 
   return (
     <section 
-      className={`rounded-3xl bg-white p-5 pb-6 shadow-soft transition-all duration-500 ${
+      className={`rounded-3xl bg-sophia-card p-5 pb-6 shadow-soft transition-all duration-500 ${
         stage === "thinking" 
           ? "animate-ringBreathe" 
           : ""
@@ -174,7 +172,7 @@ export function VoicePanel({ voiceState }: VoicePanelProps) {
           <p>Safari needs one extra tap to enable audio.</p>
           <button
             type="button"
-            className="mt-2 inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-medium text-sophia-text"
+            className="mt-2 inline-flex items-center gap-1 rounded-full bg-sophia-button px-3 py-1 text-xs font-medium text-sophia-text"
             onClick={unlockAudio}
           >
             <Zap className="h-3 w-3" />

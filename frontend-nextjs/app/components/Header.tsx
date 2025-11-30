@@ -1,22 +1,20 @@
 "use client"
 
-import { useRouter } from "next/navigation"
 import { copy, t } from "../../copy"
-import { PresenceIndicator } from "./PresenceIndicator"
-import { useSupabase } from "../providers"
+import { getPresenceCopyKey, usePresenceStore } from "../stores/presence-store"
 
 type HeaderProps = {
   onOpenSettings?: () => void
 }
 
 export function Header({ onOpenSettings }: HeaderProps) {
-  const { user } = useSupabase()
-  const router = useRouter()
+  const status = usePresenceStore((state) => state.status)
+  const detail = usePresenceStore((state) => state.detail)
 
   return (
     <header className="safe-px flex h-14 items-center justify-between">
       <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sophia-purple text-lg font-semibold text-white shadow-md animate-breatheSlow">
+        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sophia-purple text-lg font-semibold text-white">
           {copy.brand.initial}
         </span>
         <div>
@@ -27,24 +25,16 @@ export function Header({ onOpenSettings }: HeaderProps) {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <PresenceIndicator />
-        {user ? (
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="rounded-2xl border border-sophia-text/15 bg-white/60 px-4 py-1.5 text-sm font-medium text-sophia-text shadow-soft/20 transition-all duration-300 ease-out hover:scale-[1.02] hover:bg-white hover:shadow-md active:scale-[0.98]"
-          >
-            {t("settings.title")}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => router.push("/login")}
-            className="rounded-2xl bg-gradient-to-br from-sophia-purple to-sophia-glow px-4 py-1.5 text-sm font-semibold text-white shadow-md shadow-sophia-purple/30 transition-all duration-300 ease-out hover:scale-[1.02] hover:shadow-lg hover:shadow-sophia-purple/40 active:scale-[0.98]"
-          >
-            Sign in
-          </button>
-        )}
+        <span aria-live="polite" className="text-sm text-sophia-text2">
+          {detail ?? t(getPresenceCopyKey(status))}
+        </span>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="rounded-2xl border border-sophia-text/15 bg-sophia-button px-4 py-1.5 text-sm font-medium text-sophia-text shadow-soft/20 transition hover:bg-sophia-button-hover"
+        >
+          {t("settings.title")}
+        </button>
       </div>
     </header>
   )

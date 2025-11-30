@@ -51,7 +51,7 @@ export function FeedbackStrip({ turnId }: FeedbackStripProps) {
   }
 
   return (
-    <div className="mt-3 rounded-2xl border border-sophia-text/10 bg-white/80 px-3 py-2 text-sm text-sophia-text">
+    <div className="mt-3 rounded-2xl border border-sophia-text/10 bg-sophia-card/80 px-3 py-2 text-sm text-sophia-text">
       {!submitted ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-sophia-text2">Did this help?</span>
@@ -95,7 +95,7 @@ export function FeedbackStrip({ turnId }: FeedbackStripProps) {
                 className={`rounded-full border px-3 py-1 text-xs transition ${
                   selectedTag === tag.id
                     ? "border-sophia-purple bg-sophia-purple text-white"
-                    : "border-sophia-text/20 bg-white text-sophia-text"
+                    : "border-sophia-text/20 bg-sophia-button text-sophia-text"
                 }`}
                 disabled={submitting}
                 onClick={() => {

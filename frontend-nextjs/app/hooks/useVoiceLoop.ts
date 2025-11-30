@@ -116,6 +116,7 @@ export function useVoiceLoop(userId?: string) {
   const replyBufferRef = useRef("")
   const connectPromiseRef = useRef<Promise<WebSocket> | null>(null)
   const destroyedRef = useRef(false)
+  const thinkingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const playbackQueueRef = useRef<QueuedChunk[]>([])
   const isPlayingRef = useRef(false)
@@ -339,12 +340,50 @@ export function useVoiceLoop(userId?: string) {
         const text = typeof data.text === "string" ? data.text : ""
         replyBufferRef.current = `${replyBufferRef.current}${text}`
         setPartialReply(replyBufferRef.current)
-        setStage((prev) => (prev === "listening" ? "thinking" : prev))
-        setListeningPresence(false)
-        setMetaPresence("thinking")
+        const wasListening = stage === "listening"
+        if (wasListening) {
+          setStage("thinking")
+          setListeningPresence(false)
+          setMetaPresence("thinking")
+          
+          // Clear any existing timeout
+          if (thinkingTimeoutRef.current) {
+            clearTimeout(thinkingTimeoutRef.current)
+          }
+          
+          // Set timeout to reset if no response in 60 seconds
+          thinkingTimeoutRef.current = setTimeout(() => {
+            console.warn("[voice] Thinking timeout - no response from server after 60s, resetting")
+            setStage("idle")
+            setError("Voice session timed out. Please try again.")
+            setListeningPresence(false)
+            setSpeakingPresence(false)
+            setMetaPresence("resting")
+            settlePresence()
+            
+            // Close and cleanup WebSocket if stuck
+            if (wsRef.current) {
+              try {
+                wsRef.current.close()
+              } catch {
+                // ignore
+              }
+              wsRef.current = null
+            }
+            cleanupRecorder()
+            thinkingTimeoutRef.current = null
+            emitTelemetry("voice.timeout", { path })
+          }, 60000) // 60 seconds timeout
+        }
         break
       }
       case "reply_done": {
+        // Clear thinking timeout since we got a response
+        if (thinkingTimeoutRef.current) {
+          clearTimeout(thinkingTimeoutRef.current)
+          thinkingTimeoutRef.current = null
+        }
+        
         const text = typeof data.text === "string" ? data.text : replyBufferRef.current
         
         // Save to voice history (for VoiceTranscript component)
@@ -392,6 +431,12 @@ export function useVoiceLoop(userId?: string) {
         }
         break
       case "error": {
+        // Clear thinking timeout on error
+        if (thinkingTimeoutRef.current) {
+          clearTimeout(thinkingTimeoutRef.current)
+          thinkingTimeoutRef.current = null
+        }
+        
         // Check if it's a usage limit error
         if (data.error === "USAGE_LIMIT_REACHED") {
           const limitError: UsageLimitError = {
@@ -436,11 +481,24 @@ export function useVoiceLoop(userId?: string) {
     if (typeof window === "undefined") {
       return Promise.reject(new Error("Voice not supported on server"))
     }
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return Promise.resolve(wsRef.current)
-    }
-    if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING && connectPromiseRef.current) {
-      return connectPromiseRef.current
+    
+    // If WebSocket exists but is in a bad state, close and recreate
+    if (wsRef.current) {
+      const state = wsRef.current.readyState
+      if (state === WebSocket.CLOSING || state === WebSocket.CLOSED) {
+        // Clean up closed/closing WebSocket
+        try {
+          wsRef.current.close()
+        } catch {
+          // ignore
+        }
+        wsRef.current = null
+        connectPromiseRef.current = null
+      } else if (state === WebSocket.OPEN) {
+        return Promise.resolve(wsRef.current)
+      } else if (state === WebSocket.CONNECTING && connectPromiseRef.current) {
+        return connectPromiseRef.current
+      }
     }
     // Use NEXT_PUBLIC_BACKEND_WS_URL if available, otherwise construct from API URL
     const wsBase = process.env.NEXT_PUBLIC_BACKEND_WS_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
@@ -476,13 +534,27 @@ export function useVoiceLoop(userId?: string) {
             reject(new Error("WebSocket error"))
           }
         }
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+          // Clear thinking timeout on close
+          if (thinkingTimeoutRef.current) {
+            clearTimeout(thinkingTimeoutRef.current)
+            thinkingTimeoutRef.current = null
+          }
+          
           flushPlaybackQueue()
           wsRef.current = null
           connectPromiseRef.current = null
           if (!destroyedRef.current) {
-            setStage("idle")
+            // Only reset to idle if we're not in an error state
+            if (stage !== "error") {
+              setStage("idle")
+            }
             resetPresence()
+          }
+          
+          // Log unexpected closes for debugging
+          if (event.code !== 1000 && !destroyedRef.current) {
+            console.warn("[voice] WebSocket closed unexpectedly", { code: event.code, reason: event.reason })
           }
         }
       } catch (err) {
@@ -790,9 +862,38 @@ export function useVoiceLoop(userId?: string) {
 
   const stopTalking = () => {
     cleanupRecorder()
+    
+    // Clear any existing thinking timeout when stopping
+    if (thinkingTimeoutRef.current) {
+      clearTimeout(thinkingTimeoutRef.current)
+      thinkingTimeoutRef.current = null
+    }
+    
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       setStage((prev) => (prev === "listening" || prev === "connecting" ? "thinking" : prev))
       setMetaPresence("thinking")
+      
+      // Set timeout for thinking state when stopping - if no response in 60s, reset
+      thinkingTimeoutRef.current = setTimeout(() => {
+        console.warn("[voice] Thinking timeout after stop - no response, resetting")
+        setStage("idle")
+        setError("Voice session timed out. Please try again.")
+        setListeningPresence(false)
+        setSpeakingPresence(false)
+        setMetaPresence("resting")
+        settlePresence()
+        
+        if (wsRef.current) {
+          try {
+            wsRef.current.close()
+          } catch {
+            // ignore
+          }
+          wsRef.current = null
+        }
+        thinkingTimeoutRef.current = null
+        emitTelemetry("voice.timeout", { path, reason: "after_stop" })
+      }, 60000) // 60 seconds timeout
     } else {
       setStage("idle")
       setMetaPresence("resting")
@@ -807,6 +908,47 @@ export function useVoiceLoop(userId?: string) {
         duration_ms: Math.round(now - speechStartAtRef.current),
       })
     }
+  }
+
+  const resetVoiceState = () => {
+    // Clear thinking timeout
+    if (thinkingTimeoutRef.current) {
+      clearTimeout(thinkingTimeoutRef.current)
+      thinkingTimeoutRef.current = null
+    }
+    
+    // Stop any active recording
+    cleanupRecorder()
+    
+    // Flush playback queue
+    flushPlaybackQueue()
+    
+    // Close WebSocket if open
+    if (wsRef.current) {
+      try {
+        wsRef.current.close()
+      } catch {
+        // ignore
+      }
+      wsRef.current = null
+    }
+    
+    // Reset all state
+    setStage("idle")
+    setError(undefined)
+    setPartialReply("")
+    setFinalReply("")
+    setListeningPresence(false)
+    setSpeakingPresence(false)
+    setMetaPresence("resting")
+    settlePresence()
+    
+    // Reset tracking refs
+    replyBufferRef.current = ""
+    speechStartAtRef.current = null
+    speechEndAtRef.current = null
+    firstAudioAtRef.current = null
+    connectPromiseRef.current = null
   }
 
   const bargeIn = () => {
@@ -837,6 +979,13 @@ export function useVoiceLoop(userId?: string) {
       destroyedRef.current = true
       cleanupRecorder()
       flushPlaybackQueue()
+      
+      // Clear thinking timeout
+      if (thinkingTimeoutRef.current) {
+        clearTimeout(thinkingTimeoutRef.current)
+        thinkingTimeoutRef.current = null
+      }
+      
       try {
         wsRef.current?.close()
       } catch {
@@ -859,6 +1008,7 @@ export function useVoiceLoop(userId?: string) {
     stopTalking,
     bargeIn,
     unlockAudio,
+    resetVoiceState, // Expose reset function for external use
   }
 }
 

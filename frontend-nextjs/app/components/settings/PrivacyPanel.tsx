@@ -65,7 +65,7 @@ export function PrivacyPanel() {
           type="button"
           onClick={handleExport}
           disabled={status !== "idle"}
-          className="rounded-2xl border border-sophia-text/20 bg-white px-4 py-3 text-sm font-medium text-sophia-text transition hover:border-sophia-purple/40 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-2xl border border-sophia-text/20 bg-sophia-button px-4 py-3 text-sm font-medium text-sophia-text transition hover:border-sophia-purple/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {status === "exporting" ? "Preparing export…" : "Export my data"}
         </button>

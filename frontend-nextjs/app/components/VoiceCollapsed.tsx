@@ -24,7 +24,7 @@ export function VoiceCollapsed() {
       type="button"
       onClick={handleClick}
       onMouseDown={(e) => e.preventDefault()} // Prevent focus loss from composer
-      className="w-full group rounded-3xl bg-white p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn"
+      className="w-full group rounded-3xl bg-sophia-card p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn"
     >
       <div className="flex items-center gap-4">
         {/* Minimal mic icon */}

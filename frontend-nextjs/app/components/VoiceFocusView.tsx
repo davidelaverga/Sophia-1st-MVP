@@ -35,18 +35,17 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
   } = voiceState
   
   const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
-  const isRecordingRef = useRef(false)
   
   // Check if usage limit modal is open - block voice interaction
   const isModalOpen = useUsageLimitStore((state) => state.isOpen)
   
   // Stop recording if modal opens
   useEffect(() => {
-    if (isModalOpen && isRecordingRef.current) {
-      isRecordingRef.current = false
+    const isRecording = stage === "listening"
+    if (isModalOpen && isRecording) {
       stopTalking()
     }
-  }, [isModalOpen, stopTalking])
+  }, [isModalOpen, stopTalking, stage])
 
   // Map voice stage to presence state for waveform
   const getWaveformState = () => {
@@ -68,19 +67,19 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
       return
     }
 
-    if (isRecordingRef.current) {
+    const isRecording = stage === "listening"
+    
+    if (isRecording) {
       // Stop recording - immediate feedback
-      isRecordingRef.current = false
       stopTalking()
     } else {
       // Start recording - immediate visual feedback
-      isRecordingRef.current = true
       setManualOverride(true) // Keep user in voice mode
       
       // Start async operations in background (don't await)
       // This allows immediate visual feedback
-      startTalking().catch(() => {
-        isRecordingRef.current = false
+      startTalking().catch((error) => {
+        console.error("[VoiceFocusView] Failed to start talking:", error)
       })
     }
   }
@@ -101,7 +100,7 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
       <ChatCollapsed />
       
       <section 
-        className={`rounded-3xl bg-white p-6 shadow-soft animate-fadeIn transition-all duration-500 ${
+        className={`rounded-3xl bg-sophia-card p-6 shadow-soft animate-fadeIn transition-all duration-500 ${
           stage === "thinking" 
             ? "animate-ringBreathe" 
             : ""

@@ -84,7 +84,7 @@ export function ReflectionModal({ conversationId, chunks, onClose }: ReflectionM
     >
       <div
         ref={containerRef}
-        className="w-full max-w-lg rounded-3xl bg-white p-5 text-sophia-text shadow-soft sm:p-6"
+        className="w-full max-w-lg rounded-3xl bg-sophia-card p-5 text-sophia-text shadow-soft sm:p-6"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -109,7 +109,7 @@ export function ReflectionModal({ conversationId, chunks, onClose }: ReflectionM
               <label
                 key={chunk.id}
                 className={`flex cursor-pointer flex-col rounded-2xl border px-4 py-3 transition ${
-                  isSelected ? "border-sophia-purple bg-sophia-reply" : "border-sophia-text/15 bg-white"
+                  isSelected ? "border-sophia-purple bg-sophia-reply" : "border-sophia-text/15 bg-sophia-button"
                 }`}
               >
                 <input

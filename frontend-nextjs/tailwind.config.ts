@@ -20,6 +20,12 @@ const config: Config = {
           reply: "var(--sophia-bubble)",
           btn: "var(--btn-active)",
           error: "var(--error)",
+          card: "var(--card-bg)",
+          "card-border": "var(--card-border)",
+          input: "var(--input-bg)",
+          "input-border": "var(--input-border)",
+          button: "var(--button-bg)",
+          "button-hover": "var(--button-hover)",
         },
       },
       fontFamily: {
@@ -28,7 +34,8 @@ const config: Config = {
       borderRadius: {
         md: "var(--radius-md)",
         xl: "var(--radius-xl)",
-        "2xl": "32px",
+        "2xl": "0.6rem",
+        "3xl": "0.6rem",
       },
       boxShadow: {
         soft: "var(--shadow-soft)",

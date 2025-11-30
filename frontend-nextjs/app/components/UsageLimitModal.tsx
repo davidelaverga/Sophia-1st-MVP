@@ -101,7 +101,7 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
         e.stopPropagation()
       }}
     >
-      <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-soft">
+      <div className="w-full max-w-lg rounded-3xl bg-sophia-card p-6 shadow-soft">
         <h2 id="usage-limit-title" className="text-xl font-semibold text-sophia-text">
           {copy.usageLimit.modalTitle}
         </h2>
@@ -139,7 +139,7 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
               }
             }}
             disabled={isAtLimit}
-            className={`w-full rounded-2xl border border-sophia-text/15 bg-white px-4 py-2.5 text-sm font-medium text-sophia-text transition hover:bg-sophia-user sm:w-auto ${
+            className={`w-full rounded-2xl border border-sophia-text/15 bg-sophia-button px-4 py-2.5 text-sm font-medium text-sophia-text transition hover:bg-sophia-user sm:w-auto ${
               isAtLimit ? "opacity-50 cursor-not-allowed" : ""
             }`}
           >

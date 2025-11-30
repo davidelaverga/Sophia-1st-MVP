@@ -16,16 +16,19 @@ export function SettingsSheet({ onClose }: SettingsSheetProps) {
   const { supabase } = useSupabase()
   const router = useRouter()
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [theme, setTheme] = useState<"light" | "midnight" | "twilight" | "deep-space">("light")
+  const [theme, setTheme] = useState<"light" | "accessible-indigo" | "accessible-slate" | "accessible-charcoal" | "moonlit-embrace" | "velvet-night" | "dawns-promise">("light")
 
   useEffect(() => {
     if (typeof window === "undefined") return
     try {
       const stored = window.localStorage.getItem("sophia-theme") as
         | "light"
-        | "midnight"
-        | "twilight"
-        | "deep-space"
+        | "accessible-indigo"
+        | "accessible-slate"
+        | "accessible-charcoal"
+        | "moonlit-embrace"
+        | "velvet-night"
+        | "dawns-promise"
         | null
       const initial = stored || "light"
       setTheme(initial)
@@ -34,7 +37,7 @@ export function SettingsSheet({ onClose }: SettingsSheetProps) {
     }
   }, [])
 
-  const handleThemeChange = (value: "light" | "midnight" | "twilight" | "deep-space") => {
+  const handleThemeChange = (value: "light" | "accessible-indigo" | "accessible-slate" | "accessible-charcoal" | "moonlit-embrace" | "velvet-night" | "dawns-promise") => {
     setTheme(value)
     setSophiaTheme(value)
   }
@@ -54,7 +57,7 @@ export function SettingsSheet({ onClose }: SettingsSheetProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-sophia-text/30 px-3 backdrop-blur-sm">
-      <div className="w-full max-w-full rounded-3xl bg-white p-5 text-sophia-text shadow-soft sm:max-w-lg sm:p-6">
+      <div className="w-full max-w-full rounded-3xl bg-sophia-card p-5 text-sophia-text shadow-soft sm:max-w-lg sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-lg font-semibold text-sophia-text">{t("settings.title")}</p>
@@ -73,63 +76,131 @@ export function SettingsSheet({ onClose }: SettingsSheetProps) {
         <div className="mt-6 space-y-6">
           <PrivacyPanel />
 
-          {/* 🎨 Theme preview / Dark mode selector for client demo */}
+          {/* 🎨 Theme preview / Dark mode selector */}
           <div className="space-y-3 rounded-2xl border border-sophia-text/10 bg-sophia-user px-4 py-3">
-            <p className="text-sm font-medium text-sophia-text">Appearance (demo)</p>
+            <p className="text-sm font-medium text-sophia-text">Appearance</p>
             <p className="text-xs text-sophia-text2">
-              Switch between the three proposed dark modes to see how Sophia feels in each one.
+              Choose the theme that brings you calm and peace. Each dark mode is designed to feel like Sophia is there with you.
             </p>
-            <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+            <div className="mt-3 space-y-2">
               <button
                 type="button"
                 onClick={() => handleThemeChange("light")}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
                   theme === "light"
-                    ? "border-sophia-purple bg-white text-sophia-text shadow-soft"
-                    : "border-sophia-text/10 bg-white/70 text-sophia-text2 hover:border-sophia-purple/40"
+                    ? "border-sophia-purple bg-sophia-card text-sophia-text shadow-soft"
+                    : "border-sophia-text/10 bg-sophia-button text-sophia-text2 hover:border-sophia-purple/40"
                 }`}
               >
-                <span className="font-medium">Light (actual)</span>
-                {theme === "light" && <span className="text-[10px] text-sophia-purple">Selected</span>}
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">☀️ Light Mode</span>
+                  {theme === "light" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Bright and clear, for daytime conversations</span>
               </button>
+
+              <div className="pt-1">
+                <p className="text-xs font-medium text-sophia-text2 mb-2 px-1">🌙 Dark Modes — Find your calm</p>
+              </div>
 
               <button
                 type="button"
-                onClick={() => handleThemeChange("midnight")}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
-                  theme === "midnight"
+                onClick={() => handleThemeChange("moonlit-embrace")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "moonlit-embrace"
                     ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
                     : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
                 }`}
               >
-                <span className="font-medium">Midnight Serenity</span>
-                {theme === "midnight" && <span className="text-[10px] text-sophia-purple">Selected</span>}
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">🌙 Moonlit Embrace</span>
+                  {theme === "moonlit-embrace" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Like a conversation under the stars — intimate, serene, always there</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleThemeChange("twilight")}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
-                  theme === "twilight"
+                onClick={() => handleThemeChange("velvet-night")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "velvet-night"
                     ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
                     : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
                 }`}
               >
-                <span className="font-medium">Twilight Calm</span>
-                {theme === "twilight" && <span className="text-[10px] text-sophia-purple">Selected</span>}
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">🍷 Velvet Night</span>
+                  {theme === "velvet-night" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Rich and warm, like sinking into your safest space</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleThemeChange("deep-space")}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 transition ${
-                  theme === "deep-space"
+                onClick={() => handleThemeChange("dawns-promise")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "dawns-promise"
                     ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
                     : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
                 }`}
               >
-                <span className="font-medium">Deep Space</span>
-                {theme === "deep-space" && <span className="text-[10px] text-sophia-purple">Selected</span>}
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">🌅 Dawn's Promise</span>
+                  {theme === "dawns-promise" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Hope in the darkness — you're not alone, light is coming</span>
+              </button>
+
+              <div className="pt-2 border-t border-sophia-text/10 mt-2">
+                <p className="text-xs font-medium text-sophia-text2 mb-2 px-1">Accessibility-focused themes (WCAG compliant)</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleThemeChange("accessible-indigo")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "accessible-indigo"
+                    ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
+                    : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
+                }`}
+              >
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">🔷 Accessible Indigo</span>
+                  {theme === "accessible-indigo" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">High contrast purple tones, optimized for readability</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleThemeChange("accessible-slate")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "accessible-slate"
+                    ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
+                    : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
+                }`}
+              >
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">🌫️ Accessible Slate</span>
+                  {theme === "accessible-slate" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Cool gray tones with excellent contrast ratios</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleThemeChange("accessible-charcoal")}
+                className={`flex w-full flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${
+                  theme === "accessible-charcoal"
+                    ? "border-sophia-purple bg-sophia-bubble text-sophia-text shadow-soft"
+                    : "border-sophia-text/10 bg-sophia-bubble/70 text-sophia-text2 hover:border-sophia-purple/40"
+                }`}
+              >
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-medium">⬛ Accessible Charcoal</span>
+                  {theme === "accessible-charcoal" && <span className="text-[10px] text-sophia-purple">✓ Active</span>}
+                </div>
+                <span className="text-xs text-sophia-text2 mt-0.5">Deep blacks with bright accents for maximum visibility</span>
               </button>
             </div>
           </div>
