@@ -91,7 +91,7 @@ export function VoicePanel({ voiceState }: VoicePanelProps) {
 
   return (
     <section 
-      className={`rounded-3xl bg-sophia-card p-5 pb-6 shadow-soft transition-all duration-500 ${
+      className={`rounded-3xl bg-sophia-surface p-5 pb-6 shadow-soft transition-all duration-500 ${
         stage === "thinking" 
           ? "animate-ringBreathe" 
           : ""

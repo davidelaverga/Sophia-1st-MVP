@@ -155,6 +155,19 @@ export default function ConsentModal({ onAccept, onClose }: ConsentModalProps) {
             <p style={{ fontSize: '0.75rem', color: '#9ca3af', lineHeight: '1.5' }}>
               {t('consentModal.retention')}
             </p>
+            <a 
+              href="/privacy" 
+              target="_blank"
+              style={{ 
+                fontSize: '0.75rem', 
+                color: '#a78bfa', 
+                textDecoration: 'underline',
+                marginTop: '0.5rem',
+                display: 'inline-block'
+              }}
+            >
+              Read our full Privacy Policy →
+            </a>
           </div>
 
           {error && (

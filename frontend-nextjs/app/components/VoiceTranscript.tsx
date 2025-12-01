@@ -1,22 +1,59 @@
 "use client"
 
-import { useRef, useEffect } from "react"
-import { Mic } from "lucide-react"
+import { useRef, useEffect, useState, useMemo, useCallback, memo } from "react"
+import { Eye, EyeOff, Mic } from "lucide-react"
 import { useChatStore } from "../stores/chat-store"
 import type { ChatMessage } from "../stores/chat-store"
+import { copy } from "../../copy"
+
+const STORAGE_KEY = "sophia-voice-transcript-visible"
 
 type VoiceTranscriptProps = {
   partialReply?: string
   finalReply?: string
 }
 
-export function VoiceTranscript({ partialReply, finalReply }: VoiceTranscriptProps) {
+export const VoiceTranscript = memo(function VoiceTranscript({ partialReply, finalReply }: VoiceTranscriptProps) {
   // Use unified chat store for seamless context
   const allMessages = useChatStore((state) => state.messages)
   const scrollRef = useRef<HTMLDivElement>(null)
   
-  // Filter to show only Sophia's messages (voice or text)
-  const sophiaMessages = allMessages.filter((msg) => msg.role === "sophia")
+  // State for showing/hiding transcript
+  const [isVisible, setIsVisible] = useState(true)
+  
+  // Load visibility preference from localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY)
+      if (stored !== null) {
+        setIsVisible(stored === "true")
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [])
+  
+  // Memoize toggle function to prevent re-creation on every render
+  const toggleVisibility = useCallback(() => {
+    setIsVisible((prev) => {
+      const newValue = !prev
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(STORAGE_KEY, String(newValue))
+        } catch {
+          // Ignore localStorage errors
+        }
+      }
+      return newValue
+    })
+  }, [])
+  
+  // Memoize filtered messages to avoid recalculation on every render
+  const sophiaMessages = useMemo(
+    () => allMessages.filter((msg) => msg.role === "sophia"),
+    [allMessages]
+  )
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -35,26 +72,44 @@ export function VoiceTranscript({ partialReply, finalReply }: VoiceTranscriptPro
   }
 
   return (
-    <div className="rounded-2xl bg-sophia-card p-4 shadow-sm border border-sophia-card-border animate-fadeIn">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="h-2 w-2 rounded-full bg-sophia-purple animate-breathe" />
-        <p className="text-xs font-medium text-sophia-purple uppercase tracking-wide">
-          Conversation
-        </p>
+    <div className="rounded-2xl bg-sophia-surface p-4 shadow-sm border border-sophia-card-border animate-fadeIn">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-sophia-purple animate-breathe" />
+          <p className="text-xs font-medium text-sophia-purple uppercase tracking-wide">
+            {copy.chat.transcriptLabel}
+          </p>
+        </div>
+        
+        {/* Subtle toggle button */}
+        <button
+          type="button"
+          onClick={toggleVisibility}
+          className="rounded-lg p-1.5 text-sophia-text2 transition-all hover:bg-sophia-purple/10 hover:text-sophia-purple active:scale-95"
+          aria-label={isVisible ? "Hide conversation" : "Show conversation"}
+          title={isVisible ? "Hide conversation" : "Show conversation"}
+        >
+          {isVisible ? (
+            <Eye className="h-3.5 w-3.5" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5" />
+          )}
+        </button>
       </div>
 
-      <div
-        ref={scrollRef}
-        className="space-y-3 max-h-[200px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-sophia-purple/20 scrollbar-track-transparent"
-      >
+      {isVisible && (
+        <div
+          ref={scrollRef}
+          className="space-y-3 max-h-[200px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-sophia-purple/20 scrollbar-track-transparent animate-fadeIn"
+        >
         {/* Unified conversation history - all Sophia's messages */}
         {sophiaMessages.map((message: ChatMessage) => (
           <div
             key={message.id}
-            className={`rounded-xl backdrop-blur-sm px-4 py-3 text-sm text-sophia-text shadow-sm border animate-fadeIn ${
+            className={`rounded-xl px-4 py-3 text-sm text-sophia-text shadow-sm border animate-fadeIn ${
               message.source === "voice"
-                ? "bg-sophia-bubble/80 border-sophia-purple/20"
-                : "bg-sophia-bubble/60 border-sophia-purple/10"
+                ? "bg-sophia-bubble border-sophia-purple/20"
+                : "bg-sophia-bubble border-sophia-purple/10"
             }`}
           >
             <div className="flex items-start gap-2">
@@ -68,7 +123,7 @@ export function VoiceTranscript({ partialReply, finalReply }: VoiceTranscriptPro
 
         {/* Current streaming reply (only while streaming, not final) */}
         {activeReply && (
-          <div className="rounded-xl bg-sophia-bubble/80 backdrop-blur-sm px-4 py-3 text-sm text-sophia-text shadow-sm border border-sophia-purple/20 animate-fadeIn">
+          <div className="rounded-xl bg-sophia-bubble px-4 py-3 text-sm text-sophia-text shadow-sm border border-sophia-purple/20 animate-fadeIn">
             <div className="flex items-start gap-2">
               <Mic className="h-3.5 w-3.5 text-sophia-purple mt-0.5 flex-shrink-0" />
               <p className="flex-1">{activeReply}</p>
@@ -77,7 +132,8 @@ export function VoiceTranscript({ partialReply, finalReply }: VoiceTranscriptPro
           </div>
         )}
       </div>
+      )}
     </div>
   )
-}
+})
 

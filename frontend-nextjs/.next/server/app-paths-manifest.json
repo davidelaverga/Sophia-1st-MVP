@@ -1,5 +1,4 @@
 {
   "/api/privacy/status/route": "app/api/privacy/status/route.js",
-  "/page": "app/page.js",
-  "/founding-supporter/page": "app/founding-supporter/page.js"
+  "/page": "app/page.js"
 }

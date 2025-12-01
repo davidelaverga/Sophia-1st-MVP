@@ -3,16 +3,18 @@
 @tailwind utilities;
 
 /* 🌤️ Default (Light) theme */
-:root {
-  --sophia-purple: #8b7ab8;
-  --sophia-glow: #b896d4;
+:root,
+:root[data-sophia-theme=""],
+:root[data-sophia-theme="light"] {
+  --sophia-purple: #7c5caa;        /* WCAG AA compliant on light bg (4.6:1) */
+  --sophia-glow: #9d7cc9;          /* lighter glow for effects */
   --bg: #f8f7fa;
   --text: #2d2833;
-  --text-2: #6b6672;
+  --text-2: #5a5662;               /* Darker for better contrast */
   --user-bubble: #efedf2;
   --sophia-bubble: #f0ebff;
-  --btn-active: #a68aca;
-  --error: #e8a09a;
+  --btn-active: #7c5caa;
+  --error: #c44d42;                /* Darker red for better contrast */
   --radius-md: 12px;
   --radius-xl: 24px;
   --shadow-soft: rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px;
@@ -24,6 +26,10 @@
   --input-border: rgba(45, 40, 51, 0.15);
   --button-bg: #ffffff;
   --button-hover: #f8f7fa;
+  /* Scrollbar (light) */
+  --scrollbar-track: rgba(0, 0, 0, 0.04);
+  --scrollbar-thumb: rgba(45, 40, 51, 0.12);
+  --scrollbar-thumb-hover: rgba(45, 40, 51, 0.2);
 }
 
 /* 🌙 Dark Mode – Proposal 1: Accessible Indigo */
@@ -45,6 +51,10 @@
   --input-border: rgba(30, 27, 46, 0.8);
   --button-bg: #2a2740;
   --button-hover: #3b3662;
+  /* Scrollbar (accessible-indigo dark) */
+  --scrollbar-track: rgba(30, 27, 46, 0.12);
+  --scrollbar-thumb: rgba(167, 139, 250, 0.22);
+  --scrollbar-thumb-hover: rgba(167, 139, 250, 0.36);
 }
 
 /* 🌙 Dark Mode – Proposal 2: Accessible Slate */
@@ -66,6 +76,10 @@
   --input-border: rgba(30, 41, 59, 0.9);
   --button-bg: #334155;
   --button-hover: #475569;
+  /* Scrollbar (accessible-slate dark) */
+  --scrollbar-track: rgba(30, 41, 59, 0.12);
+  --scrollbar-thumb: rgba(192, 132, 252, 0.22);
+  --scrollbar-thumb-hover: rgba(192, 132, 252, 0.36);
 }
 
 /* 🌙 Dark Mode – Proposal 3: Accessible Charcoal */
@@ -87,27 +101,38 @@
   --input-border: rgba(24, 24, 27, 0.9);
   --button-bg: #27272a;
   --button-hover: #3f3f46;
+  /* Scrollbar (accessible-charcoal dark) */
+  --scrollbar-track: rgba(24, 24, 27, 0.12);
+  --scrollbar-thumb: rgba(216, 180, 254, 0.22);
+  --scrollbar-thumb-hover: rgba(216, 180, 254, 0.36);
 }
 
 /* 🌙 Dark Mode – Proposal 4: Moonlit Embrace (Abrazo Lunar) */
-:root[data-sophia-theme="moonlit-embrace"] {
-  --sophia-purple: #a995e3;        /* violeta luminoso plateado */
-  --sophia-glow: #c4b3f5;          /* glow lunar brillante */
-  --bg: #0a0c16;                   /* azul-violeta muy profundo */
-  --text: #f0eef7;                 /* texto casi blanco muy legible */
-  --text-2: #b8afd4;               /* texto secundario con buen contraste */
-  --user-bubble: #1a1e2f;          /* nube nocturna con contraste */
-  --sophia-bubble: #2a2d45;        /* violeta medio para mensajes de Sophia */
-  --btn-active: #b8a8e8;
+:root[data-sophia-theme="moonlit-embrace"],
+:root[data-sophia-theme="moonlit"],
+:root[data-sophia-theme="dark"] {
+  --sophia-purple: #b8a4e8;        /* violeta luminoso brillante */
+  --sophia-glow: #d4c4ff;          /* glow lunar vibrante */
+  --bg: #0a0a0f;                   /* fondo negro profundo */
+  --text: #f5f3fa;                 /* texto blanco cálido */
+  --text-2: #a8a3b8;               /* texto secundario gris lavanda */
+  --user-bubble: #1a1a22;          /* burbuja usuario negro suave */
+  --sophia-bubble: #1f1e28;        /* burbuja Sophia negro con toque violeta */
+  --btn-active: #c4b4f0;
   --error: #ff9a9a;
-  --shadow-soft: 0 8px 24px rgba(169, 149, 227, 0.25);
+  /* Underglow violeta para contenedores */
+  --shadow-soft: 0 4px 20px rgba(138, 100, 220, 0.25), 0 0 40px rgba(138, 100, 220, 0.10);
   
-  --card-bg: #1a1e30;              /* cards más claros que fondo */
-  --card-border: rgba(169, 149, 227, 0.2);
-  --input-bg: #0a0c14;             /* inputs más oscuros que cards */
-  --input-border: rgba(169, 149, 227, 0.25);
-  --button-bg: #1a1e2f;
-  --button-hover: #222840;
+  --card-bg: #111114;              /* cards negro */
+  --card-border: rgba(138, 100, 220, 0.20);
+  --input-bg: #0d0d10;             /* inputs negro profundo */
+  --input-border: rgba(138, 100, 220, 0.18);
+  --button-bg: #18181f;
+  --button-hover: #222230;
+  /* Scrollbar (moonlit-embrace dark) */
+  --scrollbar-track: rgba(138, 100, 220, 0.06);
+  --scrollbar-thumb: rgba(138, 100, 220, 0.28);
+  --scrollbar-thumb-hover: rgba(138, 100, 220, 0.45);
 }
 
 /* 🌙 Dark Mode – Proposal 5: Velvet Night (Noche de Terciopelo) */
@@ -129,6 +154,10 @@
   --input-border: rgba(196, 158, 232, 0.25);
   --button-bg: #241830;
   --button-hover: #2d1f40;
+  /* Scrollbar (velvet-night dark) */
+  --scrollbar-track: rgba(196, 158, 232, 0.06);
+  --scrollbar-thumb: rgba(196, 158, 232, 0.28);
+  --scrollbar-thumb-hover: rgba(196, 158, 232, 0.44);
 }
 
 /* 🌙 Dark Mode – Proposal 6: Dawn's Promise (Promesa del Amanecer) */
@@ -150,10 +179,47 @@
   --input-border: rgba(196, 153, 232, 0.25);
   --button-bg: #1f1628;
   --button-hover: #281e35;
+  /* Scrollbar (dawns-promise dark) */
+  --scrollbar-track: rgba(196, 153, 232, 0.06);
+  --scrollbar-thumb: rgba(196, 153, 232, 0.28);
+  --scrollbar-thumb-hover: rgba(196, 153, 232, 0.44);
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Global custom scrollbar using CSS variables. Works in WebKit/Blink and Firefox. */
+:root,
+:root[data-sophia-theme] {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* WebKit/Blink */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Optional thin scrollbar utility class fallback */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 html,
@@ -220,6 +286,19 @@ a {
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  
+  /* Custom utility classes using CSS variables for theme support */
+  .bg-sophia-surface {
+    background-color: var(--card-bg);
+  }
+  
+  .bg-sophia-bubble {
+    background-color: var(--sophia-bubble);
+  }
+  
+  .border-sophia-surface-border {
+    border-color: var(--card-border);
   }
 }
 

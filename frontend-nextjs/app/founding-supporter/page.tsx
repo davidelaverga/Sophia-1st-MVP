@@ -74,7 +74,7 @@ export default function FoundingSupporterPage() {
             {copy.foundingSupporter.supporting.title}
           </h2>
           <div className="grid gap-6 md:grid-cols-3">
-            <div className="rounded-3xl bg-white p-6 shadow-soft">
+            <div className="rounded-3xl bg-sophia-surface p-6 shadow-soft">
               <h3 className="mb-3 text-lg font-semibold text-sophia-purple">
                 {copy.foundingSupporter.supporting.card1Title}
               </h3>
@@ -82,7 +82,7 @@ export default function FoundingSupporterPage() {
                 {copy.foundingSupporter.supporting.card1Body}
               </p>
             </div>
-            <div className="rounded-3xl bg-white p-6 shadow-soft">
+            <div className="rounded-3xl bg-sophia-surface p-6 shadow-soft">
               <h3 className="mb-3 text-lg font-semibold text-sophia-purple">
                 {copy.foundingSupporter.supporting.card2Title}
               </h3>
@@ -90,7 +90,7 @@ export default function FoundingSupporterPage() {
                 {copy.foundingSupporter.supporting.card2Body}
               </p>
             </div>
-            <div className="rounded-3xl bg-white p-6 shadow-soft">
+            <div className="rounded-3xl bg-sophia-surface p-6 shadow-soft">
               <h3 className="mb-3 text-lg font-semibold text-sophia-purple">
                 {copy.foundingSupporter.supporting.card3Title}
               </h3>
@@ -108,7 +108,7 @@ export default function FoundingSupporterPage() {
           </h2>
           
           {/* Plan Toggle */}
-          <div className="mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-white p-1 shadow-soft">
+          <div className="mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-sophia-surface p-1 shadow-soft">
             <button
               type="button"
               onClick={() => setSelectedPlan("free")}
@@ -140,8 +140,8 @@ export default function FoundingSupporterPage() {
               onClick={() => setSelectedPlan("free")}
               className={`cursor-pointer rounded-3xl border-2 p-6 shadow-soft transition-all ${
                 selectedPlan === "free"
-                  ? "border-sophia-purple bg-sophia-purple/5"
-                  : "border-sophia-text/10 bg-white hover:border-sophia-purple/30"
+                  ? "border-sophia-purple bg-sophia-purple/5 ring-2 ring-sophia-purple/30"
+                  : "border-sophia-text/10 bg-sophia-surface"
               }`}
             >
               <h3 className="mb-4 text-xl font-bold text-sophia-text">
@@ -162,8 +162,8 @@ export default function FoundingSupporterPage() {
               onClick={() => setSelectedPlan("founding")}
               className={`relative cursor-pointer rounded-3xl border-2 p-6 shadow-soft transition-all ${
                 selectedPlan === "founding"
-                  ? "border-sophia-purple bg-sophia-purple/5"
-                  : "border-sophia-purple bg-white hover:bg-sophia-purple/5"
+                  ? "border-sophia-purple bg-sophia-purple/5 ring-2 ring-sophia-purple/30"
+                  : "border-sophia-text/10 bg-sophia-surface"
               }`}
             >
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-sophia-purple px-4 py-1 text-xs font-semibold text-white">

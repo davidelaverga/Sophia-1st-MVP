@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import { ReflectionChunk } from "../../hooks/useReflectionPrompt"
 import { createReflection, ReflectionAction } from "../../lib/api/reflections"
 import { emitTelemetry } from "../../lib/telemetry"
-import { t } from "../../../copy"
+import { useFocusTrap } from "../../hooks/useFocusTrap"
+import { Sparkles, Heart, Send, Check, Loader2, X, ChevronDown, RefreshCw, Quote, Eye } from "lucide-react"
 
 type ReflectionModalProps = {
   conversationId: string
@@ -12,149 +13,421 @@ type ReflectionModalProps = {
   onClose: () => void
 }
 
+type SubmitState = "idle" | "saving" | "sharing" | "success" | "error"
+type ViewMode = "select" | "preview"
+
 export function ReflectionModal({ conversationId, chunks, onClose }: ReflectionModalProps) {
   const [selected, setSelected] = useState<string | null>(chunks[0]?.id ?? null)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitState, setSubmitState] = useState<SubmitState>("idle")
   const [error, setError] = useState<string>()
-  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [lastAction, setLastAction] = useState<ReflectionAction | null>(null)
+  const [showPrivacyNote, setShowPrivacyNote] = useState(false)
+  const [isVisible, setIsVisible] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>("select")
+  const { containerRef, restoreFocus } = useFocusTrap()
 
+  // Animate in on mount
   useEffect(() => {
-    setSelected((prev) => prev ?? chunks[0]?.id ?? null)
-  }, [chunks])
+    const timer = setTimeout(() => setIsVisible(true), 50)
+    return () => clearTimeout(timer)
+  }, [])
 
+  // Update selection when chunks change
   useEffect(() => {
-    const node = containerRef.current
-    if (!node) return
-    const focusable = node.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    )
-    focusable[0]?.focus()
+    if (chunks.length > 0 && !chunks.find(c => c.id === selected)) {
+      setSelected(chunks[0]?.id ?? null)
+    }
+  }, [chunks, selected])
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        onClose()
-        return
-      }
-      if (event.key !== "Tab") return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (!first || !last) return
-      if (event.shiftKey) {
-        if (document.activeElement === first) {
-          event.preventDefault()
-          last.focus()
-        }
-      } else if (document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
+  // Handle Escape key to close modal
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && submitState === "idle") {
+        handleClose()
       }
     }
+    document.addEventListener("keydown", handleEscape)
+    return () => document.removeEventListener("keydown", handleEscape)
+  }, [submitState])
 
-    node.addEventListener("keydown", handleKeyDown)
-    return () => {
-      node.removeEventListener("keydown", handleKeyDown)
+  const handleClose = useCallback(() => {
+    setIsVisible(false)
+    setTimeout(() => {
+      restoreFocus()
+      onClose()
+    }, 200)
+  }, [restoreFocus, onClose])
+
+  // Close on overlay click
+  const handleOverlayClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget && submitState === "idle") {
+      handleClose()
     }
-  }, [onClose, chunks])
+  }, [handleClose, submitState])
 
   const handleSubmit = async (action: ReflectionAction) => {
-    if (!selected || submitting) return
-    setSubmitting(true)
+    if (!selected || (submitState !== "idle" && submitState !== "error")) return
+    
+    const newState = action === "save" ? "saving" : "sharing"
+    setSubmitState(newState)
+    setLastAction(action)
     setError(undefined)
     emitTelemetry("reflection.submit", { action, chunk_id: selected })
+    
     try {
       await createReflection({ conversationId, chunkId: selected, action })
       emitTelemetry("reflection.submit_ok", { action, chunk_id: selected })
-      onClose()
+      setSubmitState("success")
+      
+      // Auto-close after success with nice animation
+      setTimeout(() => {
+        handleClose()
+      }, 1800)
     } catch (err) {
       emitTelemetry("reflection.submit_err", { action, chunk_id: selected })
       setError((err as Error).message ?? "Something went wrong. Please try again.")
-      setSubmitting(false)
+      setSubmitState("error")
+      // Don't auto-reset - let user click retry
     }
   }
 
+  const handleRetry = () => {
+    if (lastAction) {
+      handleSubmit(lastAction)
+    }
+  }
+
+  const handlePreview = (action: ReflectionAction) => {
+    if (!selected) return
+    setLastAction(action)
+    setViewMode("preview")
+  }
+
+  const handleBackToSelect = () => {
+    setViewMode("select")
+  }
+
+  const selectedChunk = useMemo(() => 
+    chunks.find(c => c.id === selected), 
+    [chunks, selected]
+  )
+
+  // Keyboard navigation for options
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, chunkId: string, index: number) => {
+    const chunksCount = chunks.length
+    
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault()
+      const nextIndex = (index + 1) % chunksCount
+      setSelected(chunks[nextIndex].id)
+    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault()
+      const prevIndex = (index - 1 + chunksCount) % chunksCount
+      setSelected(chunks[prevIndex].id)
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault()
+      setSelected(chunkId)
+    }
+  }, [chunks])
+
   const sortedChunks = useMemo(() => chunks.slice(0, 3), [chunks])
+  const isSubmitting = submitState === "saving" || submitState === "sharing"
+  const isSuccess = submitState === "success"
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-sophia-text/40 px-3 pb-6 pt-12 backdrop-blur-sm sm:items-center"
+      className={`fixed inset-0 z-50 flex items-end justify-center px-4 pb-4 pt-16 sm:items-center sm:p-6 transition-all duration-300 ${
+        isVisible ? "bg-black/60" : "bg-transparent"
+      }`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="reflection-modal-title"
+      onClick={handleOverlayClick}
     >
       <div
         ref={containerRef}
-        className="w-full max-w-lg rounded-3xl bg-sophia-card p-5 text-sophia-text shadow-soft sm:p-6"
+        className={`relative w-full max-w-md transform transition-all duration-300 ease-out ${
+          isVisible 
+            ? "translate-y-0 opacity-100 scale-100" 
+            : "translate-y-8 opacity-0 scale-95"
+        }`}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p id="reflection-modal-title" className="text-lg font-semibold text-sophia-text">
-              {t("reflection.promptTitle")}
+        {/* Main card with elegant styling */}
+        <div className="overflow-hidden rounded-3xl bg-sophia-surface shadow-2xl ring-1 ring-sophia-purple/10">
+          
+          {/* Decorative gradient header */}
+          <div className="relative bg-gradient-to-br from-sophia-purple/20 via-sophia-purple/10 to-transparent px-6 pb-4 pt-6">
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={handleClose}
+              disabled={isSubmitting}
+              className="absolute right-4 top-4 rounded-xl p-2 text-sophia-text2/60 transition-all hover:bg-sophia-text/5 hover:text-sophia-text disabled:opacity-50"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            {/* Sparkle icon with glow effect */}
+            <div className="mb-4 inline-flex items-center justify-center rounded-2xl bg-gradient-to-br from-sophia-purple to-sophia-glow p-3 shadow-lg shadow-sophia-purple/25">
+              <Sparkles className="h-6 w-6 text-white" />
+            </div>
+            
+            {/* Title and subtitle */}
+            <h2 
+              id="reflection-modal-title" 
+              className="text-xl font-semibold tracking-tight text-sophia-text"
+            >
+              ✨ A moment of wisdom
+            </h2>
+            <p className="mt-1.5 text-sm leading-relaxed text-sophia-text2">
+              I noticed something meaningful in our conversation. Would you like to keep this insight?
             </p>
-            <p className="mt-1 text-sm text-sophia-text2">{t("reflection.promptBody")}</p>
           </div>
-          <button
-            type="button"
-            className="rounded-full border border-sophia-text/20 px-2 py-1 text-xs text-sophia-text2 hover:border-sophia-purple/40 hover:text-sophia-purple"
-            onClick={onClose}
-          >
-            {t("reflection.dismiss")}
-          </button>
+
+          {/* Content area */}
+          <div className="px-6 pb-6">
+            
+            {/* Success state - beautiful celebration */}
+            {isSuccess && (
+              <div className="py-8 text-center animate-fadeIn">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30">
+                  <Check className="h-8 w-8 text-white" strokeWidth={3} />
+                </div>
+                <p className="text-lg font-medium text-sophia-text">
+                  {lastAction === "share_discord" ? "Shared with the community" : "Saved to your reflections"}
+                </p>
+                <p className="mt-1 text-sm text-sophia-text2">
+                  {lastAction === "share_discord" ? "Your wisdom is inspiring others ✨" : "Your wisdom is safely stored 💜"}
+                </p>
+              </div>
+            )}
+
+            {/* Error state with Retry */}
+            {submitState === "error" && error && (
+              <div className="my-4 rounded-2xl border border-red-200/50 bg-red-50/80 px-4 py-4 animate-fadeIn">
+                <p className="text-sm text-red-700 mb-3">{error}</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRetry}
+                    className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-red-700"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Try again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSubmitState("idle"); setViewMode("select"); }}
+                    className="rounded-xl px-4 py-2 text-sm font-medium text-red-700 transition-all hover:bg-red-100"
+                  >
+                    Choose different
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Preview Mode - Shows selected chunk as a card preview */}
+            {viewMode === "preview" && !isSuccess && submitState !== "error" && selectedChunk && (
+              <div className="mt-4 animate-fadeIn">
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={handleBackToSelect}
+                  disabled={isSubmitting}
+                  className="mb-4 flex items-center gap-1 text-sm text-sophia-text2 transition-colors hover:text-sophia-purple disabled:opacity-50"
+                >
+                  <ChevronDown className="h-4 w-4 rotate-90" />
+                  Back to options
+                </button>
+
+                {/* Preview Card */}
+                <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-sophia-purple/10 via-sophia-card to-sophia-card p-1">
+                  <div className="rounded-xl bg-sophia-surface p-5">
+                    {/* Quote icon */}
+                    <Quote className="mb-3 h-8 w-8 text-sophia-purple/30" />
+                    
+                    {/* The wisdom text */}
+                    <p className="text-lg font-medium leading-relaxed text-sophia-text">
+                      &ldquo;{selectedChunk.text}&rdquo;
+                    </p>
+                    
+                    {/* Footer with branding */}
+                    <div className="mt-4 flex items-center justify-between border-t border-sophia-text/5 pt-4">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow">
+                          <Sparkles className="h-3 w-3 text-white" />
+                        </div>
+                        <span className="text-xs font-medium text-sophia-text2">Sophia Wisdom</span>
+                      </div>
+                      {selectedChunk.reason && selectedChunk.reason !== "reflection" && (
+                        <span className="rounded-full bg-sophia-purple/10 px-2.5 py-0.5 text-xs font-medium text-sophia-purple">
+                          {selectedChunk.reason}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preview info */}
+                <p className="mt-3 text-center text-xs text-sophia-text2">
+                  {lastAction === "share_discord" 
+                    ? "This is how your wisdom will appear to the community" 
+                    : "This reflection will be saved to your personal collection"}
+                </p>
+
+                {/* Confirm action */}
+                <div className="mt-5 flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleBackToSelect}
+                    disabled={isSubmitting}
+                    className="flex-1 rounded-2xl border-2 border-sophia-text/10 px-5 py-3 text-sm font-semibold text-sophia-text transition-all hover:border-sophia-purple/30 disabled:opacity-50"
+                  >
+                    Change selection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => lastAction && handleSubmit(lastAction)}
+                    disabled={isSubmitting}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sophia-purple to-sophia-glow px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-sophia-purple/25 transition-all hover:shadow-xl disabled:opacity-50"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>{lastAction === "share_discord" ? "Sharing..." : "Saving..."}</span>
+                      </>
+                    ) : (
+                      <>
+                        {lastAction === "share_discord" ? <Send className="h-4 w-4" /> : <Heart className="h-4 w-4" />}
+                        <span>Confirm</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Selection Mode - Wisdom chunks selection */}
+            {viewMode === "select" && !isSuccess && submitState !== "error" && (
+              <>
+                <div 
+                  className="mt-4 space-y-2.5" 
+                  role="radiogroup" 
+                  aria-label="Choose a reflection to save"
+                >
+                  {sortedChunks.map((chunk, index) => {
+                    const isSelected = selected === chunk.id
+                    return (
+                      <button
+                        key={chunk.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        tabIndex={isSelected ? 0 : -1}
+                        onClick={() => setSelected(chunk.id)}
+                        onKeyDown={(e) => handleKeyDown(e, chunk.id, index)}
+                        disabled={isSubmitting}
+                        className={`group relative w-full text-left rounded-2xl border-2 p-4 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sophia-purple focus-visible:ring-offset-2 ${
+                          isSelected 
+                            ? "border-sophia-purple bg-sophia-purple/5 shadow-md" 
+                            : "border-transparent bg-sophia-button/50 hover:border-sophia-purple/20 hover:bg-sophia-purple/5"
+                        } ${isSubmitting ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                      >
+                        {/* Selection indicator */}
+                        <div className={`absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all ${
+                          isSelected 
+                            ? "border-sophia-purple bg-sophia-purple scale-100" 
+                            : "border-sophia-text/20 scale-90 group-hover:border-sophia-purple/40 group-hover:scale-100"
+                        }`}>
+                          {isSelected && <Check className="h-3 w-3 text-white" />}
+                        </div>
+
+                        {/* Chunk content */}
+                        <p className="pr-8 text-sm font-medium leading-relaxed text-sophia-text">
+                          &ldquo;{chunk.text}&rdquo;
+                        </p>
+                        
+                        {/* Insight tag */}
+                        {chunk.reason && chunk.reason !== "reflection" && (
+                          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-sophia-purple/10 px-2.5 py-0.5 text-xs font-medium text-sophia-purple">
+                            <Sparkles className="h-3 w-3" />
+                            {chunk.reason}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Privacy note (collapsible) */}
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPrivacyNote(!showPrivacyNote)}
+                    className="flex w-full items-center justify-between rounded-xl px-1 py-2 text-xs text-sophia-text2 transition-colors hover:text-sophia-purple"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Heart className="h-3.5 w-3.5" />
+                      Your privacy is protected
+                    </span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${showPrivacyNote ? "rotate-180" : ""}`} />
+                  </button>
+                  
+                  {showPrivacyNote && (
+                    <div className="mt-2 rounded-xl bg-sophia-purple/5 p-3 text-xs leading-relaxed text-sophia-text2 animate-fadeIn">
+                      Your reflections are stored securely and privately. When you share, we anonymize everything—only the wisdom is shared, never your identity or personal details.
+                    </div>
+                  )}
+                </div>
+
+                {/* Action buttons */}
+                <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
+                  {/* Save privately - secondary */}
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit("save")}
+                    disabled={!selected || isSubmitting}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-2xl border-2 border-sophia-text/10 bg-transparent px-5 py-3 text-sm font-semibold text-sophia-text transition-all hover:border-sophia-purple/30 hover:bg-sophia-purple/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {submitState === "saving" ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Heart className="h-4 w-4" />
+                        <span>Keep privately</span>
+                      </>
+                    )}
+                  </button>
+                  
+                  {/* Share - primary (shows preview first) */}
+                  <button
+                    type="button"
+                    onClick={() => handlePreview("share_discord")}
+                    disabled={!selected || isSubmitting}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sophia-purple to-sophia-glow px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-sophia-purple/25 transition-all hover:shadow-xl hover:shadow-sophia-purple/30 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                  >
+                    <Eye className="h-4 w-4" />
+                    <span>Preview & Share</span>
+                  </button>
+                </div>
+
+                {/* Skip link */}
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  disabled={isSubmitting}
+                  className="mt-3 w-full py-2 text-center text-xs text-sophia-text2/70 transition-colors hover:text-sophia-text disabled:opacity-50"
+                >
+                  Maybe later
+                </button>
+              </>
+            )}
+          </div>
         </div>
-
-        <div className="mt-5 space-y-3" role="radiogroup" aria-label="Reflection choices">
-          {sortedChunks.map((chunk) => {
-            const isSelected = selected === chunk.id
-            return (
-              <label
-                key={chunk.id}
-                className={`flex cursor-pointer flex-col rounded-2xl border px-4 py-3 transition ${
-                  isSelected ? "border-sophia-purple bg-sophia-reply" : "border-sophia-text/15 bg-sophia-button"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="reflection-option"
-                  className="sr-only"
-                  value={chunk.id}
-                  checked={isSelected}
-                  onChange={() => setSelected(chunk.id)}
-                />
-                <span className="text-sm text-sophia-text">{chunk.text}</span>
-                <span className="mt-1 text-xs text-sophia-text2">{chunk.reason}</span>
-              </label>
-            )
-          })}
-        </div>
-
-        {error && <p className="mt-3 text-sm text-sophia-error">{error}</p>}
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            className="rounded-2xl border border-sophia-text/20 px-4 py-3 text-sm font-medium text-sophia-text transition hover:border-sophia-purple/40 disabled:opacity-50"
-            disabled={!selected || submitting}
-            onClick={() => handleSubmit("save")}
-          >
-            {t("reflection.savePrivate")}
-          </button>
-          <button
-            type="button"
-            className="rounded-2xl bg-sophia-purple px-4 py-3 text-sm font-semibold text-white transition hover:bg-sophia-glow disabled:opacity-60"
-            disabled={!selected || submitting}
-            onClick={() => handleSubmit("share_discord")}
-          >
-            {t("reflection.shareDiscord")}
-          </button>
-        </div>
-
-        <button
-          type="button"
-          className="mt-4 w-full text-center text-xs font-medium text-sophia-text2 underline underline-offset-2"
-          onClick={onClose}
-        >
-          {t("reflection.dismiss")}
-        </button>
       </div>
     </div>
   )

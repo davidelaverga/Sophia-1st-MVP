@@ -1,30 +1,43 @@
 "use client"
 
 import { Mic } from "lucide-react"
-import { useFocusModeStore } from "../stores/focus-mode-store"
+import { useModeSwitch } from "../hooks/useModeSwitch"
+import { useUsageLimitStore } from "../stores/usage-limit-store"
 
 /**
  * VoiceCollapsed
  * 
  * Minimal indicator shown when user is in text mode.
  * Simple click to switch to voice focus mode.
+ * Includes validation to prevent switching during chat operations.
  */
 
 export function VoiceCollapsed() {
-  const setMode = useFocusModeStore((state) => state.setMode)
-  const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
-
-  const handleClick = () => {
-    setMode("voice")
-    setManualOverride(true)
-  }
+  const showToast = useUsageLimitStore((state) => state.showToast)
+  
+  const { canSwitchToVoice, switchToVoice } = useModeSwitch({
+    onBlocked: (message) => {
+      // Show toast with the block reason
+      showToast({
+        reason: "text",
+        plan_tier: "FREE",
+        used: 0,
+        limit: 0,
+      })
+    },
+  })
+  
+  const isDisabled = !canSwitchToVoice.canSwitch
+  const tooltipMessage = canSwitchToVoice.message || "Switch to voice mode"
 
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={switchToVoice}
       onMouseDown={(e) => e.preventDefault()} // Prevent focus loss from composer
-      className="w-full group rounded-3xl bg-sophia-card p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn"
+      disabled={isDisabled}
+      title={tooltipMessage}
+      className="w-full group rounded-3xl bg-sophia-surface p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-soft"
     >
       <div className="flex items-center gap-4">
         {/* Minimal mic icon */}

@@ -2,6 +2,7 @@
 
 import { create } from "zustand"
 import type { CopyKey } from "../../copy"
+import { eventBus } from "../lib/events"
 
 const PRESENCE_STATES = ["resting", "listening", "thinking", "reflecting", "speaking"] as const
 
@@ -78,7 +79,7 @@ export const usePresenceStore = create<PresenceStore>((set, get) => ({
     if (normalized === "reflecting") {
       if (reflectingTimer) return
       set((state) => {
-        const next = { ...state, metaStage: "thinking", detail: detail ?? state.detail }
+        const next = { ...state, metaStage: "thinking" as PresenceState, detail: detail ?? state.detail }
         return {
           ...next,
           status: computeStage(next),
@@ -88,7 +89,7 @@ export const usePresenceStore = create<PresenceStore>((set, get) => ({
       reflectingTimer = setTimeout(() => {
         reflectingTimer = null
         set((state) => {
-          const next = { ...state, metaStage: "reflecting" }
+          const next = { ...state, metaStage: "reflecting" as PresenceState }
           return {
             ...next,
             status: computeStage(next),
@@ -123,7 +124,7 @@ export const usePresenceStore = create<PresenceStore>((set, get) => ({
       const state = get()
       if (state.isListening || state.isSpeaking) return
       set((current) => {
-        const next = { ...current, metaStage: "resting", detail: undefined }
+        const next = { ...current, metaStage: "resting" as PresenceState, detail: undefined }
         return {
           ...next,
           status: computeStage(next),
@@ -151,6 +152,52 @@ export const usePresenceStore = create<PresenceStore>((set, get) => ({
     })
   },
 }))
+
+// ============================================================================
+// Event Bus Integration - Decouple from chat-store
+// ============================================================================
+
+// Listen to chat events to update presence automatically
+eventBus.on("chat:stream:start", () => {
+  usePresenceStore.getState().setListening(true)
+})
+
+eventBus.on("chat:stream:chunk", () => {
+  usePresenceStore.getState().setListening(false)
+  usePresenceStore.getState().setMetaStage("thinking")
+})
+
+eventBus.on("chat:stream:complete", () => {
+  usePresenceStore.getState().setListening(false)
+  usePresenceStore.getState().settleToRestingSoon()
+})
+
+eventBus.on("chat:stream:error", () => {
+  usePresenceStore.getState().setListening(false)
+  usePresenceStore.getState().settleToRestingSoon()
+})
+
+// Listen to voice events
+eventBus.on("voice:recording:start", () => {
+  usePresenceStore.getState().setListening(true)
+})
+
+eventBus.on("voice:recording:stop", () => {
+  usePresenceStore.getState().setListening(false)
+})
+
+eventBus.on("voice:playback:start", () => {
+  usePresenceStore.getState().setSpeaking(true)
+})
+
+eventBus.on("voice:playback:complete", () => {
+  usePresenceStore.getState().setSpeaking(false)
+  usePresenceStore.getState().settleToRestingSoon()
+})
+
+// ============================================================================
+// Development Logging
+// ============================================================================
 
 if (process.env.NODE_ENV !== "production") {
   usePresenceStore.subscribe((state, prevState) => {

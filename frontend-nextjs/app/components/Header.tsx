@@ -1,7 +1,11 @@
 "use client"
 
+import Link from "next/link"
+import { Sparkles } from "lucide-react"
 import { copy, t } from "../../copy"
 import { getPresenceCopyKey, usePresenceStore } from "../stores/presence-store"
+import { ThemeToggle } from "./ThemeToggle"
+import { ActiveModeIndicator } from "./ActiveModeIndicator"
 
 type HeaderProps = {
   onOpenSettings?: () => void
@@ -25,9 +29,21 @@ export function Header({ onOpenSettings }: HeaderProps) {
         </div>
       </div>
       <div className="flex items-center gap-3">
+        <ActiveModeIndicator />
         <span aria-live="polite" className="text-sm text-sophia-text2">
           {detail ?? t(getPresenceCopyKey(status))}
         </span>
+        
+        {/* My Reflections link */}
+        <Link
+          href="/reflections"
+          className="hidden items-center gap-1.5 rounded-2xl border border-sophia-purple/20 bg-sophia-purple/5 px-3 py-1.5 text-sm font-medium text-sophia-purple transition-all hover:bg-sophia-purple/10 hover:border-sophia-purple/30 sm:flex"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>Reflections</span>
+        </Link>
+        
+        <ThemeToggle />
         <button
           type="button"
           onClick={onOpenSettings}

@@ -71,9 +71,9 @@ export function GentleUsageToast() {
           : "translate-y-8 opacity-0 pointer-events-none"
       }`}
     >
-      <div className="relative rounded-2xl border border-sophia-purple/20 bg-gradient-to-br from-white to-sophia-purple/5 backdrop-blur-sm p-4 shadow-lg shadow-sophia-purple/10 animate-breatheSlow">
-        {/* Subtle glow effect with more Sophia color */}
-        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-sophia-purple/10 via-sophia-purple/5 to-transparent opacity-60" />
+      <div className="relative rounded-2xl border border-sophia-purple/20 bg-sophia-surface p-4 shadow-lg shadow-sophia-purple/10 animate-breatheSlow">
+        {/* Subtle glow effect overlay - positioned behind content */}
+        <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-br from-sophia-purple/10 via-transparent to-transparent opacity-60" />
         
         <div className="relative flex items-start gap-3">
           {/* Icon with more Sophia color */}

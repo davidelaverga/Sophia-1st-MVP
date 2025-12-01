@@ -5,6 +5,7 @@ import { useSupabase } from "../providers"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 import { updateUsageAlerts } from "../lib/usage-tracker"
 import type { UsageLimitInfo } from "../types/rate-limits"
+import { logger } from "../lib/error-logger"
 
 // Global ref to store the checkUsage function so it can be called from anywhere
 let globalCheckUsage: (() => Promise<void>) | null = null
@@ -18,7 +19,15 @@ export function useUsageMonitor() {
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    if (!user) return
+    if (!user) {
+      // Clear user context when logged out
+      logger.setUser(null)
+      return
+    }
+
+    // Set user context for error tracking
+    logger.setUser(user.id, user.email, user.user_metadata?.username)
+    logger.addBreadcrumb("User authenticated", { userId: user.id })
 
     const checkUsage = async () => {
       if (!user) return

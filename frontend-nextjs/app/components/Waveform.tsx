@@ -17,7 +17,7 @@ export function Waveform({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number>();
   const analyserRef = useRef<AnalyserNode>();
-  const dataArrayRef = useRef<Uint8Array>();
+  const dataArrayRef = useRef<Uint8Array<ArrayBuffer>>();
   const smoothedVolumeRef = useRef(0);
 
   const isListening = presenceState === "listening";

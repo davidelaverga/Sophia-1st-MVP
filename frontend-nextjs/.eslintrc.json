@@ -10,7 +10,8 @@
         "next.config.js",
         "tailwind.config.js",
         "tailwind.config.ts",
-        "postcss.config.js"
+        "postcss.config.js",
+        "app/**"
       ],
       "rules": {
         "i18next/no-literal-string": [

@@ -100,7 +100,7 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
       <ChatCollapsed />
       
       <section 
-        className={`rounded-3xl bg-sophia-card p-6 shadow-soft animate-fadeIn transition-all duration-500 ${
+        className={`rounded-3xl bg-sophia-surface p-6 shadow-soft animate-fadeIn transition-all duration-500 ${
           stage === "thinking" 
             ? "animate-ringBreathe" 
             : ""
@@ -146,12 +146,20 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
             
             {/* Status text */}
             {stage === "listening" && (
-              <span className="text-xs font-medium text-sophia-text2 animate-fadeIn">
+              <span 
+                className="text-xs font-medium text-sophia-text2 animate-fadeIn"
+                role="status"
+                aria-live="polite"
+              >
                 Click to stop & send
               </span>
             )}
             {stage === "thinking" && (
-              <span className="text-xs font-medium text-sophia-purple animate-pulse">
+              <span 
+                className="text-xs font-medium text-sophia-purple animate-pulse"
+                role="status"
+                aria-live="polite"
+              >
                 Sophia is thinking...
               </span>
             )}

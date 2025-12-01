@@ -10,6 +10,7 @@ type BackendEvent = "token" | "reply_done" | "audio_url" | "error"
 type TextChatRequest = {
   message: string
   conversationId?: string
+  user_id?: string
 }
 
 type ReplyDonePayload = {

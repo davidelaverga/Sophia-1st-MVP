@@ -1,16 +1,13 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useRef, useState, useCallback, memo, lazy, Suspense } from "react"
 import type { KeyboardEventHandler, RefObject, UIEvent } from "react"
 import { Send, Loader2, Volume2, Square, Mic } from "lucide-react"
 import { AppShell } from "./AppShell"
-import { VoicePanel } from "./VoicePanel"
-import { VoiceFocusView } from "./VoiceFocusView"
-import { VoiceCollapsed } from "./VoiceCollapsed"
 import { FeedbackStrip } from "./FeedbackStrip"
 import { SessionFeedbackToast } from "./SessionFeedbackToast"
-import { ReflectionModal } from "./reflection/ReflectionModal"
 import { UsageHint } from "./UsageHint"
+import { ErrorBoundary } from "./ErrorBoundary"
 import { copy, t } from "../../copy"
 import { useChatStore } from "../stores/chat-store"
 import type { ChatMessage } from "../stores/chat-store"
@@ -18,10 +15,20 @@ import { getPresenceCopyKey, usePresenceStore } from "../stores/presence-store"
 import { useReflectionPrompt } from "../hooks/useReflectionPrompt"
 import { useFocusModeStore } from "../stores/focus-mode-store"
 import { useVoiceLoop } from "../hooks/useVoiceLoop"
+import { useModeSwitch } from "../hooks/useModeSwitch"
 import { useSupabase } from "../providers"
 import { useUsageMonitor } from "../hooks/useUsageMonitor"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 import { diagnoseMicrophoneAccess, isMicrophoneLikelySupported } from "../lib/microphone-debug"
+import { useSessionPersistence } from "../hooks/useSessionPersistence"
+import { useVoiceFallbackStore } from "../stores/voice-fallback-store"
+import { InputModeIndicator } from "./InputModeIndicator"
+
+// Lazy load heavy components that aren't needed immediately
+const VoicePanel = lazy(() => import("./VoicePanel").then(mod => ({ default: mod.VoicePanel })))
+const VoiceFocusView = lazy(() => import("./VoiceFocusView").then(mod => ({ default: mod.VoiceFocusView })))
+const VoiceCollapsed = lazy(() => import("./VoiceCollapsed").then(mod => ({ default: mod.VoiceCollapsed })))
+const ReflectionModal = lazy(() => import("./reflection/ReflectionModal").then(mod => ({ default: mod.ReflectionModal })))
 
 export function ConversationView() {
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -31,8 +38,25 @@ export function ConversationView() {
   const { chunks, dismiss } = useReflectionPrompt(conversationId, lastCompletedTurnId)
   const [micSupportWarning, setMicSupportWarning] = useState<string | null>(null)
   
+  // Session persistence - automatically save/restore conversations
+  useSessionPersistence()
+  
   // Focus mode state - must be declared before useEffect that uses it
   const focusMode = useFocusModeStore((state) => state.mode)
+  const setMode = useFocusModeStore((state) => state.setMode)
+  const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
+  
+  // Voice fallback detection
+  const shouldAutoFallback = useVoiceFallbackStore((state) => state.shouldAutoFallback)
+  
+  // Auto-fallback to text if voice has failed multiple times
+  useEffect(() => {
+    if (shouldAutoFallback() && focusMode === "voice") {
+      console.log("[ConversationView] Auto-falling back to text mode due to voice failures")
+      setMode("text")
+      setManualOverride(true)
+    }
+  }, [shouldAutoFallback, focusMode, setMode, setManualOverride])
   
   // Check microphone support ONLY when user enters voice mode
   useEffect(() => {
@@ -77,9 +101,8 @@ export function ConversationView() {
     const timer = setTimeout(checkSupport, 300)
     return () => clearTimeout(timer)
   }, [focusMode])
-  const setMode = useFocusModeStore((state) => state.setMode)
+  
   const isManualOverride = useFocusModeStore((state) => state.isManualOverride)
-  const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
   
   // Voice state - SINGLE SOURCE OF TRUTH
   const { user } = useSupabase()
@@ -87,7 +110,6 @@ export function ConversationView() {
   const voiceStage = voiceState.stage
   
   // Reset voice state when leaving voice mode to prevent stuck states
-  // Also prevent auto-start when entering voice mode if coming from a stuck state
   useEffect(() => {
     if (focusMode !== "voice") {
       // If we're leaving voice mode and voice is active, reset it
@@ -95,14 +117,10 @@ export function ConversationView() {
         console.log("[ConversationView] Leaving voice mode, resetting voice state")
         voiceState.resetVoiceState?.()
       }
-    } else {
-      // When entering voice mode, ensure we're in a clean state (not stuck in thinking)
-      if (voiceStage === "thinking") {
-        // Check if we've been thinking for too long (should be caught by timeout, but double-check)
-        console.log("[ConversationView] Entering voice mode but voice is in thinking state, resetting")
-        voiceState.resetVoiceState?.()
-      }
     }
+    // REMOVED: Do NOT reset when entering voice mode in "thinking" state
+    // "thinking" is a VALID state after user stops recording - backend is processing
+    // Only reset if we're stuck (timeout handles that in useVoiceLoop)
   }, [focusMode, voiceStage, voiceState])
   
   // Monitor usage and trigger alerts
@@ -113,15 +131,21 @@ export function ConversationView() {
   const [userIsTyping, setUserIsTyping] = useState(false)
   const isLocked = useChatStore((state) => state.isLocked)
 
-  const handlePromptSelect = (prompt: string) => {
+  const handlePromptSelect = useCallback((prompt: string) => {
     applyPrompt(prompt)
     requestAnimationFrame(() => composerRef.current?.focus())
-  }
+  }, [applyPrompt])
 
   // Auto-switch focus mode based on user interaction
+  // CLEAN Architecture: Uses domain logic from mode-switching.ts via useModeSwitch
+  const { canAutoSwitch } = useModeSwitch()
+  
   useEffect(() => {
     // Don't auto-switch if user manually overrode
     if (isManualOverride) return
+    
+    // Don't auto-switch if domain logic blocks it (operations in progress)
+    if (!canAutoSwitch) return
 
     const isVoiceActive = voiceStage !== "idle" && voiceStage !== "error"
 
@@ -149,7 +173,7 @@ export function ConversationView() {
       // Only auto-switch TO full view if we're already in full view (no-op)
       if (focusMode === "full") return
     }
-  }, [voiceStage, composerHasFocus, userIsTyping, isLocked, focusMode, setMode, isManualOverride])
+  }, [voiceStage, composerHasFocus, userIsTyping, isLocked, focusMode, setMode, isManualOverride, canAutoSwitch])
 
   // Track typing activity to maintain text focus
   useEffect(() => {
@@ -185,7 +209,7 @@ export function ConversationView() {
       {/* Microphone support warning - only in voice mode, elegant Sophia styling */}
       {micSupportWarning && focusMode === "voice" && (
         <div className="mx-auto max-w-2xl animate-fadeIn">
-          <div className="rounded-2xl border border-sophia-purple/20 bg-gradient-to-br from-sophia-purple/5 via-sophia-purple/3 to-transparent px-4 py-3 shadow-soft backdrop-blur-sm">
+          <div className="rounded-2xl border border-sophia-purple/20 bg-sophia-surface px-4 py-3 shadow-soft">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-sophia-purple/10">
                 <Mic className="h-3 w-3 text-sophia-purple" />
@@ -212,14 +236,18 @@ export function ConversationView() {
         {/* Voice Focus Mode */}
         {focusMode === "voice" && (
           <div className="animate-fadeIn">
-            <VoiceFocusView voiceState={voiceState} />
+            <Suspense fallback={<div className="h-48 animate-pulse rounded-2xl bg-sophia-surface" />}>
+              <VoiceFocusView voiceState={voiceState} />
+            </Suspense>
           </div>
         )}
 
         {/* Text Focus Mode */}
         {focusMode === "text" && (
           <div className="space-y-4 animate-fadeIn">
-            <VoiceCollapsed />
+            <Suspense fallback={<div className="h-12 animate-pulse rounded-xl bg-sophia-surface" />}>
+              <VoiceCollapsed />
+            </Suspense>
             <Transcript onPromptSelect={handlePromptSelect} />
           </div>
         )}
@@ -227,7 +255,9 @@ export function ConversationView() {
         {/* Full View Mode */}
         {focusMode === "full" && (
           <div className="space-y-4 animate-fadeIn">
-            <VoicePanel voiceState={voiceState} />
+            <Suspense fallback={<div className="h-32 animate-pulse rounded-2xl bg-sophia-surface" />}>
+              <VoicePanel voiceState={voiceState} />
+            </Suspense>
             <Transcript onPromptSelect={handlePromptSelect} />
           </div>
         )}
@@ -235,7 +265,11 @@ export function ConversationView() {
       {/* Only show feedback toast in chat mode, not voice mode */}
       {!chunks && focusMode !== "voice" && <SessionFeedbackToast />}
       {chunks && conversationId && (
-        <ReflectionModal conversationId={conversationId} chunks={chunks} onClose={dismiss} />
+        <ErrorBoundary componentName="ReflectionModal">
+          <Suspense fallback={null}>
+            <ReflectionModal conversationId={conversationId} chunks={chunks} onClose={dismiss} />
+          </Suspense>
+        </ErrorBoundary>
       )}
     </AppShell>
   )
@@ -255,11 +289,11 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
     }
   }, [messages.length, isLocked, shouldStickToBottom])
 
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+  const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget
     const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     setShouldStickToBottom(distanceFromBottom < 80)
-  }
+  }, [])
 
   const maxHeight = compact ? "40vh" : "65vh"
   const minHeight = compact ? "200px" : "360px"
@@ -270,7 +304,7 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
   }
 
   return (
-    <div className="rounded-3xl bg-sophia-card p-4 shadow-soft">
+    <div className="rounded-3xl bg-sophia-surface p-4 shadow-soft">
       <div
         ref={scrollContainerRef}
         role="log"
@@ -332,7 +366,7 @@ function EmptyState({ onPromptSelect }: { onPromptSelect: (prompt: string) => vo
             <button
               key={prompt.id}
               type="button"
-              className="group rounded-2xl border border-sophia-text/10 bg-sophia-button/70 px-4 py-2.5 text-sm font-medium text-sophia-text shadow-sm transition-all duration-300 ease-out hover:scale-[1.02] hover:border-sophia-purple/40 hover:bg-sophia-button-hover hover:text-sophia-purple hover:shadow-md active:scale-[0.98]"
+              className="group rounded-xl border border-sophia-purple/15 bg-sophia-button/70 px-4 py-2.5 text-sm font-medium text-sophia-text shadow-sm transition-all duration-300 ease-out hover:scale-[1.02] hover:border-sophia-purple/40 hover:bg-sophia-button-hover hover:text-sophia-purple hover:shadow-md active:scale-[0.98]"
               onClick={() => onPromptSelect(prompt.label)}
               style={{ animationDelay: `${index * 50}ms` }}
             >
@@ -348,7 +382,7 @@ function EmptyState({ onPromptSelect }: { onPromptSelect: (prompt: string) => vo
   )
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+const MessageBubble = memo(function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user"
   const alignment = isUser ? "justify-end" : "justify-start"
   const bubbleClasses = isUser
@@ -360,7 +394,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  const handleAudio = async () => {
+  const handleAudio = useCallback(async () => {
     if (!message.audioUrl) return
     
     // If already playing, stop it
@@ -403,7 +437,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       setIsPlaying(false)
       audioRef.current = null
     }
-  }
+  }, [message.audioUrl, isPlaying])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -462,7 +496,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
     </div>
   )
-}
+})
 
 function StreamingIndicator() {
   const presenceStatus = usePresenceStore((state) => state.status)
@@ -511,13 +545,13 @@ function Composer({
   // Block interaction if usage limit modal is open
   const isModalOpen = useUsageLimitStore((state) => state.isOpen)
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     // Block sending if modal is open
     if (isModalOpen) return
     sendMessage()
-  }
+  }, [isModalOpen, sendMessage])
 
-  const onKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
+  const onKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = useCallback((event) => {
     // Block keyboard interaction if modal is open
     if (isModalOpen) {
       event.preventDefault()
@@ -527,13 +561,13 @@ function Composer({
       event.preventDefault()
       handleSend()
     }
-  }
+  }, [isModalOpen, handleSend])
 
-  const handleFocus = () => {
+  const handleFocus = useCallback(() => {
     onFocusChange?.(true)
-  }
+  }, [onFocusChange])
 
-  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+  const handleBlur = useCallback((e: React.FocusEvent<HTMLTextAreaElement>) => {
     // Only blur if focus is moving outside the composer area
     // Don't blur if clicking on buttons within the chat (like play audio)
     const relatedTarget = e.relatedTarget as HTMLElement
@@ -541,11 +575,14 @@ function Composer({
       return
     }
     onFocusChange?.(false)
-  }
+  }, [onFocusChange])
 
   return (
     <div className="space-y-2 composer-container">
-      <div className="rounded-2xl bg-sophia-card p-4 shadow-soft transition-all duration-300">
+      {/* Voice fallback indicator */}
+      <InputModeIndicator />
+      
+      <div className="rounded-2xl bg-sophia-surface p-4 shadow-soft transition-all duration-300">
         <div className="flex flex-col gap-3">
           <textarea
             ref={textareaRef}

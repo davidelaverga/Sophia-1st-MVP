@@ -38,7 +38,7 @@ export function SessionFeedbackToast() {
 
   return (
     <div className="pointer-events-auto fixed bottom-4 left-0 right-0 z-40 flex justify-center px-4">
-      <div className="flex w-full max-w-md items-center justify-between rounded-2xl border border-sophia-text/10 bg-sophia-card p-3 text-sm shadow-soft">
+      <div className="flex w-full max-w-md items-center justify-between rounded-2xl border border-sophia-text/10 bg-sophia-surface p-3 text-sm shadow-soft">
         <div>
           <p className="font-semibold text-sophia-text">How did that feel?</p>
           {error && (

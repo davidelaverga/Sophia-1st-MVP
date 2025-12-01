@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Shield, AlertTriangle } from "lucide-react"
 import { copy, t } from "../../copy"
 import { getConsentStatus, postConsentAccept } from "../lib/api/privacy"
+import { useFocusTrap } from "../hooks/useFocusTrap"
 
 type GateState = "checking" | "needsConsent" | "error" | "ready"
 
@@ -11,6 +12,7 @@ export function ConsentGate({ onReady }: { onReady: () => void }) {
   const [state, setState] = useState<GateState>("checking")
   const [error, setError] = useState<string>()
   const [retryCount, setRetryCount] = useState(0)
+  const { containerRef } = useFocusTrap()
 
   useEffect(() => {
     let aborted = false
@@ -60,12 +62,18 @@ export function ConsentGate({ onReady }: { onReady: () => void }) {
   const showFallbackContinue = state === "error" || (state === "needsConsent" && Boolean(error))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-sophia-text/50 px-3 backdrop-blur-sm">
-      <div className="w-full max-w-full rounded-3xl bg-sophia-card p-5 text-sophia-text shadow-soft sm:max-w-lg sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-sophia-bg px-3">
+      <div 
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="consent-title"
+        className="w-full max-w-full rounded-3xl bg-sophia-surface border-2 border-sophia-purple/20 p-5 text-sophia-text shadow-2xl sm:max-w-lg sm:p-6"
+      >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Shield className="h-8 w-8 text-sophia-purple" />
           <div>
-            <p className="text-lg font-semibold">{t("consentModal.title")}</p>
+            <p id="consent-title" className="text-lg font-semibold">{t("consentModal.title")}</p>
             <p className="text-sm text-sophia-text2">{t("consentModal.intro")}</p>
           </div>
         </div>
@@ -116,7 +124,7 @@ export function ConsentGate({ onReady }: { onReady: () => void }) {
   )
 }
 
-function ConsentList({ title, items }: { title: string; items: string[] }) {
+function ConsentList({ title, items }: { title: string; items: readonly string[] }) {
   return (
     <div>
       <p className="text-sm font-semibold text-sophia-text">{title}</p>

@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { Sparkles } from "lucide-react"
+import { debug } from "../lib/debug"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -11,23 +12,18 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
-  // FORCE use of CORRECT URL and KEY (temporary fix for demo)
-  // TODO: Fix env variable reading issue
-  const supabaseUrl = "https://qtyqgvdkbhjfmnfkxyvm.supabase.co"
-  // Force use of the correct anon key directly
-  const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF0eXFndmRrYmhqZm1uZmt4eXZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0Nzc3MzUsImV4cCI6MjA3OTA1MzczNX0.XqfLoS-qOd01AOnO7gAY4mRPFPGa1JbRvNMmxpudJPI"
+  // Use environment variables for Supabase configuration
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
-  // Debug log (remove after testing)
-  if (typeof window !== "undefined") {
-    console.log("[login] Supabase URL (from env):", process.env.NEXT_PUBLIC_SUPABASE_URL)
-    console.log("[login] Supabase URL (using FORCED):", supabaseUrl)
-    console.log("[login] Supabase Key (from env):", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "Set" : "Missing")
-    console.log("[login] Supabase Key (using):", supabaseKey ? supabaseKey.substring(0, 20) + "..." : "Missing")
+  // Validate environment variables are set
+  if (!supabaseUrl || !supabaseKey) {
+    debug.error("[login] Missing Supabase environment variables")
   }
   
   const supabase = createClientComponentClient({
-    supabaseUrl: supabaseUrl,
-    supabaseKey: supabaseKey,
+    supabaseUrl: supabaseUrl!,
+    supabaseKey: supabaseKey!,
   })
   const router = useRouter()
 
@@ -43,7 +39,7 @@ export default function LoginPage() {
       })
 
       if (authError) {
-        console.error("[login] Auth error:", authError)
+        debug.error("[login] Auth error:", authError)
         setError(authError.message || "Invalid email or password")
         setLoading(false)
         return
@@ -57,9 +53,10 @@ export default function LoginPage() {
         setError("Login failed. Please try again.")
         setLoading(false)
       }
-    } catch (err: any) {
-      console.error("[login] Unexpected error:", err)
-      setError(err?.message || "An unexpected error occurred. Please check your connection.")
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred"
+      debug.error("[login] Unexpected error:", err)
+      setError(errorMessage)
       setLoading(false)
     }
   }

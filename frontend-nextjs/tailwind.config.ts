@@ -7,6 +7,14 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+  // Safelist classes that might not be detected during build
+  safelist: [
+    'bg-sophia-surface',
+    'bg-sophia-bubble',
+    'text-sophia-text',
+    'text-sophia-text2',
+    'border-sophia-surface-border',
+  ],
   theme: {
     extend: {
       colors: {
@@ -17,11 +25,12 @@ const config: Config = {
           text: "var(--text)",
           text2: "var(--text-2)",
           user: "var(--user-bubble)",
+          bubble: "var(--sophia-bubble)",
           reply: "var(--sophia-bubble)",
           btn: "var(--btn-active)",
           error: "var(--error)",
-          card: "var(--card-bg)",
-          "card-border": "var(--card-border)",
+          surface: "var(--card-bg)",
+          "surface-border": "var(--card-border)",
           input: "var(--input-bg)",
           "input-border": "var(--input-border)",
           button: "var(--button-bg)",

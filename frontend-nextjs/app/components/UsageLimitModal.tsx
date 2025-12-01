@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import type { UsageLimitInfo } from "../types/rate-limits";
 import { copy } from "../../copy";
 import { useUsageLimitStore } from "../stores/usage-limit-store";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 type UsageLimitModalProps = {
   open: boolean;
@@ -13,49 +14,26 @@ type UsageLimitModalProps = {
 
 export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
   const isAtLimit = useUsageLimitStore((state) => state.isAtLimit)
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const { containerRef, restoreFocus } = useFocusTrap();
 
+  // Handle Escape key to close modal (but not when at 100% limit)
   useEffect(() => {
     if (!open) return;
 
-    const node = containerRef.current;
-    if (!node) return;
-
-    // Focus trap
-    const focusable = node.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    focusable[0]?.focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        // Don't allow closing if at 100% limit
-        if (!isAtLimit) {
-          onClose();
-        }
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-      if (event.shiftKey) {
-        if (document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        }
-      } else if (document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isAtLimit) {
+        handleClose();
       }
     };
 
-    node.addEventListener("keydown", handleKeyDown);
-    return () => {
-      node.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, onClose, isAtLimit]);
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [open, isAtLimit]);
+
+  const handleClose = () => {
+    restoreFocus();
+    onClose();
+  };
 
   if (!open) return null;
 
@@ -101,7 +79,7 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
         e.stopPropagation()
       }}
     >
-      <div className="w-full max-w-lg rounded-3xl bg-sophia-card p-6 shadow-soft">
+      <div className="w-full max-w-lg rounded-3xl bg-sophia-surface p-6 shadow-soft">
         <h2 id="usage-limit-title" className="text-xl font-semibold text-sophia-text">
           {copy.usageLimit.modalTitle}
         </h2>
@@ -135,10 +113,11 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
             onClick={() => {
               // Don't allow closing if at 100% limit - user must upgrade
               if (!isAtLimit) {
-                onClose();
+                handleClose();
               }
             }}
             disabled={isAtLimit}
+            aria-label={isAtLimit ? "Cannot close - at usage limit" : "Maybe later"}
             className={`w-full rounded-2xl border border-sophia-text/15 bg-sophia-button px-4 py-2.5 text-sm font-medium text-sophia-text transition hover:bg-sophia-user sm:w-auto ${
               isAtLimit ? "opacity-50 cursor-not-allowed" : ""
             }`}
@@ -148,6 +127,7 @@ export function UsageLimitModal({ open, onClose, info }: UsageLimitModalProps) {
           <button
             type="button"
             onClick={handleUpgrade}
+            aria-label="Explore Sophia Plus"
             className="w-full rounded-2xl bg-sophia-purple px-4 py-2.5 text-sm font-semibold text-white shadow-soft/30 transition hover:bg-sophia-glow sm:w-auto"
           >
             {copy.usageLimit.ctaPrimary}

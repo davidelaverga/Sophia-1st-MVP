@@ -81,7 +81,7 @@ export function UsageDemoControls() {
 
       {/* Controls panel */}
       {isOpen && (
-        <div className="fixed bottom-20 right-4 z-[100] w-80 rounded-2xl border border-sophia-card-border bg-sophia-card p-4 shadow-xl">
+        <div className="fixed bottom-20 right-4 z-[100] w-80 rounded-2xl border border-sophia-card-border bg-sophia-surface p-4 shadow-xl">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-bold text-gray-900">Usage Demo Controls</h3>
             <button

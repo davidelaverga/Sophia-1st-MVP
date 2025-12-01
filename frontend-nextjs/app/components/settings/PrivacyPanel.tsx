@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { exportPrivacyData, deleteAccountData } from "../../lib/api/privacy"
 
 export function PrivacyPanel() {
@@ -50,7 +51,7 @@ export function PrivacyPanel() {
   }
 
   return (
-    <section aria-labelledby="privacy-panel-title" className="rounded-3xl border border-sophia-text/10 bg-sophia-bubble p-4">
+    <section aria-labelledby="privacy-panel-title" className="rounded-3xl border-2 border-sophia-text/10 bg-sophia-surface p-4 shadow-lg">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p id="privacy-panel-title" className="text-base font-semibold text-sophia-text">
@@ -60,12 +61,20 @@ export function PrivacyPanel() {
         </div>
       </div>
 
+      {/* Privacy policy link */}
+      <Link
+        href="/privacy"
+        className="mt-3 inline-flex items-center gap-1 text-sm text-sophia-purple hover:underline"
+      >
+        Read our Privacy Policy →
+      </Link>
+
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <button
           type="button"
           onClick={handleExport}
           disabled={status !== "idle"}
-          className="rounded-2xl border border-sophia-text/20 bg-sophia-button px-4 py-3 text-sm font-medium text-sophia-text transition hover:border-sophia-purple/40 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-2xl border-2 border-sophia-purple/40 bg-sophia-surface px-4 py-3 text-sm font-medium text-sophia-text shadow-md transition hover:border-sophia-purple hover:bg-sophia-purple/5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
         >
           {status === "exporting" ? "Preparing export…" : "Export my data"}
         </button>
@@ -73,7 +82,7 @@ export function PrivacyPanel() {
           type="button"
           onClick={handleDelete}
           disabled={status !== "idle"}
-          className="rounded-2xl border border-sophia-error/30 bg-sophia-error/15 px-4 py-3 text-sm font-semibold text-sophia-text transition hover:border-sophia-error/50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-2xl border-2 border-sophia-error/40 bg-sophia-error/10 px-4 py-3 text-sm font-semibold text-sophia-error transition hover:border-sophia-error/60 hover:bg-sophia-error/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {status === "deleting" ? "Deleting…" : confirmDelete ? "Confirm delete" : "Delete my account"}
         </button>

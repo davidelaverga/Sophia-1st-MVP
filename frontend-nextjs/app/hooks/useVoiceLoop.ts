@@ -5,11 +5,14 @@ import { usePresenceStore } from "../stores/presence-store"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 import { useVoiceHistoryStore } from "../stores/voice-history-store"
 import { useChatStore } from "../stores/chat-store"
+import { useVoiceFallbackStore } from "../stores/voice-fallback-store"
 import { emitTelemetry } from "../lib/telemetry"
 import type { UsageLimitError, UsageLimitInfo } from "../types/rate-limits"
 import { refreshUsage } from "./useUsageMonitor"
 import { checkMicrophonePermission, isMicrophonePermissionDenied } from "../lib/microphone-permissions"
 import { diagnoseMicrophoneAccess, logDiagnostics, isMicrophoneLikelySupported } from "../lib/microphone-debug"
+import { logger } from "../lib/error-logger"
+import { eventBus } from "../lib/events"
 
 const PREBUFFER_CHUNKS = 3
 const FIRST_AUDIO_TARGET_MS = 200
@@ -151,8 +154,11 @@ export function useVoiceLoop(userId?: string) {
     if (current.src?.startsWith("blob:")) {
       try {
         URL.revokeObjectURL(current.src)
-      } catch {
-        // ignore
+      } catch (err) {
+        logger.warn("Failed to revoke blob URL in stopCurrentAudio", {
+          context: "useVoiceLoop.stopCurrentAudio",
+          error: err instanceof Error ? err.message : String(err),
+        })
       }
     }
     currentAudioRef.current = null
@@ -202,10 +208,28 @@ export function useVoiceLoop(userId?: string) {
     isPlayingRef.current = true
 
     const finalize = () => {
+      // Revoke blob URL immediately after playback
+      if (nextChunk.revokeOnUse && nextChunk.url.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(nextChunk.url)
+        } catch (err) {
+          logger.warn("Failed to revoke blob URL after playback", {
+            context: "useVoiceLoop.finalize",
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      
       stopCurrentAudio()
       if (playbackQueueRef.current.length > 0) {
         startNextChunkIfReady()
       } else if (streamEndedRef.current) {
+        // 🔔 Emit voice playback complete event
+        eventBus.emit("voice:playback:complete", {
+          messageId: "voice-response",
+          timestamp: Date.now(),
+        })
+        
         resetPlaybackTracking()
         setStage("idle")
         setSpeakingPresence(false)
@@ -213,7 +237,7 @@ export function useVoiceLoop(userId?: string) {
         
         // Close WebSocket after all audio playback is complete
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.close()
+          wsRef.current.close(1000, "Audio playback complete")
           wsRef.current = null
         }
       }
@@ -228,6 +252,13 @@ export function useVoiceLoop(userId?: string) {
       .then(() => {
         setStage("speaking")
         setSpeakingPresence(true)
+        
+        // 🔔 Emit voice playback start event
+        eventBus.emit("voice:playback:start", {
+          messageId: "voice-response", // TODO: Pass actual message ID if available
+          timestamp: Date.now(),
+        })
+        
         const now = performance.now()
         firstAudioAtRef.current = now
         if (speechEndAtRef.current) {
@@ -278,14 +309,20 @@ export function useVoiceLoop(userId?: string) {
       
       // Close WebSocket after audio stream ends to prevent backend loop
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.close()
+        wsRef.current.close(1000, "Stream complete")
         wsRef.current = null
       }
     }
     if (speechStartAtRef.current) {
+      const duration = Math.round(performance.now() - speechStartAtRef.current)
       emitTelemetry("voice.stream_complete", {
         path,
-        duration_ms: Math.round(performance.now() - speechStartAtRef.current),
+        duration_ms: duration,
+      })
+      // Track successful voice interaction
+      logger.addBreadcrumb("Voice interaction completed successfully", {
+        duration_ms: duration,
+        path,
       })
     }
     speechStartAtRef.current = null
@@ -517,10 +554,30 @@ export function useVoiceLoop(userId?: string) {
     setStage("connecting")
 
     const promise = new Promise<WebSocket>((resolve, reject) => {
+      let connectionTimeout: NodeJS.Timeout | null = null
+      
       try {
         const ws = new WebSocket(wsUrl)
         ws.binaryType = "arraybuffer"
+        
+        // Add 10-second connection timeout
+        connectionTimeout = setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            logger.error("WebSocket connection timeout", {
+              context: "useVoiceLoop.connectWebSocket",
+              readyState: ws.readyState,
+            })
+            ws.close()
+            connectPromiseRef.current = null
+            reject(new Error("Connection timeout - please check your internet connection"))
+          }
+        }, 10000)
+        
         ws.onopen = () => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout)
+            connectionTimeout = null
+          }
           wsRef.current = ws
           connectPromiseRef.current = null
           setStage("idle")
@@ -528,13 +585,27 @@ export function useVoiceLoop(userId?: string) {
         }
         ws.onmessage = handleServerMessage
         ws.onerror = (event) => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout)
+            connectionTimeout = null
+          }
           console.warn("[voice] websocket error", event)
+          logger.error("WebSocket error occurred", {
+            context: "useVoiceLoop.connectWebSocket",
+            readyState: ws.readyState,
+            url: wsUrl,
+          })
           if (ws.readyState !== WebSocket.OPEN) {
             connectPromiseRef.current = null
             reject(new Error("WebSocket error"))
           }
         }
         ws.onclose = (event) => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout)
+            connectionTimeout = null
+          }
+          
           // Clear thinking timeout on close
           if (thinkingTimeoutRef.current) {
             clearTimeout(thinkingTimeoutRef.current)
@@ -555,10 +626,19 @@ export function useVoiceLoop(userId?: string) {
           // Log unexpected closes for debugging
           if (event.code !== 1000 && !destroyedRef.current) {
             console.warn("[voice] WebSocket closed unexpectedly", { code: event.code, reason: event.reason })
+            logger.warn("WebSocket closed unexpectedly", {
+              context: "useVoiceLoop.connectWebSocket",
+              code: event.code,
+              reason: event.reason,
+            })
           }
         }
       } catch (err) {
         connectPromiseRef.current = null
+        logger.error("WebSocket connection setup failed", {
+          context: "useVoiceLoop.connectWebSocket",
+          error: err instanceof Error ? err.message : String(err),
+        })
         reject(err)
       }
     })
@@ -580,7 +660,11 @@ export function useVoiceLoop(userId?: string) {
       source.start(0)
       setNeedsUnlock(false)
       return true
-    } catch {
+    } catch (err) {
+      logger.error("Audio unlock failed", {
+        context: "useVoiceLoop.unlockAudio",
+        error: err instanceof Error ? err.message : String(err),
+      })
       setNeedsUnlock(true)
       return false
     }
@@ -597,8 +681,18 @@ export function useVoiceLoop(userId?: string) {
     } catch {
       // ignore
     }
+    // Stop all MediaStream tracks to release microphone
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
+      try {
+        streamRef.current.getTracks().forEach((track) => {
+          track.stop()
+        })
+      } catch (err) {
+        logger.warn("Failed to stop MediaStream tracks", {
+          context: "useVoiceLoop.cleanupRecorder",
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
       streamRef.current = null
     }
     processorRef.current = null
@@ -607,6 +701,8 @@ export function useVoiceLoop(userId?: string) {
   }
 
   const startTalking = async () => {
+    logger.addBreadcrumb("User initiated voice capture", { userId })
+    
     // 💜 Block if user is at 100% usage limit
     const usageStore = useUsageLimitStore.getState()
     if (usageStore.isAtLimit) {
@@ -769,7 +865,16 @@ export function useVoiceLoop(userId?: string) {
           }
           chunkAccumulatorRef.current = []
           const pcm16 = downsampleTo16kPCM(merged, ctx.sampleRate)
-          wsRef.current.send(pcm16)
+          try {
+            wsRef.current.send(pcm16)
+            console.log("[voice] Sent audio chunk:", { samples: totalSamples, bytes: pcm16.byteLength, secs: secs.toFixed(2) })
+          } catch (err) {
+            console.error("[voice] Failed to send audio chunk:", err)
+            logger.warn("Failed to send audio chunk to WebSocket", {
+              context: "useVoiceLoop.onaudioprocess",
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
         }
       }
 
@@ -778,7 +883,14 @@ export function useVoiceLoop(userId?: string) {
       setStage("listening")
       setListeningPresence(true)
       speechStartAtRef.current = performance.now()
+      
+      // 🔔 Emit voice recording start event
+      eventBus.emit("voice:recording:start", {
+        timestamp: Date.now(),
+      })
+      
       console.log("[voice] Microphone access granted, listening started")
+      logger.addBreadcrumb("Voice capture started", { path, userId })
       emitTelemetry("voice.capture_start", { path })
     } catch (err) {
       console.error("[voice] startTalking failed", err)
@@ -789,6 +901,14 @@ export function useVoiceLoop(userId?: string) {
       const errorMessage = error.message || ""
       
       console.log("[voice] Error details:", { errorName, errorMessage, error })
+      
+      // Log to centralized error logger
+      logger.error("Voice capture failed", {
+        context: "useVoiceLoop.startTalking",
+        errorName,
+        errorMessage,
+        userId,
+      })
       
       let userMessage = "I couldn't access your microphone. Please check your permissions."
       
@@ -840,6 +960,9 @@ export function useVoiceLoop(userId?: string) {
       console.log("[voice] Setting error message:", userMessage)
       setError(userMessage)
       
+      // Report failure to fallback store
+      useVoiceFallbackStore.getState().setVoiceFailed(userMessage)
+      
       // Get permission state for telemetry (non-blocking)
       let finalPermissionState = "unknown"
       try {
@@ -854,6 +977,14 @@ export function useVoiceLoop(userId?: string) {
         errorMessage,
         permissionState: finalPermissionState
       })
+      
+      // Track voice interaction failure for monitoring
+      logger.addBreadcrumb("Voice interaction failed", {
+        errorName,
+        errorMessage,
+        permissionState: finalPermissionState,
+      })
+      
       setStage("error")
       setListeningPresence(false)
       cleanupRecorder()
@@ -861,7 +992,56 @@ export function useVoiceLoop(userId?: string) {
   }
 
   const stopTalking = () => {
+    console.log("[voice] stopTalking called, stage:", stage, "WS state:", wsRef.current?.readyState)
+    logger.addBreadcrumb("User stopped voice capture")
+    
+    // 🔧 CRITICAL FIX: Send any remaining audio chunks BEFORE cleanup
+    // This ensures the last partial chunk is sent to backend
+    if (chunkAccumulatorRef.current.length > 0 && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const ctx = audioCtxRef.current
+      if (ctx) {
+        const totalSamples = chunkAccumulatorRef.current.reduce((acc, chunk) => acc + chunk.length, 0)
+        console.log("[voice] Has accumulated audio chunks:", chunkAccumulatorRef.current.length, "total samples:", totalSamples)
+        if (totalSamples > 0) {
+          const merged = new Float32Array(totalSamples)
+          let offset = 0
+          for (const chunk of chunkAccumulatorRef.current) {
+            merged.set(chunk, offset)
+            offset += chunk.length
+          }
+          const pcm16 = downsampleTo16kPCM(merged, ctx.sampleRate)
+          try {
+            wsRef.current.send(pcm16)
+            console.log("[voice] ✅ Sent final audio chunk before stopping", { samples: totalSamples, bytes: pcm16.byteLength })
+          } catch (err) {
+            console.error("[voice] ❌ Failed to send final audio chunk:", err)
+            logger.warn("Failed to send final audio chunk", {
+              context: "useVoiceLoop.stopTalking",
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+      }
+      chunkAccumulatorRef.current = []
+    } else {
+      console.log("[voice] No accumulated chunks to send or WS not open", {
+        hasChunks: chunkAccumulatorRef.current.length > 0,
+        wsExists: !!wsRef.current,
+        wsState: wsRef.current?.readyState
+      })
+    }
+    
+    // Now cleanup recorder (stops microphone, disconnects processor)
     cleanupRecorder()
+    
+    // 🔔 Emit voice recording stop event
+    const duration = speechStartAtRef.current
+      ? performance.now() - speechStartAtRef.current
+      : undefined
+    eventBus.emit("voice:recording:stop", {
+      timestamp: Date.now(),
+      duration,
+    })
     
     // Clear any existing thinking timeout when stopping
     if (thinkingTimeoutRef.current) {
@@ -873,6 +1053,20 @@ export function useVoiceLoop(userId?: string) {
       setStage((prev) => (prev === "listening" || prev === "connecting" ? "thinking" : prev))
       setMetaPresence("thinking")
       
+      // Send stop signal to backend to signal end of recording
+      // IMPORTANT: Do NOT close WebSocket here - backend needs to process the audio
+      // and send back the response. WebSocket will close after response is complete.
+      try {
+        wsRef.current.send(JSON.stringify({ type: "stop", reason: "user_stopped" }))
+        console.log("[voice] ✅ Sent stop signal to backend")
+      } catch (err) {
+        console.error("[voice] ❌ Failed to send stop message:", err)
+        logger.warn("Failed to send stop message", {
+          context: "useVoiceLoop.stopTalking",
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      
       // Set timeout for thinking state when stopping - if no response in 60s, reset
       thinkingTimeoutRef.current = setTimeout(() => {
         console.warn("[voice] Thinking timeout after stop - no response, resetting")
@@ -882,16 +1076,18 @@ export function useVoiceLoop(userId?: string) {
         setSpeakingPresence(false)
         setMetaPresence("resting")
         settlePresence()
+        thinkingTimeoutRef.current = null
         
+        // Close WebSocket on timeout
         if (wsRef.current) {
           try {
-            wsRef.current.close()
+            wsRef.current.close(1000, "Timeout after stop")
           } catch {
             // ignore
           }
           wsRef.current = null
         }
-        thinkingTimeoutRef.current = null
+        
         emitTelemetry("voice.timeout", { path, reason: "after_stop" })
       }, 60000) // 60 seconds timeout
     } else {
@@ -952,13 +1148,37 @@ export function useVoiceLoop(userId?: string) {
   }
 
   const bargeIn = () => {
+    logger.addBreadcrumb("User interrupted Sophia (barge-in)")
     const start = performance.now()
     flushPlaybackQueue()
-    try {
-      wsRef.current?.send(JSON.stringify({ type: "cancel", reason: "barge_in" }))
-    } catch {
-      // ignore
+    
+    // 🔧 FIX: Send cancel message and close WebSocket immediately
+    if (wsRef.current) {
+      try {
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "cancel", reason: "barge_in" }))
+        }
+      } catch (err) {
+        logger.warn("Failed to send barge-in message", {
+          context: "useVoiceLoop.bargeIn",
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      
+      // Close WebSocket to stop receiving audio chunks
+      try {
+        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+          wsRef.current.close(1000, "User interrupted (barge-in)")
+        }
+      } catch (err) {
+        logger.warn("Failed to close WebSocket in bargeIn", {
+          context: "useVoiceLoop.bargeIn",
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      wsRef.current = null
     }
+    
     const latency = performance.now() - start
     emitTelemetry("voice.barge_in_latency_ms", {
       ms: Math.round(latency),
@@ -986,12 +1206,36 @@ export function useVoiceLoop(userId?: string) {
         thinkingTimeoutRef.current = null
       }
       
-      try {
-        wsRef.current?.close()
-      } catch {
-        // ignore
+      // Close WebSocket with proper code
+      if (wsRef.current) {
+        try {
+          if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+            wsRef.current.close(1000, "Component unmounting")
+          }
+        } catch (err) {
+          logger.warn("Failed to close WebSocket on unmount", {
+            context: "useVoiceLoop.useEffect.cleanup",
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+        wsRef.current = null
       }
-      wsRef.current = null
+      
+      // Close AudioContext to free resources
+      if (audioCtxRef.current) {
+        try {
+          if (audioCtxRef.current.state !== "closed") {
+            audioCtxRef.current.close()
+          }
+        } catch (err) {
+          logger.warn("Failed to close AudioContext on unmount", {
+            context: "useVoiceLoop.useEffect.cleanup",
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+        audioCtxRef.current = null
+      }
+      
       resetPresence()
     }
   }, [])

@@ -8,6 +8,8 @@ import { copy } from "../../copy"
 import type { UsageLimitInfo } from "../types/rate-limits"
 import { refreshUsage } from "../hooks/useUsageMonitor"
 import { useSupabase } from "../providers"
+import { logger } from "../lib/error-logger"
+import { eventBus } from "../lib/events"
 
 type ChatRole = "user" | "sophia" | "system"
 
@@ -101,6 +103,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const text = (override ?? get().composerValue).trim()
     if (!text || get().isLocked) return
 
+    // Add breadcrumb for message send
+    logger.addBreadcrumb("User sent message", {
+      messageLength: text.length,
+      hasOverride: !!override,
+    })
+
     // 💜 Block if user is at 100% usage limit
     const usageStore = useUsageLimitStore.getState()
     if (usageStore.isAtLimit) {
@@ -121,6 +129,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const userMessage = createMessage("user", text)
     const replyId = createMessageId()
 
+    // 🔔 Emit message sent event
+    eventBus.emit("chat:message:sent", {
+      id: userMessage.id,
+      content: text,
+      role: "user",
+      timestamp: Date.now(),
+      source: "text",
+    })
+
     // Accumulate tokens in memory but don't show them until done
     let accumulatedContent = ""
 
@@ -139,6 +156,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       lastError: undefined,
       feedbackGate: undefined,
     }))
+
+    // 🔔 Emit stream start event
+    eventBus.emit("chat:stream:start", {
+      conversationId: get().conversationId ?? "new",
+      timestamp: Date.now(),
+    })
 
     usePresenceStore.getState().setListening(true)
     let sawFeedbackGate = false
@@ -224,6 +247,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           accumulatedContent += token
           usePresenceStore.getState().setListening(false)
           usePresenceStore.getState().setMetaStage("thinking")
+          
+          // 🔔 Emit stream chunk event
+          eventBus.emit("chat:stream:chunk", {
+            id: replyId,
+            content: token,
+            timestamp: Date.now(),
+          })
           // Don't update message content - wait for onDone
         },
         onDone: (payload) => {
@@ -250,6 +280,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               lastCompletedTurnId: replyId,
             }
           })
+          
+          // 🔔 Emit stream complete event
+          eventBus.emit("chat:stream:complete", {
+            id: replyId,
+            finalContent: finalContent,
+            timestamp: Date.now(),
+            turnId: payload?.turn_id ?? replyId,
+          })
+          
+          // 🔔 Emit message received event
+          eventBus.emit("chat:message:received", {
+            id: replyId,
+            content: finalContent,
+            role: "sophia",
+            timestamp: Date.now(),
+            turnId: payload?.turn_id ?? replyId,
+            audioUrl: payload?.audioUrl ?? payload?.audio_url,
+          })
+          
           if (!sawFeedbackGate) {
             get().openSessionFeedback(replyId)
           }
@@ -262,6 +311,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           refreshUsage()
         },
         onError: (payload) => {
+          // 🔔 Emit stream error event
+          eventBus.emit("chat:stream:error", {
+            error: payload?.message ?? copy.chat.error,
+            timestamp: Date.now(),
+          })
+          
           set((state) => ({
             messages: state.messages.map((message) =>
               message.id === replyId
@@ -282,6 +337,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       })
     } catch (error) {
+      logger.error(error, {
+        component: 'ChatStore',
+        action: 'sendMessage',
+        metadata: {
+          conversationId: get().conversationId,
+          messageLength: text.length,
+        },
+      })
+      
       console.error("[conversation] Streaming request failed", error)
       set((state) => ({
         messages: state.messages.map((message) =>
@@ -308,6 +372,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       status: "complete",
       audioUrl,
     })
+    
+    // 🔔 Emit message received event for voice
+    eventBus.emit("chat:message:received", {
+      id: voiceMessage.id,
+      content: content,
+      role: "sophia",
+      timestamp: Date.now(),
+      audioUrl: audioUrl,
+    })
+    
     set((state) => ({
       messages: [...state.messages, voiceMessage],
     }))

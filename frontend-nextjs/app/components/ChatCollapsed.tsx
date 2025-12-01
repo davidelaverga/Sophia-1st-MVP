@@ -1,29 +1,42 @@
 "use client"
 
 import { MessageSquare } from "lucide-react"
-import { useFocusModeStore } from "../stores/focus-mode-store"
+import { useModeSwitch } from "../hooks/useModeSwitch"
+import { useUsageLimitStore } from "../stores/usage-limit-store"
 
 /**
  * ChatCollapsed
  * 
  * Minimal indicator shown when user is in voice mode.
  * Simple click to switch to text focus mode.
+ * Includes validation to prevent switching during voice operations.
  */
 
 export function ChatCollapsed() {
-  const setMode = useFocusModeStore((state) => state.setMode)
-  const setManualOverride = useFocusModeStore((state) => state.setManualOverride)
-
-  const handleClick = () => {
-    setMode("text")
-    setManualOverride(true)
-  }
+  const showToast = useUsageLimitStore((state) => state.showToast)
+  
+  const { canSwitchToChat, switchToChat } = useModeSwitch({
+    onBlocked: (message) => {
+      // Show toast with the block reason
+      showToast({
+        reason: "voice",
+        plan_tier: "FREE",
+        used: 0,
+        limit: 0,
+      })
+    },
+  })
+  
+  const isDisabled = !canSwitchToChat.canSwitch
+  const tooltipMessage = canSwitchToChat.message || "Switch to chat mode"
 
   return (
     <button
       type="button"
-      onClick={handleClick}
-      className="w-full group rounded-3xl bg-sophia-card p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn"
+      onClick={switchToChat}
+      disabled={isDisabled}
+      title={tooltipMessage}
+      className="w-full group rounded-3xl bg-sophia-surface p-4 shadow-soft hover:shadow-md transition-all duration-300 animate-fadeIn disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-soft"
     >
       <div className="flex items-center gap-4">
         {/* Minimal chat icon */}

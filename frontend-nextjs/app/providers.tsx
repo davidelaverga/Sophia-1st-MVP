@@ -4,14 +4,20 @@ import { SessionContextProvider, useSessionContext } from '@supabase/auth-helper
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
 
-// FORCE use of CORRECT URL and KEY (temporary fix for demo)
-// TODO: Fix env variable reading issue
-const supabaseUrl = "https://qtyqgvdkbhjfmnfkxyvm.supabase.co"
-// Force use of the correct anon key directly
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF0eXFndmRrYmhqZm1uZmt4eXZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0Nzc3MzUsImV4cCI6MjA3OTA1MzczNX0.XqfLoS-qOd01AOnO7gAY4mRPFPGa1JbRvNMmxpudJPI"
+// Use environment variables for Supabase configuration
+// These MUST be set in .env.local for the app to work
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error(
+    'Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local'
+  )
+}
+
 const supabaseClient = createClientComponentClient({
-  supabaseUrl: supabaseUrl,
-  supabaseKey: supabaseKey,
+  supabaseUrl,
+  supabaseKey,
 })
 
 export function Providers({ children }: { children: React.ReactNode }) {
