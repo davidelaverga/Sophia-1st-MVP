@@ -207,6 +207,29 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
     return signed_url
 
 
+def _validate_user_id(user_id: Optional[str]) -> str:
+    """Validate user_id is not None, not empty, not zero UUID, and is valid UUID format.
+    
+    Args:
+        user_id: The user ID to validate
+        
+    Returns:
+        The validated user_id as string
+        
+    Raises:
+        ValueError: If user_id is None, empty, zero UUID, or invalid format
+    """
+    if not user_id:
+        raise ValueError("user_id cannot be None or empty")
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        if uuid_obj == uuid.UUID(int=0):
+            raise ValueError("user_id cannot be zero UUID")
+        return str(uuid_obj)
+    except ValueError as e:
+        raise ValueError(f"Invalid user_id format: {user_id}") from e
+
+
 def insert_emotion_score(
     session_id,
     role: str,
@@ -216,12 +239,14 @@ def insert_emotion_score(
 ) -> None:
     """Insert a row into the emotion_scores table"""
 
+    validated_user_id = _validate_user_id(user_id)
+
     payload = {
         "session_id": str(session_id),
         "role": role,
         "label": getattr(emotion, "label", "neutral"),
         "confidence": float(getattr(emotion, "confidence", 0.5)),
-        "user_id": user_id,
+        "user_id": validated_user_id,
     }
 
     client = get_supabase(access_token)
@@ -276,6 +301,9 @@ def insert_conversation_session(
     data: Dict[str, Any], access_token: Optional[str] = None
 ) -> None:
     """Insert a conversation session row using REST."""
+
+    # Validate user_id
+    data["user_id"] = _validate_user_id(data.get("user_id"))
 
     # Ensure all SQL parameters expected by insert_conversation_session_sql are present
     # If missing, provide sensible defaults.
