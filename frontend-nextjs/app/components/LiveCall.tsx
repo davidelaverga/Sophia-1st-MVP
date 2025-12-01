@@ -152,7 +152,7 @@ export default function LiveCall() {
     }
     setAuthError(null)
 
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
     const wsUrl = new URL(httpToWs(base) + "/ws/voice")
     wsUrl.searchParams.set("token", accessToken)
     wsUrl.searchParams.set("discord_id", discordId)
