@@ -106,9 +106,10 @@ export default function Home() {
       } else {
         console.warn('⚠️ No redirect URL returned from signInWithOAuth')
       }
-    } catch (e: any) {
-      console.error('❌ Unexpected error during Discord sign-in:', e)
-      alert(`Unexpected sign-in error: ${e?.message || e}`)
+    } catch (e) {
+      const error = e as Error
+      console.error('❌ Unexpected error during Discord sign-in:', error)
+      alert(`Unexpected sign-in error: ${error?.message || e}`)
     } finally {
       setIsLoading(false)
     }
@@ -242,20 +243,7 @@ export default function Home() {
                 <p className="text-gray-300 text-xl mb-8">
                   Your intelligent companion is ready to help you connect with AI authentically.
                 </p>
-                { /*
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-gradient-to-r from-purple-500/20 to-purple-600/20 border border-purple-500/30 rounded-xl p-6 cursor-pointer">
-                    <h3 className="text-xl font-bold text-white mb-2">Yield Farming Guide</h3>
-                    <p className="text-gray-300">Learn about maximizing DeFi returns safely</p>
-                  </div>
-                  
-                  <div className="bg-gradient-to-r from-green-500/20 to-emerald-600/20 border border-green-500/30 rounded-xl p-6 cursor-pointer">
-                    <h3 className="text-xl font-bold text-white mb-2">DeFi Safety Tips</h3>
-                    <p className="text-gray-300">Essential security practices for beginners</p>
-                  </div>
-                </div>
               </div>
-              */ }
               {/* Live, phone-call style interface */}
               <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
                 <h3 className="text-xl font-bold text-white mb-4">Live Voice Call</h3>
