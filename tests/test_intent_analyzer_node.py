@@ -40,7 +40,7 @@ def test_intent_analyzer_sets_router_and_mode(monkeypatch):
         reasoning="stubbed",
     )
 
-    async def fake_router(user_message: str, session_id: str, prosody=None):
+    async def fake_router(user_message: str, session_id: str, tier0_result=None, prosody=None):
         assert session_id == "test-session"
         return fake_result
 

@@ -283,6 +283,7 @@ class LangGraphService:
                 supabase_token=supabase_token,
                 user_id=user_id,
                 conversation_count=conversation_count,
+                tier0_result=tier0_result
             )
 
             logger.info(

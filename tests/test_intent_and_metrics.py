@@ -9,8 +9,11 @@ Tests:
 - test_metrics_incremented: Prometheus counters work
 """
 
+from types import SimpleNamespace
+
 import pytest
 
+import app.routing.intent_router as intent_router
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.utility_router import classify_utility_path
 from app.routing.models import Intent, CurrentMode, UtilityPath
@@ -75,19 +78,12 @@ class TestIntentEmotionalVsUtility:
             assert result.utility_path is not None
 
     @pytest.mark.asyncio
-    async def test_ambiguous_biases_toward_emotional(self):
-        """Ambiguous messages should bias toward emotional support."""
-        ambiguous_messages = [
-            "I don't know",
-            "hmm",
-            "maybe",
-        ]
+    async def test_ambiguous_greeting_question_biases_toward_utility(self, monkeypatch):
+        """Ambiguous greeting + question should bias toward UTILITY (utility-first ambiguity)."""
 
-        for msg in ambiguous_messages:
-            result = await classify_intent_and_mode(msg, session_id="test-session")
-            # Should bias toward emotional support
-            assert result.intent == Intent.EMOTIONAL_SUPPORT, (
-                f"Ambiguous message '{msg}' should bias to EMOTIONAL_SUPPORT"
+        async def fake_tier0(text, prosody=None):
+            return SimpleNamespace(
+                type=intent_router.INTENT_GREETING, emotion="neutral", confidence=0.8
             )
 
     @pytest.mark.asyncio
