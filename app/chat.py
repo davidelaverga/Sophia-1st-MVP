@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import shutil
-import subprocess
 import threading
 import time
 import uuid
@@ -230,7 +229,7 @@ def strip_wav_header_if_present(chunk: bytes) -> bytes:
     return chunk
 
 
-def encode_pcm_to_mp3(
+async def encode_pcm_to_mp3(
     pcm_data: bytes,
     sample_rate: int = 48000,
     channels: int = 1,
@@ -260,19 +259,20 @@ def encode_pcm_to_mp3(
         "pipe:1",
     ]
 
-    result = subprocess.run(
-        cmd,
-        input=pcm_data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="ignore")
+    stdout, stderr = await process.communicate(input=pcm_data)
+    if process.returncode != 0:
+        stderr_text = stderr.decode("utf-8", errors="ignore")
         raise RuntimeError(
-            f"ffmpeg encoding failed (code {result.returncode}): {stderr}"
+            f"ffmpeg encoding failed (code {process.returncode}): {stderr_text}"
         )
 
-    return result.stdout
+    return stdout
 
 
 def persist_conversation_session(

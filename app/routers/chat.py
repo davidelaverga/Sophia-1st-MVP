@@ -406,7 +406,7 @@ async def ws_voice(websocket: WebSocket):
                         try:
                             cancel_check()
                             if streamed_pcm_buffer:
-                                mp3_bytes = chat_service.encode_pcm_to_mp3(
+                                mp3_bytes = await chat_service.encode_pcm_to_mp3(
                                     bytes(streamed_pcm_buffer), sample_rate=48000
                                 )
                                 file_name = f"sophia_{int(time.time() * 1000)}.mp3"
