@@ -476,10 +476,10 @@ class ResponseGenerator:
 
         # Get RAG snippets if DeFi question
         rag_snippets = []
-        if state.get("intent") == "defi_question":
-            rag_context = rag_system.get_context_for_llm(transcript)
-            if rag_context:
-                rag_snippets = [rag_context]
+        # if state.get("intent") == "defi_question":
+        #     rag_context = rag_system.get_context_for_llm(transcript)
+        #     if rag_context:
+        #         rag_snippets = [rag_context]
 
         # Build affect snapshot if emotional support mode
         affect_snapshot = None
@@ -757,12 +757,12 @@ class ResponseGenerator:
             context["memo_memories"] = memo_memories
 
         # Add RAG context for DeFi questions
-        if state["intent"] == "defi_question":
-            # We need the transcript for RAG lookup (already extracted by AudioIngestor)
-            rag_context = rag_system.get_context_for_llm(state["transcript"])
-            if rag_context:
-                context["rag_context"] = rag_context
-                logger.info(f"RAG context added: {len(rag_context)} characters")
+        # if state["intent"] == "defi_question":
+        #     # We need the transcript for RAG lookup (already extracted by AudioIngestor)
+        #     rag_context = rag_system.get_context_for_llm(state["transcript"])
+        #     if rag_context:
+        #         context["rag_context"] = rag_context
+        #         logger.info(f"RAG context added: {len(rag_context)} characters")
 
         return context
 
@@ -841,9 +841,9 @@ class ResponseGenerator:
         )
 
         # Add intent-specific guidance
-        if intent == "defi_question":
-            system_prompt += "\n\nFocus: Provide accurate, educational DeFi guidance. Keep responses under 50 words."
-        elif intent == "emotional_support":
+        # if intent == "defi_question":
+        #     system_prompt += "\n\nFocus: Provide accurate, educational DeFi guidance. Keep responses under 50 words."
+        if intent == "emotional_support":
             system_prompt += "\n\nFocus: Provide supportive and encouraging responses. Keep responses under 50 words."
         else:
             system_prompt += "\n\nFocus: Engage in friendly casual conversation. Keep responses under 50 words."
@@ -942,8 +942,8 @@ class ResponseGenerator:
         if not transcript or self._looks_like_greeting(transcript):
             return ResponsePath.DIRECT
 
-        if (state.get("intent") or "").lower() == "defi_question":
-            return ResponsePath.AGENTIC
+        # if (state.get("intent") or "").lower() == "defi_question":
+        #     return ResponsePath.AGENTIC
 
         flash_context = self._ensure_flash_context(state)
         if (
@@ -1062,11 +1062,11 @@ class ResponseGenerator:
             emotion_guidance = _ensure_emotion_guidance(state)
 
             rag_context = ""
-            if (state.get("intent") or "").lower() == "defi_question":
-                try:
-                    rag_context = rag_system.get_context_for_llm(transcript)
-                except Exception as e:
-                    logger.warning(f"RAG context lookup failed: {e}")
+            # if (state.get("intent") or "").lower() == "defi_question":
+            #     try:
+            #         rag_context = rag_system.get_context_for_llm(transcript)
+            #     except Exception as e:
+            #         logger.warning(f"RAG context lookup failed: {e}")
 
             additional_context = self._build_agentic_additional_context(
                 flash_context, rag_context
@@ -1349,9 +1349,9 @@ class ResponseGenerator:
             client = anthropic.Anthropic(api_key=self.settings.ANTHROPIC_API_KEY)
 
             # Build system prompt based on intent
-            if intent == "defi_question":
-                system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Provide clear, educational responses about DeFi concepts. Keep responses under 50 words."
-            elif intent == "emotional_support":
+            # if intent == "defi_question":
+            #     system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Provide clear, educational responses about DeFi concepts. Keep responses under 50 words."
+            if intent == "emotional_support":
                 system_prompt = "You are Sophia, an empathetic AI companion. Provide supportive and encouraging responses. Keep responses under 50 words."
             else:
                 system_prompt = "You are Sophia, a friendly AI assistant. Engage in casual conversation. Keep responses under 50 words."
@@ -1955,11 +1955,11 @@ class SophiaLangGraph:
 
             # Get RAG context for DeFi questions
             rag_context = ""
-            if state.get("intent") == "defi_question":
-                rag_context = rag_system.get_context_for_llm(
-                    state.get("transcript", "")
-                )
-                logger.info(f"RAG context retrieved: {len(rag_context)} characters")
+            # if state.get("intent") == "defi_question":
+            #     rag_context = rag_system.get_context_for_llm(
+            #         state.get("transcript", "")
+            #     )
+            #     logger.info(f"RAG context retrieved: {len(rag_context)} characters")
 
             # Build comprehensive prompt
             prompt_parts = [
@@ -1993,13 +1993,13 @@ class SophiaLangGraph:
             logger.error(f"Streaming LLM response failed: {e}")
             _raise_if_cancelled(e)
             # Final fallback
-            if (
-                "defi" in state.get("transcript", "").lower()
-                or "crypto" in state.get("transcript", "").lower()
-            ):
-                yield "I can help you with DeFi questions. What would you like to know?"
-            else:
-                yield "I'm here to help. Could you please rephrase your question?"
+            # if (
+            #     "defi" in state.get("transcript", "").lower()
+            #     or "crypto" in state.get("transcript", "").lower()
+            # ):
+            #     yield "I can help you with DeFi questions. What would you like to know?"
+            # else:
+            yield "I'm here to help. Could you please rephrase your question?"
 
     def _build_voxtral_context_for_streaming(self, state: GraphState) -> Dict[str, Any]:
         """Build context for Voxtral streaming (includes current_mode for model selection)"""

@@ -313,7 +313,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
               <div className="space-y-2">
                 <p className="text-lg font-semibold text-white">Ready to Listen</p>
                 <p className="text-sm text-gray-400 max-w-md mx-auto leading-relaxed">
-                  Click the microphone and ask about DeFi strategies, yield farming, staking, or any blockchain topics
+                  Click the microphone and ask Sophia about any topics
                 </p>
               </div>
               
@@ -346,7 +346,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
               <div className="space-y-2">
                 <p className="text-lg font-semibold text-white">Listening...</p>
                 <p className="text-sm text-gray-400">
-                  Speak clearly about your DeFi question
+                  Speak clearly about your question
                 </p>
               </div>
               
@@ -378,7 +378,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
               <p className="text-sm font-semibold text-white mb-1">Pro Tips</p>
               <ul className="text-xs text-gray-400 space-y-1">
                 <li>• Speak clearly and at normal pace for best transcription</li>
-                <li>• Ask specific questions about DeFi protocols, risks, or strategies</li>
+                {/* <li>• Ask specific questions about DeFi protocols, risks, or strategies</li> */}
                 <li>• Wait for the audio response to complete before asking follow-ups</li>
               </ul>
             </div>
