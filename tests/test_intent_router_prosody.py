@@ -29,13 +29,14 @@ async def test_classify_intent_uses_prosody_bias(monkeypatch):
     result = await intent_router.classify_intent_and_mode(
         "maybe", session_id="s", prosody={"intensity": "high"}
     )
-    assert result.intent == Intent.UTILITY
+    assert result.intent == Intent.EMOTIONAL_SUPPORT
     assert result.current_mode in (
-        CurrentMode.UTILITY_DIRECT,
-        CurrentMode.UTILITY_LIGHT,
-        CurrentMode.UTILITY_AGENTIC,
+        # CurrentMode.UTILITY_DIRECT,
+        # CurrentMode.UTILITY_LIGHT,
+        # CurrentMode.UTILITY_AGENTIC,
+        CurrentMode.EMOTIONAL_SUPPORT,
     )
-    assert result.utility_path is not None
+    assert result.utility_path is None
 
 
 @pytest.mark.asyncio
