@@ -1230,7 +1230,9 @@ class ResponseGenerator:
 
         # Get emotion and skill info for prompt building
         user_emotion = state.get("user_emotion")
-        emotion_label = getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
         skill_id = state.get("skill_id", "active_listening")
 
         logger.info(
@@ -1292,13 +1294,13 @@ class ResponseGenerator:
 
         return state
 
-    def _generate_emotional_fallback(
-        self, state: GraphState, cancel_check=None
-    ) -> str:
+    def _generate_emotional_fallback(self, state: GraphState, cancel_check=None) -> str:
         """Fallback emotional response when PromptComposerV2 fails"""
         transcript = state.get("transcript", "")
         user_emotion = state.get("user_emotion")
-        emotion_label = getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
 
         system_prompt = (
             "You are Sophia, a warm and empathetic AI companion. "
@@ -1412,9 +1414,7 @@ class TTSNode:
             state["tts_bytes"] = tts_bytes
             state["audio_url"] = audio_url
             state["is_mock_audio"] = is_mock
-            state["sophia_emotion"] = EmotionData(
-                label="neutral", confidence=0.8
-            )
+            state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
 
             logger.info(
                 f"TTSNode completed: audio_url={audio_url}, "
@@ -1451,9 +1451,7 @@ class TTSNode:
                 # Skip blocking audio emotion for Sophia - use neutral default
                 state["tts_bytes"] = tts_bytes
                 state["audio_url"] = audio_url
-                state["sophia_emotion"] = EmotionData(
-                    label="neutral", confidence=0.8
-                )
+                state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
                 logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
 
             except Exception as fallback_error:

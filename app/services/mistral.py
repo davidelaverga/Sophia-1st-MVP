@@ -365,7 +365,9 @@ def generate_llm_reply(
                 if temperature is not None:
                     request_kwargs["temperature"] = temperature
                 # Use custom system prompt without DeFi wrapper if provided
-                user_content = text if system_prompt else f"Respond as a DeFi mentor to: {text}"
+                user_content = (
+                    text if system_prompt else f"Respond as a DeFi mentor to: {text}"
+                )
                 r = resp_iface.create(
                     model="mistral-small-latest",
                     input=[

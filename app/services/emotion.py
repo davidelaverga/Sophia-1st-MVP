@@ -295,7 +295,8 @@ def _classify_with_phoenix(text: str) -> Optional[Emotion]:
             # Validate label is in allowed set - return None to trigger fallback (Task #42867)
             if label not in _DEEP_EMOTION_RAILS:
                 logger.warning(
-                    "Phoenix returned invalid emotion '%s', triggering LLM fallback", label
+                    "Phoenix returned invalid emotion '%s', triggering LLM fallback",
+                    label,
                 )
                 return None  # Return None to trigger Mistral LLM fallback
 
@@ -572,13 +573,30 @@ def _is_crisis_text(text: str) -> bool:
     text_lower = text.lower()
     crisis_keywords = [
         # Russian crisis keywords
-        "хочу умереть", "не хочу жить", "покончить с собой", "убить себя",
-        "суицид", "самоубийств", "уйти из жизни", "конец всему",
-        "зачем мне жить", "смысла жить нет", "я обуза", "я никому не нужен",
-        "лучше бы я умер", "лучше бы меня не было", "всем будет лучше без меня",
+        "хочу умереть",
+        "не хочу жить",
+        "покончить с собой",
+        "убить себя",
+        "суицид",
+        "самоубийств",
+        "уйти из жизни",
+        "конец всему",
+        "зачем мне жить",
+        "смысла жить нет",
+        "я обуза",
+        "я никому не нужен",
+        "лучше бы я умер",
+        "лучше бы меня не было",
+        "всем будет лучше без меня",
         # English crisis keywords
-        "kill myself", "end my life", "want to die", "suicid", "self-harm",
-        "don't want to live", "better off dead", "no reason to live",
+        "kill myself",
+        "end my life",
+        "want to die",
+        "suicid",
+        "self-harm",
+        "don't want to live",
+        "better off dead",
+        "no reason to live",
     ]
     return any(kw in text_lower for kw in crisis_keywords)
 
