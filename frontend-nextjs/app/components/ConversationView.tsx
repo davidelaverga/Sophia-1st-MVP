@@ -23,6 +23,8 @@ import { diagnoseMicrophoneAccess, isMicrophoneLikelySupported } from "../lib/mi
 import { useSessionPersistence } from "../hooks/useSessionPersistence"
 import { useVoiceFallbackStore } from "../stores/voice-fallback-store"
 import { InputModeIndicator } from "./InputModeIndicator"
+import { WelcomeBack } from "./WelcomeBack"
+import { hasRestorableSession } from "../lib/conversation-history"
 
 // Lazy load heavy components that aren't needed immediately
 const VoicePanel = lazy(() => import("./VoicePanel").then(mod => ({ default: mod.VoicePanel })))
@@ -37,9 +39,6 @@ export function ConversationView() {
   const lastCompletedTurnId = useChatStore((state) => state.lastCompletedTurnId)
   const { chunks, dismiss } = useReflectionPrompt(conversationId, lastCompletedTurnId)
   const [micSupportWarning, setMicSupportWarning] = useState<string | null>(null)
-  
-  // Session persistence - automatically save/restore conversations
-  useSessionPersistence()
   
   // Focus mode state - must be declared before useEffect that uses it
   const focusMode = useFocusModeStore((state) => state.mode)
@@ -282,17 +281,35 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
   const scrollAnchorRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [shouldStickToBottom, setShouldStickToBottom] = useState(true)
+  const [showWelcome, setShowWelcome] = useState(true)
+  const { restoreSession } = useSessionPersistence()
 
   useEffect(() => {
     if (shouldStickToBottom) {
       scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
     }
   }, [messages.length, isLocked, shouldStickToBottom])
+  
+  // Hide welcome when messages exist
+  useEffect(() => {
+    if (messages.length > 0) {
+      setShowWelcome(false)
+    }
+  }, [messages.length])
 
   const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget
     const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     setShouldStickToBottom(distanceFromBottom < 80)
+  }, [])
+  
+  const handleContinue = useCallback(() => {
+    restoreSession()
+    setShowWelcome(false)
+  }, [restoreSession])
+  
+  const handleStartNew = useCallback(() => {
+    setShowWelcome(false)
   }, [])
 
   const maxHeight = compact ? "40vh" : "65vh"
@@ -316,7 +333,13 @@ function Transcript({ onPromptSelect, compact }: { onPromptSelect: (prompt: stri
         className="flex flex-col gap-4 overflow-y-auto pr-2"
         style={{ maxHeight, minHeight }}
       >
-        {messages.length === 0 ? (
+        {messages.length === 0 && showWelcome ? (
+          <WelcomeBack 
+            onContinue={handleContinue} 
+            onStartNew={handleStartNew} 
+            onPromptSelect={onPromptSelect} 
+          />
+        ) : messages.length === 0 ? (
           <EmptyState onPromptSelect={onPromptSelect} />
         ) : (
           <Fragment>

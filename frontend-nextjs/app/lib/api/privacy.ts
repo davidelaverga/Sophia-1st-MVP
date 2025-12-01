@@ -20,22 +20,38 @@ export const getConsentStatus = async (signal?: AbortSignal): Promise<ConsentSta
   if (usePrivacyMock) {
     return Promise.resolve({ consent: false })
   }
-  const response = await fetch("/api/privacy/status", {
+  // Use /api/consent/check which works directly with Supabase
+  const response = await fetch("/api/consent/check", {
     method: "GET",
     headers: { Accept: "application/json" },
     signal,
   })
-  return withJson<ConsentStatusResponse>(response)
+  
+  // Transform response to expected format
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const error = (data as { error?: string }).error ?? `${response.status} ${response.statusText}`
+    throw new Error(error)
+  }
+  
+  return {
+    consent: (data as { hasConsent?: boolean }).hasConsent ?? false,
+    consent_ts: (data as { consentDate?: string }).consentDate ?? undefined,
+  }
 }
 
 export const postConsentAccept = async (): Promise<void> => {
   if (usePrivacyMock) {
     return Promise.resolve()
   }
-  const response = await fetch("/api/privacy/consent", {
+  // Use /api/consent/accept which works directly with Supabase
+  const response = await fetch("/api/consent/accept", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accept: true }),
+    body: JSON.stringify({ 
+      userId: "current", // Will be extracted from session
+      timestamp: new Date().toISOString(),
+    }),
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))

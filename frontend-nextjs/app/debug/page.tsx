@@ -2,24 +2,33 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { useSupabase } from '../providers'
 
 export default function DebugPage() {
   const [debugInfo, setDebugInfo] = useState<any>({})
-  const supabase = createClientComponentClient()
+  const { supabase } = useSupabase()
 
   useEffect(() => {
     const collectDebugInfo = async () => {
       // Get current URL info
-      const currentUrl = window.location.href
-      const origin = window.location.origin
+      const currentUrl = typeof window !== 'undefined' ? window.location.href : ''
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
       
       // Get environment variables
       const apiUrl = process.env.NEXT_PUBLIC_API_URL
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
       
       // Get user session
-      const { data: session } = await supabase.auth.getSession()
+      let sessionInfo = { hasSession: false, sessionUser: 'No user' }
+      try {
+        const { data: session } = await supabase.auth.getSession()
+        sessionInfo = {
+          hasSession: !!session?.session,
+          sessionUser: session?.session?.user?.email || 'No user',
+        }
+      } catch (e) {
+        sessionInfo = { hasSession: false, sessionUser: 'Error getting session' }
+      }
       
       // Test API connectivity
       let apiTest = 'Not tested'
@@ -27,8 +36,8 @@ export default function DebugPage() {
         const response = await fetch(`${apiUrl}/health`)
         const data = await response.json()
         apiTest = `Success: ${JSON.stringify(data)}`
-      } catch (error) {
-        apiTest = `Error: ${error.message}`
+      } catch (error: any) {
+        apiTest = `Error: ${error?.message || 'Unknown error'}`
       }
 
       setDebugInfo({
@@ -36,8 +45,7 @@ export default function DebugPage() {
         origin,
         apiUrl,
         supabaseUrl,
-        hasSession: !!session?.session,
-        sessionUser: session?.session?.user?.email || 'No user',
+        ...sessionInfo,
         apiTest,
         redirectUrl: `${origin}/auth/callback`,
         timestamp: new Date().toISOString()
@@ -45,7 +53,7 @@ export default function DebugPage() {
     }
 
     collectDebugInfo()
-  }, [])
+  }, [supabase.auth])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-8">

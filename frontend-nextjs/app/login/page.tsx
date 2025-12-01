@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { Sparkles } from "lucide-react"
 import { debug } from "../lib/debug"
+import { useSupabase } from "../providers"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -12,19 +12,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
-  // Use environment variables for Supabase configuration
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  
-  // Validate environment variables are set
-  if (!supabaseUrl || !supabaseKey) {
-    debug.error("[login] Missing Supabase environment variables")
-  }
-  
-  const supabase = createClientComponentClient({
-    supabaseUrl: supabaseUrl!,
-    supabaseKey: supabaseKey!,
-  })
+  const { supabase } = useSupabase()
   const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
