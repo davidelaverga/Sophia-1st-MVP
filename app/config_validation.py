@@ -12,6 +12,7 @@ PRODUCTION_ONLY_VARS: Iterable[str] = (
     "MISTRAL_API_KEY",
     "INWORLD_API_KEY",
     "GOOGLE_API_KEY",
+    "SUPABASE_JWT_SECRET",
 )
 ALLOWED_ENVIRONMENTS = {"development", "staging", "production"}
 
