@@ -243,59 +243,83 @@ def _map_raw_label(label: Optional[str]) -> str:
 
 
 def _classify_with_phoenix(text: str) -> Optional[Emotion]:
-    """Classify text emotion using Phoenix with detailed emotion labels (Task #42867)."""
-    try:
-        # Lazy import to avoid hard dep if not installed in some envs
-        from phoenix.evals import llm_classify
+    """Classify text emotion using Phoenix with detailed emotion labels (Task #42867).
 
+    Uses ThreadPoolExecutor to avoid 'event loop already running' errors when called
+    from async context (LangGraph). Task #42867.
+    """
+    import concurrent.futures
+
+    def _run_phoenix_classify() -> Optional[Emotion]:
+        """Inner function that runs Phoenix classification in a separate thread."""
         try:
-            from phoenix.evals import GoogleGenAIModel
-        except Exception as e:
+            # Lazy import to avoid hard dep if not installed in some envs
+            from phoenix.evals import llm_classify
+
+            try:
+                from phoenix.evals import GoogleGenAIModel
+            except Exception as e:
+                logger.info(
+                    f"Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: {e}"
+                )
+                return None
+            model = GoogleGenAIModel(model="gemini-2.5-flash")
+            get_settings()
+
+            # Use detailed emotion labels that match emotional_guidance.yaml (Task #42867)
+            emotion_labels = ", ".join(_DEEP_EMOTION_RAILS)
+            # Enhanced prompt with crisis detection (Task #42867)
+            result = llm_classify(
+                model=model,
+                data=[{"input": text}],
+                template=(
+                    f"Classify the primary emotion of the INPUT as one of: {emotion_labels}. "
+                    "Consider the emotional tone, word choice, and context. "
+                    "CRITICAL: For crisis messages about suicide, self-harm, or wanting to die "
+                    "- classify as 'grief' or 'panic'. "
+                    "Return only the emotion label, nothing else."
+                ),
+                rails=list(_DEEP_EMOTION_RAILS),
+            )
+            # Phoenix may return a dict-like with labeled outputs; adapt safely
+            label = None
+            score = 0.0
+            try:
+                label = str(result["label"][0]).strip().lower()
+                score = float(result.get("score", [0.0])[0])
+            except Exception:
+                # Fallback parse
+                label = "neutral"
+                score = 0.5
+
+            # Validate label is in allowed set - return None to trigger fallback (Task #42867)
+            if label not in _DEEP_EMOTION_RAILS:
+                logger.warning(
+                    "Phoenix returned invalid emotion '%s', triggering LLM fallback",
+                    label,
+                )
+                return None  # Return None to trigger Mistral LLM fallback
+
             logger.info(
-                f"Phoenix GoogleGenAIModel unavailable; skipping phoenix text classify: {e}"
+                "Phoenix text classification: input='%s...' -> emotion=%s (conf=%.2f)",
+                text[:50] if len(text) > 50 else text,
+                label,
+                score,
             )
+            return Emotion(label=label, confidence=score)
+        except Exception as e:
+            logger.warning(f"Phoenix emotion model failed in thread: {e}")
             return None
-        model = GoogleGenAIModel(model="gemini-2.5-flash")
-        get_settings()
 
-        # Use detailed emotion labels that match emotional_guidance.yaml (Task #42867)
-        emotion_labels = ", ".join(_DEEP_EMOTION_RAILS)
-        result = llm_classify(
-            model=model,
-            data=[{"input": text}],
-            template=(
-                f"Classify the primary emotion of the INPUT as one of: {emotion_labels}. "
-                "Consider the emotional tone, word choice, and context. "
-                "Return only the emotion label, nothing else."
-            ),
-            rails=list(_DEEP_EMOTION_RAILS),
-        )
-        # Phoenix may return a dict-like with labeled outputs; adapt safely
-        label = None
-        score = 0.0
-        try:
-            label = str(result["label"][0]).strip().lower()
-            score = float(result.get("score", [0.0])[0])
-        except Exception:
-            # Fallback parse
-            label = "neutral"
-            score = 0.5
-
-        # Validate label is in allowed set
-        if label not in _DEEP_EMOTION_RAILS:
-            logger.warning(
-                "Phoenix returned invalid emotion '%s', defaulting to neutral", label
-            )
-            label = "neutral"
-            score = max(0.3, score * 0.5)
-
-        logger.info(
-            "Phoenix text classification: input='%s...' -> emotion=%s (conf=%.2f)",
-            text[:50] if len(text) > 50 else text,
-            label,
-            score,
-        )
-        return Emotion(label=label, confidence=score)
+    try:
+        # Run Phoenix in a separate thread to avoid event loop conflicts
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_phoenix_classify)
+            result = future.result(timeout=15.0)  # 15 second timeout
+            return result
+    except concurrent.futures.TimeoutError:
+        logger.warning("Phoenix emotion classification timed out after 15s")
+        return None
     except Exception as e:
         logger.warning(f"Phoenix emotion model failed: {e}")
         return None
@@ -312,7 +336,7 @@ def _classify_with_llm(text: str) -> Emotion:
             return Emotion(label="neutral", confidence=0.5)
         client = Mistral(api_key=settings.MISTRAL_API_KEY)
 
-        # Use detailed emotion labels (Task #42867)
+        # Use detailed emotion labels with crisis detection (Task #42867)
         emotion_labels = ", ".join(_DEEP_EMOTION_RAILS)
         r = client.chat.complete(
             model="mistral-small-latest",
@@ -321,6 +345,8 @@ def _classify_with_llm(text: str) -> Emotion:
                     "role": "user",
                     "content": (
                         f"Classify the primary emotion of the following text as one of: {emotion_labels}. "
+                        "CRITICAL: For crisis messages about suicide, self-harm, or wanting to die "
+                        "- classify as 'grief' or 'panic', NOT neutral. "
                         'Respond with JSON: {"label": "emotion_name", "confidence": 0.0-1.0}. '
                         f"Text: {text}"
                     ),
@@ -542,11 +568,49 @@ def _phoenix_deep_text_classify(text: str) -> Optional[Dict[str, Any]]:
         return _fallback_deep_classify(normalized)
 
 
+def _is_crisis_text(text: str) -> bool:
+    """Fast check for crisis keywords in text (Task #42867)."""
+    text_lower = text.lower()
+    crisis_keywords = [
+        # Russian crisis keywords
+        "хочу умереть",
+        "не хочу жить",
+        "покончить с собой",
+        "убить себя",
+        "суицид",
+        "самоубийств",
+        "уйти из жизни",
+        "конец всему",
+        "зачем мне жить",
+        "смысла жить нет",
+        "я обуза",
+        "я никому не нужен",
+        "лучше бы я умер",
+        "лучше бы меня не было",
+        "всем будет лучше без меня",
+        # English crisis keywords
+        "kill myself",
+        "end my life",
+        "want to die",
+        "suicid",
+        "self-harm",
+        "don't want to live",
+        "better off dead",
+        "no reason to live",
+    ]
+    return any(kw in text_lower for kw in crisis_keywords)
+
+
 def infer_text_emotion(text: str) -> Emotion:
     """Return best-effort emotion for text input with heuristics."""
     normalized = (text or "").strip()
     if not normalized:
         return Emotion(label="neutral", confidence=0.7)
+
+    # Crisis detection override - return "grief" with high confidence (Task #42867)
+    if _is_crisis_text(normalized):
+        logger.info("Crisis keywords detected, overriding emotion to 'grief'")
+        return Emotion(label="grief", confidence=0.90)
 
     try:
         primary = analyze_emotion_text(normalized)
@@ -569,7 +633,12 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
 
     Requires GOOGLE_API_KEY in environment. Returns an Emotion model with
     detailed emotion labels that match emotional_guidance.yaml.
+
+    Uses ThreadPoolExecutor to avoid 'event loop already running' errors when called
+    from async context (LangGraph). Task #42867.
     """
+    import concurrent.futures
+
     # Quick guard: if audio is mock or too small, return neutral to avoid Phoenix errors
     try:
         if not wav_bytes or len(wav_bytes) < 2048 or wav_bytes.startswith(b"ID3mock"):
@@ -577,139 +646,136 @@ def analyze_emotion_audio(wav_bytes: bytes) -> Emotion:
     except Exception:
         return Emotion(label="neutral", confidence=0.5)
 
-    try:
-        settings = get_settings()
-        if not getattr(settings, "GOOGLE_API_KEY", None):
-            logger.warning(
-                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
-            )
-            return Emotion(label="neutral", confidence=0.5)
-
-        import base64
-        import pandas as pd
-        from phoenix.evals import llm_classify
-
+    def _run_audio_classify() -> Emotion:
+        """Inner function that runs Phoenix audio classification in a separate thread."""
         try:
-            from phoenix.evals import GoogleGenAIModel
-            from phoenix.evals.templates import (
-                ClassificationTemplate,
-                PromptPartContentType,
-                PromptPartTemplate,
-            )
-        except Exception as e:
-            logger.info(
-                "Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: %s",
-                e,
-            )
-            return Emotion(label="neutral", confidence=0.5)
+            import base64
+            import pandas as pd
+            from phoenix.evals import llm_classify
 
-        settings = get_settings()
-        if not getattr(settings, "GOOGLE_API_KEY", None):
-            logger.warning(
-                "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
-            )
-            return Emotion(label="neutral", confidence=0.5)
+            try:
+                from phoenix.evals import GoogleGenAIModel
+                from phoenix.evals.templates import (
+                    ClassificationTemplate,
+                    PromptPartContentType,
+                    PromptPartTemplate,
+                )
+            except Exception as e:
+                logger.info(
+                    "Phoenix GoogleGenAIModel unavailable; returning neutral for audio classify: %s",
+                    e,
+                )
+                return Emotion(label="neutral", confidence=0.5)
 
-        # Audio-specific emotion rails for prosody analysis
-        AUDIO_EMOTION_RAILS = [
-            "anger",
-            "happiness",
-            "excitement",
-            "sadness",
-            "neutral",
-            "frustration",
-            "fear",
-            "surprise",
-            "calm",
-            "anxiety",
-        ]
+            settings = get_settings()
+            if not getattr(settings, "GOOGLE_API_KEY", None):
+                logger.warning(
+                    "GOOGLE_API_KEY not set - skipping Phoenix audio emotion classification"
+                )
+                return Emotion(label="neutral", confidence=0.5)
 
-        # Create improved emotion template
-        emotion_template = ClassificationTemplate(
-            rails=AUDIO_EMOTION_RAILS,
-            template=[
-                PromptPartTemplate(
-                    content_type=PromptPartContentType.TEXT,
-                    template=(
-                        "You are an AI system designed to classify emotions in audio files.\n"
-                        "Analyze the provided audio and classify the primary emotion based on tone, pitch, pace, volume, and intensity.\n"
-                        f"Valid emotions: {AUDIO_EMOTION_RAILS}\n"
-                        "Return ONLY one word from the list."
+            # Audio-specific emotion rails for prosody analysis
+            AUDIO_EMOTION_RAILS = [
+                "anger",
+                "happiness",
+                "excitement",
+                "sadness",
+                "neutral",
+                "frustration",
+                "fear",
+                "surprise",
+                "calm",
+                "anxiety",
+            ]
+
+            # Create improved emotion template
+            emotion_template = ClassificationTemplate(
+                rails=AUDIO_EMOTION_RAILS,
+                template=[
+                    PromptPartTemplate(
+                        content_type=PromptPartContentType.TEXT,
+                        template=(
+                            "You are an AI system designed to classify emotions in audio files.\n"
+                            "Analyze the provided audio and classify the primary emotion based on tone, pitch, pace, volume, and intensity.\n"
+                            f"Valid emotions: {AUDIO_EMOTION_RAILS}\n"
+                            "Return ONLY one word from the list."
+                        ),
                     ),
-                ),
-                PromptPartTemplate(
-                    content_type=PromptPartContentType.AUDIO,
-                    template="{audio}",
-                ),
-                PromptPartTemplate(
-                    content_type=PromptPartContentType.TEXT,
-                    template="Your response must be exactly one word from the valid emotions list.",
-                ),
-            ],
-        )
-
-        # 1) encode audio to base64
-        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
-
-        # 2) dataframe with expected column name 'audio'
-        df = pd.DataFrame([{"audio": audio_b64}])
-
-        # 3) model: gemini
-        model = GoogleGenAIModel(model="gemini-2.5-flash")
-
-        # 4) run classification with improved template
-        results = llm_classify(
-            data=df,
-            model=model,
-            template=emotion_template,
-            rails=AUDIO_EMOTION_RAILS,
-            provide_explanation=False,
-            run_sync=True,
-            verbose=False,
-        )
-
-        # 5) extract single label
-        raw_label = str(results["label"].iloc[0]).strip().lower()
-        valid = [r.lower() for r in AUDIO_EMOTION_RAILS]
-        if raw_label not in valid:
-            raw_label = "neutral"
-
-        # Map audio emotion labels to detailed emotions matching emotional_guidance.yaml
-        # (Task #42867) - enables proper emotional routing and guidance
-        emotion_mapping = {
-            "happiness": "joy",
-            "excitement": "excited",
-            "surprise": "excited",
-            "neutral": "neutral",
-            "calm": "calm",
-            "anger": "angry",
-            "sadness": "sad",
-            "frustration": "angry",
-            "fear": "fearful",
-            "anxiety": "anxious",
-        }
-
-        # Map to detailed emotion label
-        detailed_label = emotion_mapping.get(raw_label, "neutral")
-
-        logger.info(
-            "Audio emotion classification: raw=%s -> mapped=%s (conf=0.80)",
-            raw_label,
-            detailed_label,
-        )
-
-        # Confidence not provided by default template; set midpoint
-        return Emotion(label=detailed_label, confidence=0.8)
-    except RuntimeError as e:
-        # Specifically catch event loop errors
-        if "event loop" in str(e).lower() or "asyncio" in str(e).lower():
-            logger.warning(
-                f"Audio emotion classification failed due to event loop conflict: {e}. Returning neutral."
+                    PromptPartTemplate(
+                        content_type=PromptPartContentType.AUDIO,
+                        template="{audio}",
+                    ),
+                    PromptPartTemplate(
+                        content_type=PromptPartContentType.TEXT,
+                        template="Your response must be exactly one word from the valid emotions list.",
+                    ),
+                ],
             )
-        else:
-            logger.warning(
-                f"Audio emotion classification failed with RuntimeError: {e}"
+
+            # 1) encode audio to base64
+            audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+
+            # 2) dataframe with expected column name 'audio'
+            df = pd.DataFrame([{"audio": audio_b64}])
+
+            # 3) model: gemini
+            model = GoogleGenAIModel(model="gemini-2.5-flash")
+
+            # 4) run classification with improved template
+            results = llm_classify(
+                data=df,
+                model=model,
+                template=emotion_template,
+                rails=AUDIO_EMOTION_RAILS,
+                provide_explanation=False,
+                run_sync=True,
+                verbose=False,
             )
+
+            # 5) extract single label
+            raw_label = str(results["label"].iloc[0]).strip().lower()
+            valid = [r.lower() for r in AUDIO_EMOTION_RAILS]
+            if raw_label not in valid:
+                raw_label = "neutral"
+
+            # Map audio emotion labels to detailed emotions matching emotional_guidance.yaml
+            # (Task #42867) - enables proper emotional routing and guidance
+            emotion_mapping = {
+                "happiness": "joy",
+                "excitement": "excited",
+                "surprise": "excited",
+                "neutral": "neutral",
+                "calm": "calm",
+                "anger": "angry",
+                "sadness": "sad",
+                "frustration": "angry",
+                "fear": "fearful",
+                "anxiety": "anxious",
+            }
+
+            # Map to detailed emotion label
+            detailed_label = emotion_mapping.get(raw_label, "neutral")
+
+            logger.info(
+                "Audio emotion classification: raw=%s -> mapped=%s (conf=0.80)",
+                raw_label,
+                detailed_label,
+            )
+
+            # Confidence not provided by default template; set midpoint
+            return Emotion(label=detailed_label, confidence=0.8)
+        except Exception as e:
+            logger.warning(f"Audio emotion classification failed in thread: {e}")
+            return Emotion(label="neutral", confidence=0.5)
+
+    try:
+        # Run Phoenix in a separate thread to avoid event loop conflicts
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_audio_classify)
+            result = future.result(timeout=20.0)  # 20 second timeout for audio
+            return result
+    except concurrent.futures.TimeoutError:
+        logger.warning("Audio emotion classification timed out after 20s")
         return Emotion(label="neutral", confidence=0.5)
     except Exception as e:
         logger.warning(f"Audio emotion classification failed: {e}")

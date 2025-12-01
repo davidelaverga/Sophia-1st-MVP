@@ -41,6 +41,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
   })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const lastPlayedAudioRef = useRef<string | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -189,7 +190,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             audioCompleted = true
             const mock = !!payload.mock_audio
             if (payload.audio_url && !mock && /^https?:\/\//.test(payload.audio_url)) {
-              setTimeout(() => playAudio(payload.audio_url), 300)
+              setTimeout(() => playAudio(payload.audio_url, true), 300)
             }
           }
         } catch (err) {
@@ -268,7 +269,16 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     }
   }
 
-  const playAudio = async (audioUrl: string) => {
+  const playAudio = async (audioUrl: string, isAutoPlay = false) => {
+    // Prevent duplicate auto-play for same audio URL
+    // Set ref BEFORE playing to prevent race condition
+    if (isAutoPlay) {
+      if (lastPlayedAudioRef.current === audioUrl) {
+        console.log('🔇 Skipping duplicate auto-play for:', audioUrl.substring(0, 50))
+        return
+      }
+      lastPlayedAudioRef.current = audioUrl
+    }
     try {
       const audio = new Audio(audioUrl)
       await audio.play()

@@ -44,7 +44,7 @@ def test_audio_ingestor_whisper_fallback_honours_cancellation(monkeypatch):
         AudioIngestor, "_whisper_fallback", _fake_whisper, raising=False
     )
     monkeypatch.setattr(
-        "app.langgraph_nodes.analyze_emotion_audio", lambda *_args, **_kwargs: None
+        "app.services.emotion.analyze_emotion_audio", lambda *_args, **_kwargs: None
     )
 
     with pytest.raises(asyncio.CancelledError):

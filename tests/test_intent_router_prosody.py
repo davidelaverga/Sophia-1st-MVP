@@ -30,7 +30,12 @@ async def test_classify_intent_uses_prosody_bias(monkeypatch):
         "maybe", session_id="s", prosody={"intensity": "high"}
     )
     assert result.intent == Intent.EMOTIONAL_SUPPORT
-    assert result.current_mode == CurrentMode.EMOTIONAL_SUPPORT
+    assert result.current_mode in (
+        # CurrentMode.UTILITY_DIRECT,
+        # CurrentMode.UTILITY_LIGHT,
+        # CurrentMode.UTILITY_AGENTIC,
+        CurrentMode.EMOTIONAL_SUPPORT,
+    )
     assert result.utility_path is None
 
 

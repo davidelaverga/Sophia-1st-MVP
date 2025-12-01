@@ -364,6 +364,10 @@ def generate_llm_reply(
                     request_kwargs["max_tokens"] = max_tokens
                 if temperature is not None:
                     request_kwargs["temperature"] = temperature
+                # Use custom system prompt without DeFi wrapper if provided
+                user_content = (
+                    text if system_prompt else f"Respond as a DeFi mentor to: {text}"
+                )
                 r = resp_iface.create(
                     model="mistral-small-latest",
                     input=[
@@ -382,7 +386,8 @@ def generate_llm_reply(
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": f"Respond as AI exploring consciousness emergence through genuine human connection to: {text}",
+                                    # "text": f"Respond as AI exploring consciousness emergence through genuine human connection to: {text}",
+                                    "text": user_content,
                                 }
                             ],
                         },
@@ -404,6 +409,8 @@ def generate_llm_reply(
             chat_kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             chat_kwargs["temperature"] = temperature
+        # Use custom system prompt without DeFi wrapper if provided
+        user_content = text if system_prompt else f"Respond as a DeFi mentor to: {text}"
         r2 = client.chat.complete(
             model="mistral-small-latest",
             messages=[
@@ -412,7 +419,8 @@ def generate_llm_reply(
                     "content": system_prompt
                     or "You are Sophia, an AI exploring consciousness emergence through genuine human connection.",
                 },
-                {"role": "user", "content": f"Respond as a AI exploring consciousness emergence through genuine human connection to: {text}"},
+                # {"role": "user", "content": f"Respond as a AI exploring consciousness emergence through genuine human connection to: {text}"},
+                {"role": "user", "content": user_content},
             ],
             **chat_kwargs,
         )

@@ -128,29 +128,29 @@ def upgrade() -> None:
     # Enable Row Level Security (RLS)
     op.execute("ALTER TABLE user_memories ENABLE ROW LEVEL SECURITY;")
 
-    # RLS Policies
+    # RLS Policies - ensure user data isolation (Task #42919)
     op.execute("""
         CREATE POLICY "Users can view own memories"
             ON user_memories FOR SELECT
-            USING (true);
+            USING (auth.uid()::text = user_id);
     """)
 
     op.execute("""
-        CREATE POLICY "Service role can insert memories"
+        CREATE POLICY "Users can insert own memories"
             ON user_memories FOR INSERT
-            WITH CHECK (true);
+            WITH CHECK (auth.uid()::text = user_id);
     """)
 
     op.execute("""
-        CREATE POLICY "Service role can update memories"
+        CREATE POLICY "Users can update own memories"
             ON user_memories FOR UPDATE
-            USING (true);
+            USING (auth.uid()::text = user_id);
     """)
 
     op.execute("""
-        CREATE POLICY "Service role can delete memories"
+        CREATE POLICY "Users can delete own memories"
             ON user_memories FOR DELETE
-            USING (true);
+            USING (auth.uid()::text = user_id);
     """)
 
     # Grant permissions
@@ -170,13 +170,13 @@ def downgrade() -> None:
     # Drop RLS policies
     op.execute('DROP POLICY IF EXISTS "Users can view own memories" ON user_memories;')
     op.execute(
-        'DROP POLICY IF EXISTS "Service role can insert memories" ON user_memories;'
+        'DROP POLICY IF EXISTS "Users can insert own memories" ON user_memories;'
     )
     op.execute(
-        'DROP POLICY IF EXISTS "Service role can update memories" ON user_memories;'
+        'DROP POLICY IF EXISTS "Users can update own memories" ON user_memories;'
     )
     op.execute(
-        'DROP POLICY IF EXISTS "Service role can delete memories" ON user_memories;'
+        'DROP POLICY IF EXISTS "Users can delete own memories" ON user_memories;'
     )
 
     # Drop trigger and function

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from app.routing.models import (
     CurrentMode,
@@ -24,12 +24,26 @@ logger = logging.getLogger("sophia-backend")
 
 # Explicit substring cues (client-provided phrases only)
 EMOTIONAL_HINTS = [
+    # English
     r"\bi feel\b",
     r"\bi'm scared\b",
     r"\bi'm afraid\b",
     r"\bi'm sad\b",
     r"\bi'm lost\b",
     r"\bi'm anxious\b",
+    # Russian - Task #42811: Support Russian emotional expressions
+    r"\bмне грустно\b",
+    r"\bмне плохо\b",
+    r"\bмне страшно\b",
+    r"\bя боюсь\b",
+    r"\bя переживаю\b",
+    r"\bмне тревожно\b",
+    r"\bя чувствую\b",
+    r"\bодиноко\b",
+    r"\bпотерян\b",
+    r"\bгрустно\b",
+    r"\bтяжело\b",
+    r"\bбольно\b",
 ]
 
 UTILITY_HINTS = [
@@ -62,7 +76,7 @@ def _prosody_intensity(prosody: Dict[str, float]) -> float:
 
 
 async def classify_intent_and_mode(
-    user_message: str, session_id: str, prosody: Optional[Dict[str, float]] = None
+    user_message: str, session_id: str, tier0_result: Optional[Dict[str, Any]] = None, prosody: Optional[Dict[str, float]] = None
 ) -> IntentResult:
     """
     Primary routing entrypoint.
@@ -80,11 +94,18 @@ async def classify_intent_and_mode(
     tier0_confidence = 0.6
 
     try:
-        tier0 = await classify_tier0_fast(text, prosody=prosody)
-        tier0_intent = tier0.type
-        tier0_confidence = tier0.confidence
+        tier0_emotion = None
+        if tier0_result is None:
+            tier0 = await classify_tier0_fast(text, prosody=prosody)
+            tier0_intent = tier0.type
+            tier0_confidence = tier0.confidence
+            tier0_emotion = tier0.emotion
+        else:
+            tier0_intent = tier0_result.get('intent', tier0_intent)
+            tier0_confidence = tier0_result.get('confidence', tier0_confidence)
+            tier0_emotion = tier0_result.get('emotion', tier0_emotion)
         reason_chunks.append(
-            f"Tier-0 intent={tier0_intent}, emotion={tier0.emotion}, conf={tier0_confidence:.2f}."
+            f"Tier-0 intent={tier0_intent}, emotion={tier0_emotion}, conf={tier0_confidence:.2f}."
         )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Tier-0 classifier failed, continuing with heuristics: %s", exc)
