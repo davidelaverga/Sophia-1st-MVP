@@ -10,7 +10,7 @@ class TestVoxtralLargeService:
     """Test suite for VoxtralLargeService"""
 
     def test_initialization(self):
-        """Test that service initializes correctly with mode-aware model selection"""
+        """Test that service initializes correctly with configured models"""
         with patch("app.services.voxtral_large.get_settings") as mock_settings:
             mock_settings.return_value.MISTRAL_API_KEY = "test_key"
             mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
@@ -20,11 +20,12 @@ class TestVoxtralLargeService:
 
             assert service.fast_model == "voxtral-mini-latest"
             assert service.accurate_model == "voxtral-small-latest"
-            assert service.model == "voxtral-mini-latest"  # Default model
+            # Default model for legacy callers is the accurate model
+            assert service.model == "voxtral-small-latest"
             assert service.client is not None
 
-    def test_select_model_direct_mode(self):
-        """Test that UTILITY_DIRECT mode selects fast model"""
+    def test_select_model_unified_always_uses_accurate_model(self):
+        """Unified pipeline should always use accurate model, regardless of mode."""
         with patch("app.services.voxtral_large.get_settings") as mock_settings:
             mock_settings.return_value.MISTRAL_API_KEY = "test_key"
             mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
@@ -32,20 +33,28 @@ class TestVoxtralLargeService:
 
             service = VoxtralLargeService()
 
-            # UTILITY_DIRECT mode should select fast model
-            context = {"current_mode": "utility_direct"}
-            selected = service._select_model(context)
-            assert selected == "voxtral-mini-latest"
+            for mode in [
+                "utility_direct",
+                "utility_light",
+                "emotional_support",
+                "utility_agentic",
+                "",
+            ]:
+                context = {"current_mode": mode}
+                selected = service._select_model(context)
+                assert (
+                    selected == "voxtral-small-latest"
+                ), f"Unified path for mode {mode} should use accurate model"
 
-    def test_select_model_other_modes(self):
-        """Test that non-DIRECT modes select accurate model"""
+    def test_select_model_no_context_defaults_to_accurate(self):
+        """If no context is provided, fall back to accurate model."""
         with patch("app.services.voxtral_large.get_settings") as mock_settings:
             mock_settings.return_value.MISTRAL_API_KEY = "test_key"
             mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
             mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
 
             service = VoxtralLargeService()
-
+            
             # Other modes should select accurate model
             for mode in ["utility_light", "emotional_support", "utility_agentic", ""]:
                 context = {"current_mode": mode}
@@ -54,8 +63,8 @@ class TestVoxtralLargeService:
                     f"Mode {mode} should use accurate model"
                 )
 
-    def test_select_model_no_context(self):
-        """Test that no context defaults to accurate model"""
+    def test_transcribe_audio_uses_fast_model(self):
+        """Standalone transcription should use the fast Voxtral model for latency."""
         with patch("app.services.voxtral_large.get_settings") as mock_settings:
             mock_settings.return_value.MISTRAL_API_KEY = "test_key"
             mock_settings.return_value.VOXTRAL_FAST_MODEL = "voxtral-mini-latest"
@@ -63,8 +72,27 @@ class TestVoxtralLargeService:
 
             service = VoxtralLargeService()
 
-            selected = service._select_model(None)
-            assert selected == "voxtral-small-latest"
+            called = {"model": None}
+
+            def fake_complete(model=None, file=None):
+                called["model"] = model
+                class Resp:
+                    text = "hello"
+                return Resp()
+
+            # Replace the client's audio.transcriptions.complete with our fake
+            class DummyTranscriptions:
+                @staticmethod
+                def complete(model=None, file=None):
+                    return fake_complete(model=model, file=file)
+
+            class DummyAudio:
+                transcriptions = DummyTranscriptions()
+
+            service.client.audio = DummyAudio()
+
+            _ = service._transcribe_audio(b"RIFFtestdata")
+            assert called["model"] == "voxtral-mini-latest"
 
     def test_build_context_prompt_basic(self):
         """Test context prompt building without context"""

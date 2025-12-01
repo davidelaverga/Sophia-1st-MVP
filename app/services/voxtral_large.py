@@ -26,13 +26,10 @@ class VoxtralLargeService:
     This service processes audio input and generates responses in a single pass,
     eliminating the need for separate STT and LLM coordination.
 
-    Model selection is mode-aware:
-    - UTILITY_DIRECT: Uses fast model (voxtral-mini-latest) for <1.5s latency
-    - UTILITY_LIGHT/EMOTIONAL_SUPPORT/UTILITY_AGENTIC: Uses accurate model (voxtral-small-latest)
+    For unified audio+text conversations (LIGHT / EMOTIONAL / AGENTIC modes),
+    we always use the accurate model. UTILITY_DIRECT uses Voxtral only for
+    STT upstream and stays template-based (no unified chat call).
     """
-
-    # Mode constants for model selection
-    MODE_DIRECT = "utility_direct"
 
     def __init__(self):
         self.settings = get_settings()
@@ -40,15 +37,15 @@ class VoxtralLargeService:
             raise RuntimeError("MISTRAL_API_KEY is not set")
         self.client = Mistral(api_key=self.settings.MISTRAL_API_KEY)
 
-        # Mode-aware model selection from settings
+        # Mode-aware model settings
         self.fast_model = getattr(
             self.settings, "VOXTRAL_FAST_MODEL", "voxtral-mini-latest"
         )
         self.accurate_model = getattr(
             self.settings, "VOXTRAL_ACCURATE_MODEL", "voxtral-small-latest"
         )
-        # Default model for backward compatibility
-        self.model = self.fast_model
+        # Default model (legacy callers that don't specify mode)
+        self.model = self.accurate_model
 
         logger.info(
             f"VoxtralLargeService initialized: fast={self.fast_model}, accurate={self.accurate_model}"
@@ -56,10 +53,10 @@ class VoxtralLargeService:
 
     def _select_model(self, context: Optional[Dict[str, Any]] = None) -> str:
         """
-        Select the appropriate model based on current_mode in context.
+        Select the model for unified audio+text conversations.
 
-        - UTILITY_DIRECT: Use fast model for speed (<1.5s latency target)
-        - All other modes: Use accurate model for quality
+        DIRECT mode does not use this unified path; it uses STT-only + templates.
+        For now, all unified calls use the accurate model.
         """
         if context:
             current_mode = context.get("current_mode", "").lower()
