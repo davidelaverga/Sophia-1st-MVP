@@ -32,6 +32,9 @@ COPY alembic/ ./alembic/
 # Copy prompts directory (Task #42597)
 COPY prompts/ ./prompts/
 
+# Copy marker taxonomy (crisis detection) - Task #42867
+COPY content_markers_v2-1.yaml ./
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash sophia && \
     chown -R sophia:sophia /app

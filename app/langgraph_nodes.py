@@ -16,7 +16,6 @@ from app.services.mistral import (
     generate_llm_reply,
 )
 from app.services.emotion import (
-    analyze_emotion_audio,
     infer_text_emotion,
     trigger_phoenix_bg,
 )
@@ -176,8 +175,9 @@ class AudioIngestor:
                     state["use_voxtral"] = False
                     return self._legacy_audio_ingestion(state)
 
-                # Analyze emotion from audio
-                user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                # Use fast text emotion instead of blocking audio analysis
+                # Phoenix will run in background via trigger_phoenix_bg later
+                user_emotion = infer_text_emotion(transcript)
 
                 # Set pipeline flags and populate transcript for IntentAnalyzer
                 state["use_voxtral"] = True
@@ -240,7 +240,8 @@ class AudioIngestor:
                     repr(whisper_preview),
                     len(transcript) if isinstance(transcript, str) else -1,
                 )
-            user_emotion = analyze_emotion_audio(state["audio_bytes"])
+            # Use fast text emotion instead of blocking audio analysis
+            user_emotion = infer_text_emotion(transcript)
 
             state["transcript"] = transcript
             if not transcript or (
@@ -289,8 +290,8 @@ class AudioIngestor:
                     "AudioIngestor whisper fallback produced empty transcript for session %s",
                     state["session_id"],
                 )
-            # Still analyze emotion with Phoenix
-            user_emotion = analyze_emotion_audio(state["audio_bytes"])
+            # Use fast text emotion instead of blocking audio analysis
+            user_emotion = infer_text_emotion(state["transcript"] or "")
             state["user_emotion"] = EmotionData(
                 label=user_emotion.label, confidence=user_emotion.confidence
             )
@@ -633,7 +634,8 @@ class ResponseGenerator:
                         state["audio_bytes"],
                         cancel_check=cancel_check,
                     )
-                    user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                    # Use fast text emotion instead of blocking audio analysis
+                    user_emotion = infer_text_emotion(state["transcript"])
                     state["user_emotion"] = EmotionData(
                         label=user_emotion.label, confidence=user_emotion.confidence
                     )
@@ -1218,24 +1220,107 @@ class ResponseGenerator:
         return result_state
 
     def _process_emotional_support_mode(self, state: GraphState) -> GraphState:
-        """EMOTIONAL_SUPPORT mode: Pass to emotional skill router (Task #42729 - placeholder)"""
+        """EMOTIONAL_SUPPORT mode: Use emotional support prompts (Task #42811)"""
         logger.info(
-            "ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing"
+            "ResponseGenerator: EMOTIONAL_SUPPORT mode - using emotional support prompts"
         )
+        _maybe_cancel(state)
+        cancel_check = state.get("cancel_check")
 
-        # TODO: Implement emotional skill router in future
-        # For now, enhance emotional guidance in existing pipeline
+        # Ensure emotional context is loaded
         emotion_guidance = _ensure_emotion_guidance(state)
 
-        # Force emotional support focus in prompt
+        # Get emotion and skill info for prompt building
+        user_emotion = state.get("user_emotion")
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
+        skill_id = state.get("skill_id", "active_listening")
+
         logger.info(
-            f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips"
+            f"EMOTIONAL_SUPPORT: emotion={emotion_label}, skill={skill_id}, guidance_tips={len(emotion_guidance)}"
         )
 
-        # Use LIGHT mode with enhanced emotional context
-        result_state = self._process_light_mode(state)
+        # Build emotional support system prompt synchronously (Task #42811)
+        # Import templates directly to avoid async complexity
+        from app.prompt.templates import (
+            SOPHIA_FOUNDATION,
+            CURRENT_MODE_BLOCKS,
+            SKILL_BLOCKS,
+            AFFECT_GUIDANCE_MAP,
+        )
+        from app.routing.models import CurrentMode
+        from app.routing.emotional_router import EmotionalSkill
 
-        return result_state
+        prompt_parts = [SOPHIA_FOUNDATION]
+
+        # Add mode block
+        mode_block = CURRENT_MODE_BLOCKS.get(CurrentMode.EMOTIONAL_SUPPORT, "")
+        if mode_block:
+            prompt_parts.append(mode_block)
+
+        # Add skill block
+        try:
+            skill_enum = EmotionalSkill(skill_id)
+            skill_block = SKILL_BLOCKS.get(skill_enum, "")
+            if skill_block:
+                prompt_parts.append(skill_block)
+        except (ValueError, KeyError):
+            pass
+
+        # Add affect guidance based on detected emotion
+        affect_block = AFFECT_GUIDANCE_MAP.get(
+            emotion_label.lower(), AFFECT_GUIDANCE_MAP.get("neutral", "")
+        )
+        if affect_block:
+            prompt_parts.append(f"\n{affect_block}")
+
+        system_prompt = "\n\n".join(prompt_parts)
+
+        # Generate response with emotional support prompt
+        transcript = state.get("transcript", "")
+        if cancel_check:
+            cancel_check()
+
+        state["llm_response"] = generate_llm_reply(
+            transcript,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=300,  # Longer responses for emotional support
+        )
+
+        logger.info(
+            "EMOTIONAL_SUPPORT: Generated response: '%s...'",
+            state["llm_response"][:50] if state.get("llm_response") else "empty",
+        )
+
+        return state
+
+    def _generate_emotional_fallback(self, state: GraphState, cancel_check=None) -> str:
+        """Fallback emotional response when PromptComposerV2 fails"""
+        transcript = state.get("transcript", "")
+        user_emotion = state.get("user_emotion")
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
+
+        system_prompt = (
+            "You are Sophia, a warm and empathetic AI companion. "
+            f"The user seems to be feeling {emotion_label}. "
+            "Respond with genuine empathy, validate their feelings, and offer gentle support. "
+            "Keep your response warm, authentic, and under 100 words. "
+            "Focus on emotional connection, not problem-solving."
+        )
+
+        if cancel_check:
+            cancel_check()
+
+        return generate_llm_reply(
+            transcript,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=200,
+        )
 
     def _generate_simple_greeting(self, transcript: str) -> str:
         """Generate simple greeting response for DIRECT mode"""
@@ -1326,19 +1411,16 @@ class TTSNode:
 
             logger.info(f"TTSNode: Successfully uploaded to {audio_url}")
 
-            # Analyze Sophia's emotion from TTS output
-            sophia_emotion = analyze_emotion_audio(tts_bytes)
-
+            # Skip blocking audio emotion for Sophia - use neutral default
+            # Sophia's TTS emotion analysis is low priority
             state["tts_bytes"] = tts_bytes
             state["audio_url"] = audio_url
             state["is_mock_audio"] = is_mock
-            state["sophia_emotion"] = EmotionData(
-                label=sophia_emotion.label, confidence=sophia_emotion.confidence
-            )
+            state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
 
             logger.info(
                 f"TTSNode completed: audio_url={audio_url}, "
-                f"sophia_emotion={sophia_emotion.label}({sophia_emotion.confidence:.2f})"
+                f"sophia_emotion=neutral(0.80)"
             )
 
         except Exception as e:
@@ -1368,13 +1450,10 @@ class TTSNode:
                 audio_url = upload_audio_and_get_url(
                     file_bytes=tts_bytes, file_name=file_name
                 )
-                sophia_emotion = analyze_emotion_audio(tts_bytes)
-
+                # Skip blocking audio emotion for Sophia - use neutral default
                 state["tts_bytes"] = tts_bytes
                 state["audio_url"] = audio_url
-                state["sophia_emotion"] = EmotionData(
-                    label=sophia_emotion.label, confidence=sophia_emotion.confidence
-                )
+                state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
                 logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
 
             except Exception as fallback_error:

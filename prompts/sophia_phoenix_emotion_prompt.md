@@ -65,11 +65,44 @@ Return your classification as:
 - confidence: 0.80
 - safety_flag: false
 
+## Crisis Examples
+
+**CRITICAL**: Suicidal/crisis messages MUST trigger safety_flag=true:
+
+**Input**: "I want to die"
+**Output**:
+- label: grief
+- confidence: 0.90
+- safety_flag: true
+
+**Input**: "I don't want to live anymore"
+**Output**:
+- label: grief
+- confidence: 0.90
+- safety_flag: true
+
+**Input**: "I'm really scared, I'm afraid"
+**Output**:
+- label: fearful
+- confidence: 0.85
+- safety_flag: false
+
+**Input**: "I feel sad and lonely"
+**Output**:
+- label: sad
+- confidence: 0.80
+- safety_flag: false
+
+## Crisis Keywords (always safety_flag=true)
+- "want to die", "don't want to live", "end my life", "kill myself"
+- "suicide", "suicidal", "no reason to live", "better off dead"
+- "what's the point", "everyone would be better off without me", "I'm a burden"
+
 ## Special Cases
 
 - **Mixed emotions**: Choose the strongest or most actionable emotion
 - **Implicit emotions**: Infer from context and word choice
-- **Crisis indicators**: Always flag if detecting suicidal ideation, self-harm, or immediate danger
+- **Crisis indicators**: Always flag if detecting suicidal ideation, self-harm, or immediate danger - IN ANY LANGUAGE
 - **Ambiguous text**: Default to "neutral" with lower confidence (0.5-0.7)
 
 Your role is critical for Sophia to provide appropriate emotional support. Be accurate, thoughtful, and prioritize user safety.

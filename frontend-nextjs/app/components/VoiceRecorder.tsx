@@ -116,7 +116,7 @@ export default function VoiceRecorder({ onMessage, setIsLoading, accessToken }: 
       
       formData.append('file', audioBlob, fileName)
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/defi-chat/stream`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/defi-chat/stream`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`
