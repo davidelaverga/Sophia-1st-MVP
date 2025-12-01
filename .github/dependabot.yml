@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "all"
+    open-pull-requests-limit: 10
+    assignees: []
+    labels:
+      - "dependencies"
+    ignore:
+      - dependency-name: "torch"
+        versions:
+          - "<2.7.0"
+    commit-message:
+      prefix: "deps"
+      include: "scope"

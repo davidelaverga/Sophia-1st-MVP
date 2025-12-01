@@ -4,10 +4,15 @@
 -- Create users table if it doesn't exist
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    discord_id TEXT,
     email TEXT UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_discord_id
+    ON users (discord_id)
+    WHERE discord_id IS NOT NULL;
 
 -- Create a default test user
 INSERT INTO users (id, email, created_at, updated_at)

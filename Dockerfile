@@ -1,7 +1,7 @@
 # Backend-Only Dockerfile for Render Deployment
 # Frontend is deployed separately on Vercel
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,17 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code only (no frontend)
 COPY main.py ./
 COPY app/ ./app/
 
-# Copy SQL files if they exist
-COPY *.sql ./
+# Copy alembic migration files (Task #42597)
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 
-# Copy grafana-dashboards directory if it exists
-COPY grafana-dashboards/ ./grafana-dashboards/
+# Copy prompts directory (Task #42597)
+COPY prompts/ ./prompts/
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash sophia && \
@@ -44,4 +46,4 @@ ENV PORT=8000
 EXPOSE $PORT
 
 # Start only the FastAPI backend
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

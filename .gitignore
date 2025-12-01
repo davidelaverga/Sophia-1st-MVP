@@ -1,20 +1,40 @@
+# ========================================
+# Project-Specific Files
+# ========================================
 dbp
 supabase_schema.sql
 Scarecriw/
-Scarecriw/
-frontend-nextjs/node_modules/
 
-# Crear/actualizar .gitignore
-@"
-# Environment variables
+# ========================================
+# Environment variables & secrets
+# ========================================
+# Root env files (never commit real secrets)
 .env
+.env.*
+*.env
 .env.local
 .env.*.local
-.env.production
-.env.development
-*.env
+.envrc
+*.env.local
+*.pem
+*.key
+*.crt
+**/*.secret
+!.env.example
+!*.example
+!*.sample
 
-# Python
+# Frontend env files
+frontend-nextjs/.env
+frontend-nextjs/.env.*
+frontend-nextjs/*.env
+frontend-nextjs/.env.local
+frontend-nextjs/.env.production.local
+!frontend-nextjs/.env.example
+
+# ========================================
+# Python caches & build artifacts
+# ========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -32,102 +52,192 @@ parts/
 sdist/
 var/
 wheels/
+wheelhouse/
+pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
-<<<<<<< HEAD
-.next/
-=======
->>>>>>> 2abcbd9bebfc1be54eb1acf3fa04c9dd81b46cf9
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.nox/
+.tox/
+.hypothesis/
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pyre/
+.dmypy.json
+dmypy.json
 
-# Virtual Environment
+# ========================================
+# Virtual environments
+# ========================================
+.venv/
+*.venv
 venv/
-ENV/
 env/
-.venv
-.env
-.env.*
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
+ENV/
+.env/
 
-# Logs
+# ========================================
+# Supabase session state
+# ========================================
+.supabase/
+
+# ========================================
+# Node / frontend / Next.js artifacts
+# ========================================
+node_modules/
+.next/
+.vercel/
+.turbo/
+.svelte-kit/
+.swc/
+out/
+.nuxt/
+coverage/
+coverage-final.json
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.pnpm-store/
+.cache/
+frontend-nextjs/node_modules/
+frontend-nextjs/.next/
+frontend-nextjs/out/
+frontend-nextjs/npm-debug.log*
+frontend-nextjs/yarn-debug.log*
+frontend-nextjs/yarn-error.log*
+
+# ========================================
+# Logs & temp files
+# ========================================
 *.log
 logs/
-
-# Testing
+tmp/
+temp/
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 .nox/
+coverage.xml
+*.cover
+.hypothesis/
+test_audio_queue_simple.py
+test_websocket_audio_queue.py
+*.tmp
+*.temp
+*.cache
+*.orig
+*.swp
+*.swo
+*~
+.direnv/
+
+# ========================================
+# IDEs & editors
+# ========================================
+.idea/
+.vscode/
+.history/
+*.sublime-project
+*.sublime-workspace
+*.iml
+*.suo
+*.sln
+
+# ========================================
+# OS-specific
+# ========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+
+# ========================================
+# Docker / container artifacts
+# ========================================
+*.pid
+*.seed
+docker-compose.override.yml
+
+# ========================================
+# Playwright MCP
+# ========================================
+.playwright-mcp/
+
+# ========================================
+# Audio & Media Files (large binaries)
+# ========================================
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.flac
+*.m4a
+audio/tmp/
+
+# ========================================
+# Archives
+# ========================================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ========================================
+# Temporary & Cache Files
+# ========================================
+.ipynb_checkpoints/
+.python-version
+
+# ========================================
+# Project-Specific Code
+# ========================================
+# Old/duplicate code
+New folder/
+main copy.py
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
+# Celery
+celerybeat-schedule
+celerybeat.pid
 
-# Redis
-dump.rdb
+# SageMath
+*.sage.py
 
-# Secrets & Keys
-*.pem
-*.key
-*.cert
-secrets/
-credentials/
+# Spyder
+.spyderproject
+.spyproject
 
-# Temporary files
-*.tmp
-*.bak
-*.swp
-tmp/
-temp/
+# Rope
+.ropeproject
 
-# OS
-Thumbs.db
-.DS_Store
-
-# Project specific
-uploads/
-outputs/
-audio-uploads/
-
-*.dll
-*.pyd
-*.so
-*.dylib
-*.pyo
-*.pyc
-
-# Archivos de distribución
-*.whl
-*.egg
-*.egg-info/
-
-# Builds
-build/
-dist/
-*.spec
-
-# Archivos grandes
-*.bin
-*.dat
-*.h5
-*.model
-*.weights
-
-# Caches
-.cache/
-*.cache
+# mkdocs
+/site
