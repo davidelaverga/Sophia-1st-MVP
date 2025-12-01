@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt ./
+COPY requirements.txt pyproject.toml ./
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -31,6 +31,9 @@ COPY alembic/ ./alembic/
 
 # Copy prompts directory (Task #42597)
 COPY prompts/ ./prompts/
+
+# Copy marker taxonomy (crisis detection) - Task #42867
+COPY content_markers_v2-1.yaml ./
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash sophia && \

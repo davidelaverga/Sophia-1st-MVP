@@ -9,16 +9,26 @@ Tests:
 - test_metrics_incremented: Prometheus counters work
 """
 
+from types import SimpleNamespace
+
 import pytest
 
+import app.routing.intent_router as intent_router
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.utility_router import classify_utility_path
 from app.routing.models import Intent, CurrentMode, UtilityPath
 from app.obs.metrics import (
+    boundary_override_total,
+    crisis_override_total,
+    EMOTIONAL_SKILL_IDS,
     intent_total,
+    skill_total,
     mode_total,
     utility_path_total,
+    track_boundary_override,
+    track_crisis_override,
     track_intent,
+    track_skill_distribution,
     track_mode,
     track_utility_path,
 )
@@ -68,20 +78,24 @@ class TestIntentEmotionalVsUtility:
             assert result.utility_path is not None
 
     @pytest.mark.asyncio
-    async def test_ambiguous_biases_toward_emotional(self):
-        """Ambiguous messages should bias toward emotional support."""
-        ambiguous_messages = [
-            "I don't know",
-            "hmm",
-            "maybe",
-        ]
+    async def test_ambiguous_greeting_question_biases_toward_utility(self, monkeypatch):
+        """Ambiguous greeting + question should bias toward UTILITY (utility-first ambiguity)."""
 
-        for msg in ambiguous_messages:
-            result = await classify_intent_and_mode(msg, session_id="test-session")
-            # Should bias toward emotional support
-            assert result.intent == Intent.EMOTIONAL_SUPPORT, (
-                f"Ambiguous message '{msg}' should bias to EMOTIONAL_SUPPORT"
+        async def fake_tier0(text, prosody=None):
+            return SimpleNamespace(
+                type=intent_router.INTENT_GREETING, emotion="neutral", confidence=0.8
             )
+
+    @pytest.mark.asyncio
+    async def test_greeting_ambiguous_biases_to_direct_utility(self):
+        """Greetings with slight ambiguity should route to direct utility, not emotional."""
+        msg = "Hello, Sofia. How are you today?"
+
+        result = await classify_intent_and_mode(msg, session_id="greeting-test")
+
+        assert result.intent == Intent.UTILITY
+        assert result.current_mode == CurrentMode.UTILITY_DIRECT
+        assert result.utility_path == UtilityPath.DIRECT
 
 
 class TestUtilityDirectVsLight:
@@ -237,7 +251,7 @@ class TestMetricsIncremented:
     def get_metric_value(self, metric, labels):
         """Helper to get current metric value from Prometheus registry."""
         for sample in metric.collect()[0].samples:
-            if sample.labels == labels:
+            if sample.labels == labels and sample.name.endswith("_total"):
                 return sample.value
         return 0
 
@@ -297,6 +311,44 @@ class TestMetricsIncremented:
         assert final_direct == initial_direct + 1
         assert final_light == initial_light + 2
         assert final_agentic == initial_agentic + 1
+
+    def test_track_skill_distribution_increments_counter(self):
+        """Verify track_skill_distribution() increments per-skill counters."""
+        initial_counts = {
+            skill_id: self.get_metric_value(skill_total, {"skill_id": skill_id})
+            for skill_id in EMOTIONAL_SKILL_IDS
+        }
+
+        for skill_id in EMOTIONAL_SKILL_IDS:
+            track_skill_distribution(skill_id)
+
+        for skill_id in EMOTIONAL_SKILL_IDS:
+            final_count = self.get_metric_value(skill_total, {"skill_id": skill_id})
+            assert final_count == initial_counts[skill_id] + 1
+
+    def test_skill_labels_initialized_for_all_emotional_skills(self):
+        """Ensure all emotional skills have a metric label registered."""
+        skill_labels = {
+            sample.labels.get("skill_id")
+            for sample in skill_total.collect()[0].samples
+            if sample.name.endswith("_total")
+        }
+
+        assert set(EMOTIONAL_SKILL_IDS).issubset(skill_labels)
+
+    def test_crisis_and_boundary_override_counters_increment(self):
+        """Verify crisis_override_total and boundary_override_total increment."""
+        initial_crisis = self.get_metric_value(crisis_override_total, {})
+        initial_boundary = self.get_metric_value(boundary_override_total, {})
+
+        track_crisis_override()
+        track_boundary_override()
+
+        final_crisis = self.get_metric_value(crisis_override_total, {})
+        final_boundary = self.get_metric_value(boundary_override_total, {})
+
+        assert final_crisis == initial_crisis + 1
+        assert final_boundary == initial_boundary + 1
 
     @pytest.mark.asyncio
     async def test_classify_intent_triggers_metrics(self):

@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from app.config import get_settings
-from app.services.supabase import get_supabase
+from app.services.supabase import get_supabase, persist_session_memory
 
 logger = logging.getLogger(__name__)
 
@@ -86,16 +86,27 @@ class MemoryManager:
         self._affect_flash_store: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
     def _init_redis(self):
-        """Initialize Redis client"""
+        """Initialize Redis client if enabled and reachable."""
+        # Check if Redis is explicitly enabled
+        if not getattr(self.settings, "REDIS_ENABLED", False):
+            logger.info(
+                "Redis disabled (REDIS_ENABLED=false). Using in-memory fallback."
+            )
+            return None
+
         try:
             import redis
 
-            return redis.Redis(
+            client = redis.Redis(
                 host=getattr(self.settings, "REDIS_HOST", "localhost"),
                 port=getattr(self.settings, "REDIS_PORT", 6379),
                 db=getattr(self.settings, "REDIS_DB", 0),
                 decode_responses=True,
             )
+            # Verify connection is actually working
+            client.ping()
+            logger.info("Redis connection established successfully.")
+            return client
         except Exception as e:
             logger.warning(f"Redis connection failed: {e}. Using in-memory fallback.")
             return None
@@ -426,10 +437,10 @@ class MemoryManager:
                 "updated_at": memory.updated_at,
             }
 
-            # Upsert to session_memory table (would need to create this table)
-            # For now, just log the memory state
+            # Upsert to session_memory table
+            persist_session_memory(memory_record)
             logger.info(
-                f"Memory persisted for session {memory.session_id}: {memory_record}"
+                f"Memory persistence attempted for session {memory.session_id}: {memory_record}"
             )
 
         except Exception as e:

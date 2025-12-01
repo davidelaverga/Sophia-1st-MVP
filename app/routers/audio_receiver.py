@@ -3,21 +3,24 @@ import logging
 import time
 from typing import Callable
 
+from fastapi import WebSocket
+from starlette.websockets import WebSocketDisconnect
 
 from app.audio_utils import avg_abs_pcm16, wav_header_pcm16
 
 
 SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2  # pcm16 mono
-SILENCE_THRESHOLD = 300
+SILENCE_THRESHOLD = 1000
 SILENCE_MS = 600
 SILENCE_BYTES = int(BYTES_PER_SEC * (SILENCE_MS / 1000.0))
+IDLE_TIMEOUT = 5
 
 logger = logging.getLogger(__name__)
 
 
 async def receive_audio_chunks(
-    websocket,
+    websocket: WebSocket,
     session_id,
     in_speech: asyncio.Event,
     manager,
@@ -28,7 +31,23 @@ async def receive_audio_chunks(
     last_voice_activity = 0
     utter_start_pos = 0
     while True:
-        msg = await websocket.receive()
+        try:
+            # Use timeout only when we've already buffered enough to consider an utterance in progress.
+            if len(pcm_buffer) > 0:
+                msg = await asyncio.wait_for(websocket.receive(), timeout=IDLE_TIMEOUT)
+            else:
+                msg = await websocket.receive()
+        except asyncio.TimeoutError:
+            if in_speech.is_set():
+                utter_bytes = bytes(pcm_buffer[utter_start_pos:])
+                yield wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
+                utter_start_pos = 0
+                pcm_buffer.clear()
+            last_voice_activity = 0
+            in_speech.clear()
+            continue
+        except WebSocketDisconnect:
+            break
         if "bytes" in msg and msg["bytes"] is not None:
             chunk = msg["bytes"]
             pcm_buffer.extend(chunk)
@@ -70,6 +89,8 @@ async def receive_audio_chunks(
                 utter_bytes = bytes(pcm_buffer[utter_start_pos:])
                 yield wav_header_pcm16(len(utter_bytes) // 2) + utter_bytes
                 pcm_buffer.clear()
+                utter_start_pos = 0
                 last_voice_activity = 0
+                in_speech.clear()
         elif "type" in msg and msg["type"] == "websocket.disconnect":
             break

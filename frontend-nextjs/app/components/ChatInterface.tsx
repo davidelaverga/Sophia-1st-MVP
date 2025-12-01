@@ -41,6 +41,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
   })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const lastPlayedAudioRef = useRef<string | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -189,7 +190,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
             audioCompleted = true
             const mock = !!payload.mock_audio
             if (payload.audio_url && !mock && /^https?:\/\//.test(payload.audio_url)) {
-              setTimeout(() => playAudio(payload.audio_url), 300)
+              setTimeout(() => playAudio(payload.audio_url, true), 300)
             }
           }
         } catch (err) {
@@ -268,7 +269,16 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
     }
   }
 
-  const playAudio = async (audioUrl: string) => {
+  const playAudio = async (audioUrl: string, isAutoPlay = false) => {
+    // Prevent duplicate auto-play for same audio URL
+    // Set ref BEFORE playing to prevent race condition
+    if (isAutoPlay) {
+      if (lastPlayedAudioRef.current === audioUrl) {
+        console.log('🔇 Skipping duplicate auto-play for:', audioUrl.substring(0, 50))
+        return
+      }
+      lastPlayedAudioRef.current = audioUrl
+    }
     try {
       const audio = new Audio(audioUrl)
       await audio.play()
@@ -394,7 +404,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask Sophia about DeFi strategies, risks, or market insights..."
+                placeholder="Ask Sophia..."
                 className="w-full bg-gradient-to-r from-gray-800/80 to-gray-900/80 border border-gray-600/50 rounded-xl px-6 py-4 text-white placeholder-gray-400 focus:outline-none focus:border-purple-400/50 focus:ring-2 focus:ring-purple-400/20 transition-all backdrop-blur-sm shadow-lg"
                 disabled={isLoading}
               />
@@ -424,7 +434,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
           </div>
         </div>
         
-        {messages.length === 0 && (
+        {/* messages.length === 0 && (
           <div className="mt-6 pt-4 border-t border-gray-700/50">
             <p className="text-xs text-gray-400 mb-3 font-medium">💡 Quick start suggestions:</p>
             <div className="flex flex-wrap gap-3">
@@ -448,7 +458,7 @@ export default function ChatInterface({ messages, setMessages, isLoading, setIsL
               </button>
             </div>
           </div>
-        )}
+        ) */}
       </div>
     </div>
   )

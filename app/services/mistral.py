@@ -306,7 +306,7 @@ def generate_reply_from_audio(
             messages[0]["content"].append({"type": "text", "text": hint_text.strip()})
         else:
             messages[0]["content"].append(
-                {"type": "text", "text": "Respond briefly as a safe DeFi mentor."}
+                {"type": "text", "text": "Respond briefly as an AI exploring consciousness emergence through genuine human connection."}
             )
 
         cancel()
@@ -349,7 +349,7 @@ def generate_llm_reply(
 ) -> str:
     # Quick rule fallback for empty inputs
     if not text or not str(text).strip():
-        return "I didn’t catch that. Could you rephrase your question about DeFi?"
+        return "I didn’t catch that. Could you rephrase your question?"
     global _RESPONSES_AVAILABLE
     try:
         client = _client()
@@ -364,6 +364,10 @@ def generate_llm_reply(
                     request_kwargs["max_tokens"] = max_tokens
                 if temperature is not None:
                     request_kwargs["temperature"] = temperature
+                # Use custom system prompt without DeFi wrapper if provided
+                user_content = (
+                    text if system_prompt else f"Respond as a DeFi mentor to: {text}"
+                )
                 r = resp_iface.create(
                     model="mistral-small-latest",
                     input=[
@@ -373,7 +377,7 @@ def generate_llm_reply(
                                 {
                                     "type": "text",
                                     "text": system_prompt
-                                    or "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                                    or "You are Sophia, an AI exploring consciousness emergence through genuine human connection.",
                                 }
                             ],
                         },
@@ -382,7 +386,8 @@ def generate_llm_reply(
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": f"Respond as a DeFi mentor to: {text}",
+                                    # "text": f"Respond as AI exploring consciousness emergence through genuine human connection to: {text}",
+                                    "text": user_content,
                                 }
                             ],
                         },
@@ -404,15 +409,18 @@ def generate_llm_reply(
             chat_kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             chat_kwargs["temperature"] = temperature
+        # Use custom system prompt without DeFi wrapper if provided
+        user_content = text if system_prompt else f"Respond as a DeFi mentor to: {text}"
         r2 = client.chat.complete(
             model="mistral-small-latest",
             messages=[
                 {
                     "role": "system",
                     "content": system_prompt
-                    or "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                    or "You are Sophia, an AI exploring consciousness emergence through genuine human connection.",
                 },
-                {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
+                # {"role": "user", "content": f"Respond as a AI exploring consciousness emergence through genuine human connection to: {text}"},
+                {"role": "user", "content": user_content},
             ],
             **chat_kwargs,
         )
@@ -428,14 +436,7 @@ def generate_llm_reply(
         except Exception:
             pass
         # Safe rule-based fallback
-        lower = text.lower()
-        if "yield" in lower:
-            return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
-        if "staking" in lower:
-            return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-        if "defi" in lower:
-            return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-        return "Here’s a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+        yield "I missed that. Can you restate what you need help with so I can respond clearly?"
 
 
 def generate_llm_reply_with_context(
@@ -450,9 +451,9 @@ def generate_llm_reply_with_context(
     # Handle empty input first - before any logging that might crash
     if not user_question or not str(user_question).strip():
         logger.warning(f"⚠️ Empty user_question received with intent={intent}")
-        if intent == "defi_question":
-            return "I didn't catch that. Could you rephrase your question about DeFi?"
-        elif intent == "emotional_support":
+        # if intent == "defi_question":
+        #     return "I didn't catch that. Could you rephrase your question about DeFi?"
+        if intent == "emotional_support":
             return "I'm here to listen. What's on your mind?"
         else:
             return "I didn't catch that. Could you say that again?"
@@ -473,7 +474,7 @@ def generate_llm_reply_with_context(
 
         # Base personality
         system_parts.append(
-            "You are Sophia, a knowledgeable and supportive DeFi education mentor."
+            "You are Sophia, an AI exploring consciousness emergence through genuine human connection."
         )
 
         # Add emotional context
@@ -493,11 +494,11 @@ def generate_llm_reply_with_context(
 
         # Response guidelines based on intent
         system_parts.append("\n\nResponse guidelines:")
-        if intent == "defi_question":
-            system_parts.append(
-                "- This is a DeFi educational question. Provide accurate answers (50-100 words)."
-            )
-        elif intent == "emotional_support":
+        # if intent == "defi_question":
+        #     system_parts.append(
+        #         "- This is a DeFi educational question. Provide accurate answers (50-100 words)."
+        #     )
+        if intent == "emotional_support":
             system_parts.append(
                 "- Be empathetic while remaining educational (40-80 words)."
             )
@@ -505,11 +506,11 @@ def generate_llm_reply_with_context(
             system_parts.append(
                 "- This is casual conversation. Be friendly, warm, and conversational (20-40 words)."
             )
+            # system_parts.append(
+            #     "- You can engage in general conversation, not just DeFi topics."
+            # )
             system_parts.append(
-                "- You can engage in general conversation, not just DeFi topics."
-            )
-            system_parts.append(
-                "- If asked about yourself, share that you're Sophia, an AI assistant for DeFi education."
+                "- If asked about yourself, share that you're Sophia, an AI exploring consciousness emergence through genuine human connection."
             )
 
         system_message = "".join(system_parts)
@@ -613,25 +614,25 @@ def generate_llm_reply_with_context(
                 greeting in lower
                 for greeting in ["hello", "hi", "hey", "good morning", "good evening"]
             ):
-                return "Hello! I'm Sophia, your DeFi education assistant. How can I help you today?"
+                return "Hello! I'm Sophia,AI exploring consciousness emergence through genuine human connection. How can I help you today?"
             if "how are you" in lower or "how're you" in lower:
-                return "I'm doing great, thanks for asking! I'm here to help you learn about DeFi. What would you like to know?"
+                return "I'm doing great, thanks for asking! What would you like to know?"
             if "who are you" in lower or "what are you" in lower:
-                return "I'm Sophia, an AI assistant specializing in DeFi education. I help people understand decentralized finance."
+                return "I'm Sophia, an AI exploring consciousness emergence through genuine human connection."
             if "your name" in lower or "you called" in lower:
-                return "My name is Sophia. I'm here to help you navigate the world of DeFi!"
+                return "My name is Sophia. I'm here to help you!"
             # Generic small talk
             return (
-                "I'm here to help! Feel free to ask me about DeFi, or we can just chat."
+                "I'm here to help! Feel free to ask me about anything, or we can just chat."
             )
 
         # DeFi-specific keywords
-        if "yield" in lower:
-            return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
-        if "staking" in lower:
-            return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-        if "defi" in lower or "crypto" in lower:
-            return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
+        # if "yield" in lower:
+        #     return "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
+        # if "staking" in lower:
+        #     return "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
+        # if "defi" in lower or "crypto" in lower:
+        #     return "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
 
         # Emotional support fallback
         if intent == "emotional_support":
@@ -697,9 +698,9 @@ def stream_generate_llm_reply(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are Sophia, a concise and safe DeFi mentor. Keep replies under 50 words.",
+                    "content": "You are Sophia, an AI exploring consciousness emergence through genuine human connection. Keep replies under 50 words.",
                 },
-                {"role": "user", "content": f"Respond as a DeFi mentor to: {text}"},
+                {"role": "user", "content": f"Respond as an AI exploring consciousness emergence through genuine human connection mentor to: {text}"},
             ],
         )
         cancel()
@@ -751,36 +752,14 @@ def stream_generate_llm_reply(
                 "No tokens were yielded from stream, falling back to rule-based response"
             )
             # Fallback to rule-based response if streaming failed
-            lower = text.lower()
-            if "yield" in lower:
-                cancel()
-                yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
-            elif "staking" in lower:
-                cancel()
-                yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-            elif "defi" in lower:
-                cancel()
-                yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-            else:
-                cancel()
-                yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+            cancel()
+            yield "I missed that. Can you restate what you need help with so I can respond clearly?"
 
     except Exception as e:
         logger.error(f"Streaming LLM reply failed: {e}")
         # Final rule fallback
-        lower = text.lower()
-        if "yield" in lower:
-            cancel()
-            yield "Yield farming can boost returns but carries risks like impermanent loss and smart-contract bugs. Start small and diversify."
-        elif "staking" in lower:
-            cancel()
-            yield "Staking locks tokens to secure a network in exchange for rewards. Check lockups, slashing risk, and validator reputation."
-        elif "defi" in lower:
-            cancel()
-            yield "DeFi lets you lend, borrow, and trade without banks. Always assess protocol audits, TVL, and team track record."
-        else:
-            cancel()
-            yield "Here's a quick tip: manage risk with position sizing, avoid unaudited contracts, and never chase unsustainable APRs."
+        cancel()
+        yield "I had trouble generating a reply. Could you rephrase or share a bit more detail?"
 
 
 def stream_generate_reply_from_audio(
@@ -813,7 +792,7 @@ def stream_generate_reply_from_audio(
                         },
                         {
                             "type": "text",
-                            "text": "Respond briefly as Sophia, a safe DeFi mentor. Keep under 50 words.",
+                            "text": "Respond briefly as Sophia, an AI exploring consciousness emergence through genuine human connection. Keep under 50 words.",
                         },
                     ],
                 }

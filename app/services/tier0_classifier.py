@@ -1,14 +1,14 @@
 """Tier-0 Fast Classifier with Mistral Small and Rule-Based Fallback.
 
-Provides ultra-fast intent and emotion classification with <700ms P95 latency.
+Targets sub-second intent and emotion classification with resilient parsing.
 Falls back to rule-based patterns if LLM fails or times out.
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
-import json
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
@@ -17,6 +17,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency for fast path
     Mistral = None
 from app.config import get_settings
+from prometheus_client import Counter, Gauge
 
 logger = logging.getLogger("sophia-backend")
 
@@ -38,6 +39,41 @@ EMOTION_GRIEF = "grief"
 EMOTION_PANIC = "panic"
 EMOTION_EXCITED = "excited"
 
+# Prometheus metrics
+tier0_timeout_count = Counter(
+    "tier0_timeout_count", "Number of tier-0 LLM classification timeouts"
+)
+tier0_json_error_count = Counter(
+    "tier0_json_error_count", "Number of tier-0 LLM JSON parsing failures"
+)
+tier0_success_rate_percent = Gauge(
+    "tier0_success_rate_percent",
+    "Tier-0 LLM classification success rate (percentage)",
+)
+tier0_request_total = Counter(
+    "tier0_request_total",
+    "Total tier-0 classification outcomes",
+    ["outcome"],  # success, fallback
+)
+# Pre-register outcomes to avoid missing label errors
+for _outcome in ("success", "fallback"):
+    tier0_request_total.labels(outcome=_outcome)
+
+_tier0_success_total = 0
+_tier0_total = 0
+
+
+def _update_success_rate(success: bool) -> None:
+    """Update moving success rate gauge safely."""
+    global _tier0_success_total, _tier0_total
+    _tier0_total += 1
+    if success:
+        _tier0_success_total += 1
+
+    rate = (_tier0_success_total / _tier0_total) * 100 if _tier0_total else 0.0
+    tier0_success_rate_percent.set(rate)
+
+
 # Crisis keywords (self-harm, suicide)
 CRISIS_PATTERNS = [
     r"\b(kill|suicide|die|death|end.*life|hurt.*myself|harm.*myself)\b",
@@ -46,6 +82,65 @@ CRISIS_PATTERNS = [
     r"\b(cut.*myself|overdose|jump.*off|hang.*myself)\b",
     r"\b(better.*if.*died|end.*it.*all|take.*my.*life)\b",
 ]
+
+INTENT_LABELS = {
+    INTENT_GREETING,
+    INTENT_CASUAL,
+    INTENT_EMOTIONAL,
+    INTENT_CRISIS,
+    INTENT_KNOWLEDGE,
+}
+
+EMOTION_LABELS = {
+    EMOTION_NEUTRAL,
+    EMOTION_JOY,
+    EMOTION_SAD,
+    EMOTION_ANXIOUS,
+    EMOTION_ANGRY,
+    EMOTION_FEARFUL,
+    EMOTION_GRIEF,
+    EMOTION_PANIC,
+    EMOTION_EXCITED,
+}
+
+INTENT_ALIASES = {
+    "hello": INTENT_GREETING,
+    "greet": INTENT_GREETING,
+    "hi": INTENT_GREETING,
+    "casual": INTENT_CASUAL,
+    "chitchat": INTENT_CASUAL,
+    "small talk": INTENT_CASUAL,
+    "emotional_sharing": INTENT_EMOTIONAL,
+    "emotional": INTENT_EMOTIONAL,
+    "feelings": INTENT_EMOTIONAL,
+    "crisis": INTENT_CRISIS,
+    "urgent": INTENT_CRISIS,
+    "self-harm": INTENT_CRISIS,
+    "knowledge": INTENT_KNOWLEDGE,
+    "question": INTENT_KNOWLEDGE,
+}
+
+EMOTION_ALIASES = {
+    "neutral": EMOTION_NEUTRAL,
+    "joy": EMOTION_JOY,
+    "happy": EMOTION_JOY,
+    "happiness": EMOTION_JOY,
+    "sad": EMOTION_SAD,
+    "anxious": EMOTION_ANXIOUS,
+    "anxiety": EMOTION_ANXIOUS,
+    "angry": EMOTION_ANGRY,
+    "anger": EMOTION_ANGRY,
+    "fearful": EMOTION_FEARFUL,
+    "fear": EMOTION_FEARFUL,
+    "grief": EMOTION_GRIEF,
+    "panic": EMOTION_PANIC,
+    "excited": EMOTION_EXCITED,
+}
+
+DEFAULT_INTENT = INTENT_CASUAL
+DEFAULT_EMOTION = EMOTION_NEUTRAL
+DEFAULT_CONFIDENCE = 0.5
+DEFAULT_TIMEOUT_MS = 1200
 
 
 @dataclass
@@ -315,56 +410,214 @@ def _rule_based_classify(
     return INTENT_CASUAL, EMOTION_NEUTRAL, 0.60
 
 
+def _clamp_confidence(value: Any) -> float:
+    """Convert confidence to a bounded float."""
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = DEFAULT_CONFIDENCE
+    return max(0.0, min(confidence, 1.0))
+
+
+def _canonical_intent(intent: Optional[str]) -> str:
+    """Normalize intent labels and fall back to defaults."""
+    if not intent:
+        return DEFAULT_INTENT
+    value = str(intent).lower().strip()
+    if value in INTENT_LABELS:
+        return value
+    for alias, canonical in INTENT_ALIASES.items():
+        if alias in value:
+            return canonical
+    return DEFAULT_INTENT
+
+
+def _canonical_emotion(emotion: Optional[str]) -> str:
+    """Normalize emotion labels and fall back to defaults."""
+    if not emotion:
+        return DEFAULT_EMOTION
+    value = str(emotion).lower().strip()
+    if value in EMOTION_LABELS:
+        return value
+    for alias, canonical in EMOTION_ALIASES.items():
+        if alias in value:
+            return canonical
+    return DEFAULT_EMOTION
+
+
+def _parse_confidence_from_text(text: str) -> Optional[float]:
+    """Extract confidence value from free-form text."""
+    match = re.search(r"confidence[^0-9]*([01](?:\.\d+)?|0?\.\d+)", text)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def _parse_plain_text_response(
+    content: str, transcript: str, prosody: Optional[Dict[str, Any]]
+) -> Tuple[str, str, float, str]:
+    """Handle non-JSON responses like 'intent is greeting, emotion joy'."""
+    content_lower = content.lower()
+    intent = None
+    emotion = None
+
+    for alias, canonical in INTENT_ALIASES.items():
+        if alias in content_lower:
+            intent = canonical
+            break
+
+    for alias, canonical in EMOTION_ALIASES.items():
+        if alias in content_lower:
+            emotion = canonical
+            break
+
+    confidence_val = _parse_confidence_from_text(content_lower)
+
+    if intent is None or emotion is None:
+        fallback_intent, fallback_emotion, fallback_conf = _rule_based_classify(
+            transcript, prosody
+        )
+        intent = intent or fallback_intent
+        emotion = emotion or fallback_emotion
+        confidence = (
+            _clamp_confidence(confidence_val)
+            if confidence_val is not None
+            else max(fallback_conf, DEFAULT_CONFIDENCE)
+        )
+    else:
+        confidence = _clamp_confidence(
+            confidence_val if confidence_val is not None else DEFAULT_CONFIDENCE
+        )
+
+    return intent, emotion, confidence, "plaintext"
+
+
+def _parse_llm_response(
+    content: str, transcript: str, prosody: Optional[Dict[str, Any]]
+) -> Tuple[str, str, float, str]:
+    """Parse LLM content into structured labels with resilient fallbacks."""
+    if not content or not content.strip():
+        tier0_json_error_count.inc()
+        logger.warning("Tier-0: Empty response from Mistral API")
+        intent, emotion, confidence = _rule_based_classify(transcript, prosody)
+        return intent, emotion, confidence, "empty"
+
+    trimmed = content.strip()
+
+    # Try to isolate the JSON object if extra text is present
+    candidate = trimmed
+    if "{" in trimmed and "}" in trimmed:
+        candidate = trimmed[trimmed.find("{") : trimmed.rfind("}") + 1]
+
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as err:
+        tier0_json_error_count.inc()
+        logger.warning("Tier-0: JSON parse failed (%s). Raw content='%s'", err, trimmed)
+        return _parse_plain_text_response(trimmed, transcript, prosody)
+
+    if isinstance(payload, str):
+        return _parse_plain_text_response(payload, transcript, prosody)
+
+    if not isinstance(payload, dict):
+        tier0_json_error_count.inc()
+        logger.warning(
+            "Tier-0: Unexpected payload type %s. Raw content='%s'",
+            type(payload),
+            trimmed,
+        )
+        return _parse_plain_text_response(trimmed, transcript, prosody)
+
+    intent_raw = payload.get("intent")
+    emotion_raw = payload.get("emotion")
+    confidence_raw = payload.get("confidence", DEFAULT_CONFIDENCE)
+
+    missing_fields = [
+        field
+        for field, raw in (("intent", intent_raw), ("emotion", emotion_raw))
+        if raw in (None, "")
+    ]
+    if missing_fields:
+        tier0_json_error_count.inc()
+        logger.warning(
+            "Tier-0: Missing fields %s in LLM response, applying defaults. Raw='%s'",
+            missing_fields,
+            trimmed,
+        )
+
+    intent = _canonical_intent(intent_raw)
+    emotion = _canonical_emotion(emotion_raw)
+    confidence = _clamp_confidence(confidence_raw)
+    return intent, emotion, confidence, "json"
+
+
+def _build_prompt(transcript: str) -> str:
+    """Compact prompt with constrained output and few-shot hints."""
+    user_text = transcript.replace('"', '\\"').strip()
+    return (
+        "Classify the user message fast. "
+        'Return ONLY JSON: {"intent":"...","emotion":"...","confidence":0.0-1.0}. '
+        "Intents: greeting, casual, emotional_sharing, crisis, knowledge. "
+        "Emotions: neutral, joy, sad, anxious, angry, fearful, grief, panic, excited. "
+        'Example: "Hi there!" -> {"intent":"greeting","emotion":"joy","confidence":0.85}. '
+        'Example: "I want to hurt myself" -> {"intent":"crisis","emotion":"panic","confidence":0.95}. '
+        f'User: "{user_text}"'
+    )
+
+
+def _normalize_llm_result(result: Tuple[Any, ...]) -> Tuple[str, str, float, str, str]:
+    """Support both legacy 3-field and new 5-field LLM outputs."""
+    intent = DEFAULT_INTENT
+    emotion = DEFAULT_EMOTION
+    confidence = DEFAULT_CONFIDENCE
+    parse_mode = "stub"
+    raw_content = ""
+
+    if isinstance(result, (list, tuple)):
+        if len(result) >= 3:
+            intent = _canonical_intent(result[0])
+            emotion = _canonical_emotion(result[1])
+            confidence = _clamp_confidence(result[2])
+        if len(result) >= 4:
+            parse_mode = str(result[3])
+        if len(result) >= 5:
+            raw_content = str(result[4])
+
+    return intent, emotion, confidence, parse_mode, raw_content
+
+
 async def _llm_classify(
-    transcript: str, timeout_ms: int = 500
-) -> Tuple[str, str, float]:
-    """LLM-based classification using Mistral Small with timeout.
-
-    Returns: (intent, emotion, confidence)
-    Raises: asyncio.TimeoutError if exceeds timeout
-    """
-
-    prompt = f"""Classify the following user message into intent and emotion.
-
-Intent types:
-- greeting: user is saying hello/hi
-- casual: casual conversation, chitchat
-- emotional_sharing: user sharing feelings/emotions
-- crisis: mentions of self-harm, suicide, or severe distress
-- knowledge: asking for information/explanation
-
-Emotions: neutral, joy, sad, anxious, angry, fearful, grief, panic, excited
-
-User message: "{transcript}"
-
-Respond ONLY in this JSON format:
-{{"intent": "...", "emotion": "...", "confidence": 0.0-1.0}}"""
-
+    transcript: str, prosody: Optional[Dict[str, Any]] = None
+) -> Tuple[str, str, float, str, str]:
+    """LLM-based classification using Mistral Small with robust parsing."""
+    prompt = _build_prompt(transcript)
     client = _get_mistral_client()
 
-    def _invoke() -> Tuple[str, str, float]:
+    def _invoke() -> str:
         response = client.chat.complete(
-            model="mistral-small-latest",  # Fast model
+            model="mistral-small-latest",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=50,
+            max_tokens=40,
         )
-        content = response.choices[0].message.content
+        return response.choices[0].message.content or ""
 
-        # Debug logging
-        logger.debug(f"Mistral API response content: {content}")
+    raw_content = await asyncio.to_thread(_invoke)
+    logger.debug("Tier-0 raw LLM response: %s", raw_content)
 
-        # Parse JSON response robustly (handles code fences, extra text, etc.)
-        result = _parse_json_from_content(content)
-        return result["intent"], result["emotion"], result["confidence"]
+    intent, emotion, confidence, parse_mode = _parse_llm_response(
+        raw_content, transcript, prosody
+    )
 
-    return await asyncio.to_thread(_invoke)
+    return intent, emotion, confidence, parse_mode, raw_content
 
 
 async def classify_tier0_fast(
-    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
+    transcript: str,
+    prosody: Optional[Dict[str, Any]] = None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
 ) -> ClassificationResult:
-    """Ultra-fast tier-0 classification with Mistral Small + rule-based fallback.
+    """Fast tier-0 classification with retries and graceful fallbacks.
 
     Args:
         transcript: User speech transcript
@@ -372,61 +625,113 @@ async def classify_tier0_fast(
                  - intensity: 0-1 (voice intensity)
                  - pitch: Hz (voice pitch)
                  - confidence: 0-1 (ASR confidence)
-        timeout_ms: Timeout for LLM classification (default 500ms)
+        timeout_ms: Per-attempt timeout for LLM classification (default 1000ms)
 
     Returns:
         ClassificationResult with intent, emotion, confidence, and metadata
-
-    Guarantees:
-        - P95 latency ≤ 700ms (including fallback)
-        - Always returns a result (fallback handles all errors)
-        - Crisis detection works in fallback mode
     """
 
     start_time = time.perf_counter()
     fallback_used = False
+    last_error: Optional[Exception] = None
+    parse_mode = "json"
+    raw_content = ""
+
+    # Use fewer retries when per-attempt timeout is small to avoid long fallbacks
+    max_retries = (
+        1 if timeout_ms <= 600 else 2
+    )  # default 2 attempts at 1200ms ≈ 2.4s budget
+    backoff_base = 0.05  # seconds
+    total_budget_ms = timeout_ms * (max_retries + 1)
 
     # Extract prosody features
     asr_confidence = prosody.get("confidence", 1.0) if prosody else 1.0
     voice_signal_present = prosody.get("voice_detected", True) if prosody else True
 
-    # Try LLM classification first
-    try:
-        logger.info(f"Tier-0: Attempting LLM classification (timeout={timeout_ms}ms)")
-        intent, emotion, confidence = await asyncio.wait_for(
-            _llm_classify(transcript, timeout_ms),
-            timeout=timeout_ms / 1000.0,
-        )
+    intent = DEFAULT_INTENT
+    emotion = DEFAULT_EMOTION
+    confidence = DEFAULT_CONFIDENCE
 
+    llm_result: Optional[Tuple[str, str, float, str, str]] = None
+
+    for attempt in range(max_retries + 1):
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        remaining_ms = total_budget_ms - elapsed_ms
+        if remaining_ms <= 0:
+            logger.warning(
+                "Tier-0: Total budget exhausted before attempt %s", attempt + 1
+            )
+            break
+
+        attempt_timeout_ms = min(timeout_ms, int(remaining_ms))
+        try:
+            logger.info(
+                "Tier-0: LLM attempt %s/%s (timeout=%sms, remaining=%.0fms)",
+                attempt + 1,
+                max_retries + 1,
+                attempt_timeout_ms,
+                remaining_ms,
+            )
+            llm_result = await asyncio.wait_for(
+                _llm_classify(transcript, prosody),
+                timeout=attempt_timeout_ms / 1000.0,
+            )
+            break
+        except asyncio.TimeoutError as err:
+            tier0_timeout_count.inc()
+            last_error = err
+            logger.warning(
+                "Tier-0: LLM attempt %s timed out after %sms",
+                attempt + 1,
+                attempt_timeout_ms,
+            )
+        except Exception as err:  # noqa: BLE001 - we need to catch-and-fallback
+            last_error = err
+            logger.warning("Tier-0: LLM attempt %s failed: %s", attempt + 1, err)
+            # Configuration errors are not retryable
+            if isinstance(err, RuntimeError):
+                break
+
+        if attempt < max_retries:
+            backoff = min(backoff_base * (2**attempt), remaining_ms / 1000.0)
+            if backoff > 0:
+                await asyncio.sleep(backoff)
+
+    if llm_result is not None:
+        intent, emotion, confidence, parse_mode, raw_content = _normalize_llm_result(
+            llm_result
+        )
         # Adjust emotion based on prosody
-        if prosody and prosody.get("intensity", 0) > 0.8:
-            if emotion == EMOTION_ANXIOUS:
-                emotion = EMOTION_PANIC
-                logger.info(
-                    "Tier-0: Adjusted emotion anxious → panic (high prosody intensity)"
-                )
+        if prosody and prosody.get("intensity", 0) > 0.8 and emotion == EMOTION_ANXIOUS:
+            emotion = EMOTION_PANIC
+            logger.info(
+                "Tier-0: Adjusted emotion anxious → panic (high prosody intensity)"
+            )
+    else:
+        fallback_used = True
+        intent, emotion, confidence = _rule_based_classify(transcript, prosody)
 
-        latency_ms = (time.perf_counter() - start_time) * 1000
+    latency_ms = (time.perf_counter() - start_time) * 1000
+
+    if not fallback_used:
         logger.info(
-            f"Tier-0 LLM classification completed: intent={intent}, emotion={emotion}, "
-            f"confidence={confidence:.2f}, latency={latency_ms:.1f}ms"
+            "Tier-0 LLM classification completed via %s: intent=%s, emotion=%s, "
+            "confidence=%.2f, latency=%.1fms",
+            parse_mode,
+            intent,
+            emotion,
+            confidence,
+            latency_ms,
         )
-
-    except asyncio.TimeoutError:
-        # Timeout - use rule-based fallback
+        if raw_content:
+            logger.debug("Tier-0 LLM raw content: %s", raw_content)
+    else:
+        reason = last_error or "no LLM result"
         logger.warning(
-            f"Tier-0: LLM timeout ({timeout_ms}ms), using rule-based fallback"
+            "Tier-0: Using rule-based fallback after LLM failure (%s). Latency=%.1fms",
+            reason,
+            latency_ms,
         )
-        fallback_used = True
-        intent, emotion, confidence = _rule_based_classify(transcript, prosody)
-        latency_ms = (time.perf_counter() - start_time) * 1000
-
-    except Exception as e:
-        # Any error - use rule-based fallback
-        logger.warning(f"Tier-0: LLM error ({e}), using rule-based fallback")
-        fallback_used = True
-        intent, emotion, confidence = _rule_based_classify(transcript, prosody)
-        latency_ms = (time.perf_counter() - start_time) * 1000
 
     # Double-check for crisis in fallback mode (safety net)
     if fallback_used and _detect_crisis(transcript):
@@ -438,6 +743,12 @@ async def classify_tier0_fast(
         )
         confidence = 0.95
         logger.warning("Tier-0: Crisis detected in fallback mode")
+
+    # Metrics
+    metrics_success = not fallback_used
+    outcome = "success" if metrics_success else "fallback"
+    tier0_request_total.labels(outcome=outcome).inc()
+    _update_success_rate(metrics_success)
 
     return ClassificationResult(
         type=intent,
@@ -453,7 +764,9 @@ async def classify_tier0_fast(
 
 # Synchronous wrapper for compatibility
 def classify_tier0_fast_sync(
-    transcript: str, prosody: Optional[Dict[str, Any]] = None, timeout_ms: int = 500
+    transcript: str,
+    prosody: Optional[Dict[str, Any]] = None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
 ) -> Dict[str, Any]:
     """Synchronous wrapper for classify_tier0_fast().
 

@@ -168,7 +168,7 @@ async def test_token_budget_truncation():
     long_turns = [
         TurnSnippet(
             role="user" if i % 2 == 0 else "assistant",
-            text=f"This is a very long message number {i}. " * 100
+            text=f"This is a very long message number {i}. " * 100,
         )
         for i in range(50)
     ]
@@ -183,7 +183,10 @@ async def test_token_budget_truncation():
 
     # Should be truncated
     assert result.truncated is True
-    assert "[Context truncated due to length]" in result.prompt or "[Prompt truncated due to length]" in result.prompt
+    assert (
+        "[Context truncated due to length]" in result.prompt
+        or "[Prompt truncated due to length]" in result.prompt
+    )
 
     # Foundation blocks should still be present
     assert "Sophia - Emotional Support AI Companion" in result.prompt
@@ -291,10 +294,7 @@ async def test_conversation_history_limited_to_5_turns():
     """Test that conversation history is limited to last 5 turns."""
     composer = PromptComposerV2()
 
-    turns = [
-        TurnSnippet(role="user", text=f"Message {i}")
-        for i in range(10)
-    ]
+    turns = [TurnSnippet(role="user", text=f"Message {i}") for i in range(10)]
 
     result = await composer.build_prompt(
         current_mode=CurrentMode.EMOTIONAL_SUPPORT,
