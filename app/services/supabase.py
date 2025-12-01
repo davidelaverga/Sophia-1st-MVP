@@ -209,13 +209,13 @@ def upload_audio_and_get_url(file_bytes: bytes, file_name: Optional[str] = None)
 
 def _validate_user_id(user_id: Optional[str]) -> str:
     """Validate user_id is not None, not empty, not zero UUID, and is valid UUID format.
-    
+
     Args:
         user_id: The user ID to validate
-        
+
     Returns:
         The validated user_id as string
-        
+
     Raises:
         ValueError: If user_id is None, empty, zero UUID, or invalid format
     """
