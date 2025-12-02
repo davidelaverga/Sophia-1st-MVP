@@ -140,10 +140,6 @@ def test_agentic_path_includes_emotion_guidance_in_prompt():
             return_value=["Be encouraging"],
         ) as mock_guidance,
         patch(
-            "app.langgraph_nodes.rag_system.get_context_for_llm",
-            return_value="APY reflects compound interest over a year.",
-        ) as mock_rag,
-        patch(
             "app.langgraph_nodes.prompt_composer.compose_system_prompt",
             return_value="system-with-guidance",
         ) as mock_prompt,

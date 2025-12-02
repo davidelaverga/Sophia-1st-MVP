@@ -49,10 +49,20 @@ from app.services.shared_services import shared_services
 from app.services.memory import memory_manager, ConversationTurn
 from app import chat as chat_service
 from app.config import get_settings
+from limits.util import parse as parse_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+try:
+    _ws_voice_rate_limit = parse_rate_limit(settings.API_RATE_LIMIT)
+except Exception as exc:  # noqa: BLE001 - configuration parsing failure should not crash import
+    logger.warning(
+        "Failed to parse API_RATE_LIMIT for WebSocket throttling; disabling WS limits: %s",
+        exc,
+    )
+    _ws_voice_rate_limit = None
 
 
 async def _ws_send_json(ws: WebSocket, obj: dict) -> None:
@@ -82,9 +92,55 @@ async def manage_session_turn(
         raise
 
 
+def _get_ws_rate_limit_key(websocket: WebSocket) -> str:
+    """Return the rate limit key for WebSocket connections (user IP by default)."""
+    try:
+        key_func = getattr(limiter, "_key_func", None)
+        if callable(key_func):
+            key_value = key_func(websocket)
+            if key_value:
+                return key_value
+    except Exception:
+        logger.debug(
+            "Falling back to websocket.client for rate limiting", exc_info=True
+        )
+    if websocket.client and websocket.client.host:
+        return websocket.client.host
+    return "anonymous"
+
+
+def _ws_rate_limit_ok(websocket: WebSocket, endpoint: str = "/ws/voice") -> bool:
+    """Apply SlowAPI-style rate limiting to the voice WebSocket handshake."""
+    if not limiter.enabled or _ws_voice_rate_limit is None:
+        return True
+    limit_key = _get_ws_rate_limit_key(websocket)
+    args = [limit_key, endpoint]
+    key_prefix = getattr(limiter, "_key_prefix", "")
+    if key_prefix:
+        args.insert(0, key_prefix)
+    try:
+        allowed = limiter.limiter.hit(_ws_voice_rate_limit, *args)
+    except Exception as exc:
+        logger.warning(
+            "WebSocket rate limit check failed; allowing connection: %s", exc
+        )
+        return True
+    if not allowed:
+        logger.warning(
+            "WebSocket rate limit exceeded for key=%s endpoint=%s",
+            limit_key,
+            endpoint,
+        )
+    return bool(allowed)
+
+
 @router.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket):
     """WebSocket pipeline with VAD-driven barge-in and queued audio playback."""
+
+    if not _ws_rate_limit_ok(websocket):
+        await websocket.close(code=1013, reason="Rate limit exceeded")
+        return
 
     api_key = websocket.query_params.get("token") or websocket.headers.get(
         "Authorization"

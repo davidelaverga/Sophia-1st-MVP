@@ -76,7 +76,10 @@ def _prosody_intensity(prosody: Dict[str, float]) -> float:
 
 
 async def classify_intent_and_mode(
-    user_message: str, session_id: str, tier0_result: Optional[Dict[str, Any]] = None, prosody: Optional[Dict[str, float]] = None
+    user_message: str,
+    session_id: str,
+    tier0_result: Optional[Dict[str, Any]] = None,
+    prosody: Optional[Dict[str, float]] = None,
 ) -> IntentResult:
     """
     Primary routing entrypoint.
@@ -101,9 +104,9 @@ async def classify_intent_and_mode(
             tier0_confidence = tier0.confidence
             tier0_emotion = tier0.emotion
         else:
-            tier0_intent = tier0_result.get('intent', tier0_intent)
-            tier0_confidence = tier0_result.get('confidence', tier0_confidence)
-            tier0_emotion = tier0_result.get('emotion', tier0_emotion)
+            tier0_intent = tier0_result.get("intent", tier0_intent)
+            tier0_confidence = tier0_result.get("confidence", tier0_confidence)
+            tier0_emotion = tier0_result.get("emotion", tier0_emotion)
         reason_chunks.append(
             f"Tier-0 intent={tier0_intent}, emotion={tier0_emotion}, conf={tier0_confidence:.2f}."
         )

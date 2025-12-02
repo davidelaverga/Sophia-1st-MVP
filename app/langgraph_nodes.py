@@ -26,7 +26,6 @@ from app.services.emotional_guidance import (
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
-from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
 from app.prompt.composer_v2 import (

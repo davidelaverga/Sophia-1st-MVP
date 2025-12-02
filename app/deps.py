@@ -206,7 +206,7 @@ def verify_api_key(
             )
             raise HTTPException(
                 status_code=500,
-                detail="Server configuration error: JWT verification not available"
+                detail="Server configuration error: JWT verification not available",
             )
         try:
             jwt_decode(
