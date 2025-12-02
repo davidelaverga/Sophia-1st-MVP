@@ -60,27 +60,37 @@ class FakeUploadFile:
 @pytest.mark.asyncio
 async def test_extract_audio_accepts_known_headers():
     payload = b"RIFF" + b"\x00" * 10
-    upload = FakeUploadFile(payload, filename="test.wav", content_type="audio/wav", size=25*1024*1024)
+    upload = FakeUploadFile(
+        payload, filename="test.wav", content_type="audio/wav", size=25 * 1024 * 1024
+    )
     result = await extract_audio(upload)
     assert result == payload
 
 
 @pytest.mark.asyncio
 async def test_extract_audio_rejects_empty_payload():
-    upload = FakeUploadFile(b"", filename="empty.wav", content_type="audio/wav", size=25*1024*1024)
+    upload = FakeUploadFile(
+        b"", filename="empty.wav", content_type="audio/wav", size=25 * 1024 * 1024
+    )
     with pytest.raises(HTTPException):
         await extract_audio(upload)
 
 
 def test_validate_audio_upload_checks_extension_and_content_type():
-    valid = FakeUploadFile(b"", filename="clip.ogg", content_type="audio/ogg", size=25*1024*1024)
+    valid = FakeUploadFile(
+        b"", filename="clip.ogg", content_type="audio/ogg", size=25 * 1024 * 1024
+    )
     validate_audio_upload(valid)  # should not raise
 
-    bad_type = FakeUploadFile(b"", filename="clip.ogg", content_type="application/json", size=25*1024*1024)
+    bad_type = FakeUploadFile(
+        b"", filename="clip.ogg", content_type="application/json", size=25 * 1024 * 1024
+    )
     with pytest.raises(HTTPException):
         validate_audio_upload(bad_type)
 
-    bad_extension = FakeUploadFile(b"", filename="clip.txt", content_type="audio/ogg", size=25*1024*1024)
+    bad_extension = FakeUploadFile(
+        b"", filename="clip.txt", content_type="audio/ogg", size=25 * 1024 * 1024
+    )
     with pytest.raises(HTTPException):
         validate_audio_upload(bad_extension)
 
@@ -95,6 +105,8 @@ def test_sse_event_formats_payloads_as_json():
 async def test_extract_audio_accepts_mpeg_frame_sync():
     # 0xFF followed by high bits set triggers MPEG frame sync branch
     payload = bytes([0xFF, 0xE0, 0x00, 0x00, 0x01])
-    upload = FakeUploadFile(payload, filename="clip.mp3", content_type="audio/mp3", size=25*1024*1024)
+    upload = FakeUploadFile(
+        payload, filename="clip.mp3", content_type="audio/mp3", size=25 * 1024 * 1024
+    )
     result = await extract_audio(upload)
     assert result == payload

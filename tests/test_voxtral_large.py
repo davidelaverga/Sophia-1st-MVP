@@ -42,9 +42,9 @@ class TestVoxtralLargeService:
             ]:
                 context = {"current_mode": mode}
                 selected = service._select_model(context)
-                assert (
-                    selected == "voxtral-small-latest"
-                ), f"Unified path for mode {mode} should use accurate model"
+                assert selected == "voxtral-small-latest", (
+                    f"Unified path for mode {mode} should use accurate model"
+                )
 
     def test_select_model_no_context_defaults_to_accurate(self):
         """If no context is provided, fall back to accurate model."""
@@ -54,7 +54,7 @@ class TestVoxtralLargeService:
             mock_settings.return_value.VOXTRAL_ACCURATE_MODEL = "voxtral-small-latest"
 
             service = VoxtralLargeService()
-            
+
             # Other modes should select accurate model
             for mode in ["utility_light", "emotional_support", "utility_agentic", ""]:
                 context = {"current_mode": mode}
@@ -76,8 +76,10 @@ class TestVoxtralLargeService:
 
             def fake_complete(model=None, file=None):
                 called["model"] = model
+
                 class Resp:
                     text = "hello"
+
                 return Resp()
 
             # Replace the client's audio.transcriptions.complete with our fake

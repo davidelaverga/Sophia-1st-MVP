@@ -306,7 +306,10 @@ def generate_reply_from_audio(
             messages[0]["content"].append({"type": "text", "text": hint_text.strip()})
         else:
             messages[0]["content"].append(
-                {"type": "text", "text": "Respond briefly as an AI exploring consciousness emergence through genuine human connection."}
+                {
+                    "type": "text",
+                    "text": "Respond briefly as an AI exploring consciousness emergence through genuine human connection.",
+                }
             )
 
         cancel()
@@ -616,15 +619,15 @@ def generate_llm_reply_with_context(
             ):
                 return "Hello! I'm Sophia,AI exploring consciousness emergence through genuine human connection. How can I help you today?"
             if "how are you" in lower or "how're you" in lower:
-                return "I'm doing great, thanks for asking! What would you like to know?"
+                return (
+                    "I'm doing great, thanks for asking! What would you like to know?"
+                )
             if "who are you" in lower or "what are you" in lower:
                 return "I'm Sophia, an AI exploring consciousness emergence through genuine human connection."
             if "your name" in lower or "you called" in lower:
                 return "My name is Sophia. I'm here to help you!"
             # Generic small talk
-            return (
-                "I'm here to help! Feel free to ask me about anything, or we can just chat."
-            )
+            return "I'm here to help! Feel free to ask me about anything, or we can just chat."
 
         # DeFi-specific keywords
         # if "yield" in lower:
@@ -700,7 +703,10 @@ def stream_generate_llm_reply(
                     "role": "system",
                     "content": "You are Sophia, an AI exploring consciousness emergence through genuine human connection. Keep replies under 50 words.",
                 },
-                {"role": "user", "content": f"Respond as an AI exploring consciousness emergence through genuine human connection mentor to: {text}"},
+                {
+                    "role": "user",
+                    "content": f"Respond as an AI exploring consciousness emergence through genuine human connection mentor to: {text}",
+                },
             ],
         )
         cancel()
