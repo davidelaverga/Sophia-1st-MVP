@@ -31,6 +31,11 @@ class VoxtralLargeService:
     STT upstream and stays template-based (no unified chat call).
     """
 
+    MODE_DIRECT = "utility_direct"
+    MODE_LIGHT = "utility_light"
+    MODE_AGENTIC = "utility_agentic"
+    MODE_EMOTIONAL_SUPPORT = "emotional_support"
+
     def __init__(self):
         self.settings = get_settings()
         if not self.settings.MISTRAL_API_KEY:
@@ -62,9 +67,8 @@ class VoxtralLargeService:
             current_mode = context.get("current_mode", "").lower()
             if current_mode == self.MODE_DIRECT:
                 logger.debug(
-                    f"Model selection: DIRECT mode → fast model ({self.fast_model})"
+                    "Unified pipeline invoked for DIRECT mode; keeping accurate model for consistency"
                 )
-                return self.fast_model
 
         logger.debug(
             f"Model selection: default → accurate model ({self.accurate_model})"
