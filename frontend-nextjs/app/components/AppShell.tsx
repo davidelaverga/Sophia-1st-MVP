@@ -9,9 +9,12 @@ import { UsageDemoControls } from "./UsageDemoControls"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 import { ErrorBoundary } from "./ErrorBoundary"
 
-// Lazy load modals for better initial bundle size
+// Lazy load settings sheet for better initial bundle size
 const SettingsSheet = lazy(() => import("./SettingsSheet").then(mod => ({ default: mod.SettingsSheet })))
-const UsageLimitModal = lazy(() => import("./UsageLimitModal").then(mod => ({ default: mod.UsageLimitModal })))
+
+// Import UsageLimitModal directly - it needs to be immediately available
+// when limit is reached (lazy loading could delay the modal appearing)
+import { UsageLimitModal } from "./UsageLimitModal"
 
 type AppShellProps = {
   children: ReactNode
@@ -20,18 +23,17 @@ type AppShellProps = {
 
 export function AppShell({ children, actionBar }: AppShellProps) {
   const [showSettings, setShowSettings] = useState(false)
-  // 🔧 BYPASS: Skip auth for testing - remove this in production
-  const [isAuthReady, setIsAuthReady] = useState(true) // was false
-  const [isConsentReady, setIsConsentReady] = useState(true) // was false
+  const [isAuthReady, setIsAuthReady] = useState(false)
+  const [isConsentReady, setIsConsentReady] = useState(false)
   const limitModalOpen = useUsageLimitStore((state) => state.isOpen)
   const limitInfo = useUsageLimitStore((state) => state.limitInfo)
   const closeLimitModal = useUsageLimitStore((state) => state.closeModal)
 
   // Show AuthGate first, then ConsentGate after auth
-  const showConsentGate = false // 🔧 BYPASS: was (isAuthReady && !isConsentReady)
+  const showConsentGate = isAuthReady && !isConsentReady
 
   return (
-    // 🔧 BYPASS: Removed AuthGate wrapper for testing
+    <AuthGate onAuthenticated={() => setIsAuthReady(true)}>
     <div className="grid min-h-[100svh] grid-rows-[auto_1fr_auto] bg-sophia-bg text-sophia-text">
         {/* Skip to main content link for keyboard navigation */}
         <a
@@ -72,13 +74,11 @@ export function AppShell({ children, actionBar }: AppShellProps) {
         )}
 
         <ErrorBoundary componentName="UsageLimitModal">
-          <Suspense fallback={null}>
-            <UsageLimitModal open={limitModalOpen} onClose={closeLimitModal} info={limitInfo} />
-          </Suspense>
+          <UsageLimitModal open={limitModalOpen} onClose={closeLimitModal} info={limitInfo} />
         </ErrorBoundary>
         <GentleUsageToast />
         <UsageDemoControls />
       </div>
-    // 🔧 BYPASS: Removed AuthGate closing tag
+    </AuthGate>
   )
 }

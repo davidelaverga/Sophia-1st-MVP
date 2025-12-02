@@ -3,17 +3,11 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 async function handleConsentCheck(request: NextRequest) {
-  console.log('🔍 Consent check request received')
-  
   try {
     // Verify environment variables
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error('❌ Missing Supabase environment variables')
       return NextResponse.json({ hasConsent: false, error: 'Server configuration error' }, { status: 500 })
     }
-
-    console.log('✅ Environment variables verified')
-    console.log('📍 Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
 
     const cookieStore = cookies()
     const supabase = createServerClient(
@@ -36,16 +30,10 @@ async function handleConsentCheck(request: NextRequest) {
 
     // Get current user (server-side method)
     // Note: Using getUser() instead of getSession() for server-side validation
-    console.log('🔍 Fetching authenticated user...')
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     
-    if (userError) {
-      console.error('❌ User authentication error:', userError)
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    
-    if (!user) {
-      console.error('❌ No authenticated user found')
+    if (userError || !user) {
+      // This is normal when user hasn't logged in yet - not an error
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

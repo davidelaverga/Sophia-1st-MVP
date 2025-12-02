@@ -6,6 +6,7 @@ type StreamHandlers = {
   onDone?: (payload?: Record<string, any>) => void
   onError?: (payload?: { message?: string }) => void
   onUsageLimit?: (error: UsageLimitError) => void
+  onCancel?: () => void
 }
 
 export type StreamConversationOptions = {
@@ -13,6 +14,7 @@ export type StreamConversationOptions = {
   url?: string
   headers?: HeadersInit
   maxRetries?: number
+  signal?: AbortSignal
 }
 
 const defaultUrl = "/api/conversation/respond"
@@ -148,17 +150,24 @@ async function readStream(reader: ReadableStreamDefaultReader<Uint8Array>, handl
 }
 
 export async function streamConversation(options: StreamConversationOptions, handlers: StreamHandlers = {}) {
-  const { body, headers, maxRetries = 2, url = defaultUrl } = options
+  const { body, headers, maxRetries = 2, url = defaultUrl, signal } = options
 
   let attempt = 0
   let lastError: unknown
 
   while (attempt <= maxRetries) {
+    // Check if cancelled before attempting
+    if (signal?.aborted) {
+      handlers.onCancel?.()
+      return undefined
+    }
+
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { ...defaultHeaders, ...headers },
         body: JSON.stringify(body),
+        signal,
       })
 
       const contentType = response.headers.get("content-type") ?? ""
@@ -204,6 +213,12 @@ export async function streamConversation(options: StreamConversationOptions, han
       lastError = undefined
       break
     } catch (error) {
+      // Handle abort gracefully - not an error
+      if (error instanceof DOMException && error.name === "AbortError") {
+        handlers.onCancel?.()
+        return undefined
+      }
+      
       lastError = error
       if (attempt === maxRetries) {
         const handled = await requestJsonFallback(url, body, headers, handlers)

@@ -523,6 +523,7 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: ChatMe
 
 function StreamingIndicator() {
   const presenceStatus = usePresenceStore((state) => state.status)
+  const cancelStream = useChatStore((state) => state.cancelStream)
   const messages = [
     "Taking a moment to reflect...",
     "Considering your words...",
@@ -531,22 +532,32 @@ function StreamingIndicator() {
   const message = presenceStatus === "reflecting" ? messages[2] : presenceStatus === "thinking" ? messages[1] : messages[0]
   
   return (
-    <div className="flex items-center gap-3 text-sm text-sophia-text2 animate-fadeIn">
-      <div className="flex gap-2">
-        <span 
-          className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
-          style={{ animationDelay: "0ms" }} 
-        />
-        <span 
-          className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
-          style={{ animationDelay: "400ms" }} 
-        />
-        <span 
-          className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
-          style={{ animationDelay: "800ms" }} 
-        />
+    <div className="flex items-center justify-between gap-3 text-sm text-sophia-text2 animate-fadeIn">
+      <div className="flex items-center gap-3">
+        <div className="flex gap-2">
+          <span 
+            className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
+            style={{ animationDelay: "0ms" }} 
+          />
+          <span 
+            className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
+            style={{ animationDelay: "400ms" }} 
+          />
+          <span 
+            className="inline-block h-3 w-3 rounded-full bg-gradient-to-br from-sophia-purple to-sophia-glow animate-glowBreathe" 
+            style={{ animationDelay: "800ms" }} 
+          />
+        </div>
+        <span className="animate-pulse">{message}</span>
       </div>
-      <span className="animate-pulse">{message}</span>
+      <button
+        type="button"
+        onClick={cancelStream}
+        className="rounded-lg px-3 py-1.5 text-xs font-medium text-sophia-text2 transition-all hover:bg-sophia-surface hover:text-sophia-purple hover:shadow-sm active:scale-95"
+        aria-label="Cancel response"
+      >
+        Cancel
+      </button>
     </div>
   )
 }

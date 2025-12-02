@@ -45,8 +45,10 @@ type ChatStore = {
     turnId?: string
   }
   lastCompletedTurnId?: string
+  abortController?: AbortController
   setComposerValue: (value: string) => void
   sendMessage: (override?: string) => Promise<void>
+  cancelStream: () => void
   applyQuickPrompt: (prompt: string) => void
   clearError: () => void
   setFeedbackGate: (gate?: FeedbackGate) => void
@@ -81,10 +83,41 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   feedbackGate: undefined,
   sessionFeedback: { open: false },
   lastCompletedTurnId: undefined,
+  abortController: undefined,
   setComposerValue: (value) => set({ composerValue: value }),
   applyQuickPrompt: (prompt) => set({ composerValue: prompt }),
   clearError: () => set({ lastError: undefined }),
   setFeedbackGate: (gate) => set({ feedbackGate: gate }),
+  cancelStream: () => {
+    const { abortController, activeReplyId, conversationId } = get()
+    if (abortController) {
+      // 1. Abort the frontend fetch immediately
+      abortController.abort()
+      
+      // 2. Notify backend to stop processing (fire-and-forget)
+      if (conversationId) {
+        fetch(`/api/conversation/${conversationId}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }).catch(() => {
+          // Ignore errors - best effort cancellation
+          console.debug("[chat-store] Backend cancel request failed (non-critical)")
+        })
+      }
+      
+      // 3. Clean up UI state
+      set((state) => ({
+        // Remove the incomplete Sophia message
+        messages: state.messages.filter((m) => m.id !== activeReplyId),
+        isLocked: false,
+        activeReplyId: undefined,
+        abortController: undefined,
+        feedbackGate: undefined,
+      }))
+      usePresenceStore.getState().setListening(false)
+      usePresenceStore.getState().settleToRestingSoon()
+    }
+  },
   acknowledgeFeedback: (turnId) =>
     set((state) => {
       const updates: Partial<ChatStore> = {}
@@ -141,6 +174,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Accumulate tokens in memory but don't show them until done
     let accumulatedContent = ""
 
+    // Create AbortController for this stream
+    const abortController = new AbortController()
+
     set((state) => ({
       messages: [...state.messages, userMessage, {
         id: replyId,
@@ -155,6 +191,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       activeReplyId: replyId,
       lastError: undefined,
       feedbackGate: undefined,
+      abortController,
     }))
 
     // 🔔 Emit stream start event
@@ -177,7 +214,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           conversationId: get().conversationId,
           user_id: userId, // 💜 Pass user_id for rate limiting
         },
+        signal: abortController.signal,
       }, {
+        onCancel: () => {
+          // Stream was cancelled by user - cleanup already done in cancelStream
+          console.log("[chat-store] Stream cancelled by user")
+        },
         onUsageLimit: (error) => {
           // Only show modal when limit is reached (100%)
           // Progressive alerts (hints/toasts) are handled by backend meta events
@@ -275,6 +317,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               ),
               isLocked: false,
               activeReplyId: undefined,
+              abortController: undefined,
               conversationId: payload?.conversationId ?? payload?.conversation_id ?? state.conversationId,
               feedbackGate: state.feedbackGate?.turnId === replyId ? undefined : state.feedbackGate,
               lastCompletedTurnId: replyId,
@@ -329,6 +372,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ),
             isLocked: false,
             activeReplyId: undefined,
+            abortController: undefined,
             lastError: payload?.message ?? copy.chat.error,
             feedbackGate: undefined,
           }))
@@ -337,6 +381,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       })
     } catch (error) {
+      // Ignore abort errors - they're handled in onCancel
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
+      }
+      
       logger.error(error, {
         component: 'ChatStore',
         action: 'sendMessage',
@@ -359,6 +408,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         ),
         isLocked: false,
         activeReplyId: undefined,
+        abortController: undefined,
         lastError: copy.chat.error,
         feedbackGate: undefined,
       }))

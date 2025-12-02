@@ -59,7 +59,8 @@ export function UsageDemoControls() {
   const triggerModal = (type: "voice" | "text" | "reflections") => {
     const info = { ...demoUsageInfo[type] }
     info.used = info.limit
-    showModal(info)
+    // Force=true bypasses the "recently dismissed" check for demo purposes
+    showModal(info, true)
   }
 
   const clearAll = () => {

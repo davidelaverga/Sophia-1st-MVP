@@ -6,6 +6,7 @@ import type { VoiceLoopReturn } from "../hooks/useVoiceLoop"
 import { Waveform } from "./Waveform"
 import { ChatCollapsed } from "./ChatCollapsed"
 import { VoiceTranscript } from "./VoiceTranscript"
+import { UsageHint } from "./UsageHint"
 import { useFocusModeStore } from "../stores/focus-mode-store"
 import { useUsageLimitStore } from "../stores/usage-limit-store"
 
@@ -185,6 +186,9 @@ export function VoiceFocusView({ voiceState }: VoiceFocusViewProps) {
           </p>
         )}
       </section>
+      
+      {/* Usage hint for voice mode */}
+      <UsageHint />
     </div>
   )
 }

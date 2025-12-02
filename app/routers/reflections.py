@@ -74,19 +74,29 @@ def _extract_topics_from_text(transcript: str, response: str) -> List[str]:
         "gas_fees": ["gas", "fee", "transaction cost"],
         "impermanent_loss": ["impermanent loss", "IL"],
         "apy": ["apy", "apr", "yield", "return"],
+        "getting_started": ["start small", "beginner", "first step", "getting started"],
+    }
+    
+    # Emotional/support keywords
+    emotional_keywords = {
+        "feeling_overwhelmed": ["overwhelmed", "overwhelming", "too much", "stressed"],
+        "emotional_support": ["emotional support", "mental health", "wellness", "self-care"],
+        "empathy": ["empathy", "empathetic", "understanding", "i understand"],
+        "encouragement": ["you've got this", "you can do it", "don't worry", "it's okay"],
+        "guidance": ["advice", "guidance", "suggestion", "recommendation"],
+        "anxiety": ["anxious", "anxiety", "worried", "nervous"],
+        "confidence": ["confidence", "confident", "believe", "trust yourself"],
     }
     
     # AI companion keywords
     ai_keywords = {
         "ai_companion": ["ai companion", "companion", "chatbot", "AI assistant"],
-        "emotional_support": ["emotional support", "mental health", "wellness"],
-        "empathy": ["empathy", "empathetic", "understanding"],
         "therapy": ["therapy", "therapist", "counseling"],
         "conversation": ["conversation", "chat", "talk", "dialogue"],
         "relationships": ["relationship", "connection", "bond"],
     }
     
-    all_keywords = {**defi_keywords, **ai_keywords}
+    all_keywords = {**defi_keywords, **emotional_keywords, **ai_keywords}
     
     # Combine text for analysis
     combined_text = (transcript + " " + response).lower()
@@ -108,19 +118,33 @@ def _generate_summary(transcript: str, response: str, topics: List[str]) -> str:
     # Template-based summary for MVP
     # TODO: Replace with LLM-generated summary for better quality
     
-    if not topics:
-        # Fallback: use actual conversation content
+    # Split response into sentences
+    sentences = [s.strip() for s in response.split(".") if s.strip() and len(s.strip()) > 20]
+    
+    if not sentences:
+        # Fallback if no sentences found
         question_preview = transcript[:80] if len(transcript) > 80 else transcript
-        answer_preview = response.split(".")[0] if "." in response else response[:100]
-        return f'User asked: "{question_preview}..." Sophia explained: {answer_preview}.'
+        return f'User asked: "{question_preview}..." and Sophia provided guidance.'
+    
+    # Skip the first sentence if it's a generic opener (e.g., "It's completely normal...")
+    # Look for more substantive content
+    key_sentence = sentences[0]
+    for sentence in sentences[1:4]:  # Check sentences 2-4
+        # Prefer sentences with action words or specific advice
+        action_words = ["start", "try", "use", "focus", "practice", "remember", "break", "set up", "learn"]
+        if any(word in sentence.lower() for word in action_words):
+            key_sentence = sentence
+            break
+    
+    if not topics:
+        # No topics found - use conversation content directly
+        question_preview = transcript[:60] if len(transcript) > 60 else transcript
+        return f'User shared: "{question_preview}". Sophia suggested: {key_sentence}.'
     
     # Create summary based on topics
     topic_str = ", ".join([t.replace("_", " ") for t in topics[:3]])
     
-    # Get key insight from response (first sentence)
-    first_sentence = response.split(".")[0] if "." in response else response[:150]
-    
-    summary = f"We explored {topic_str}. Key insight: {first_sentence}."
+    summary = f"We explored {topic_str}. {key_sentence}."
     
     return summary[:400]  # Limit length
 
@@ -165,15 +189,26 @@ def _generate_reflection_helper(conversation_id: str) -> Dict[str, Any]:
     # Extract topics using keyword analysis
     topics = _extract_topics_from_text(transcript, response)
     
-    # Generate meaningful title
+    # Generate meaningful title with variation
+    import hashlib
+    # Use conversation_id to create deterministic but varied titles
+    title_hash = int(hashlib.md5(conversation_id.encode()).hexdigest()[:8], 16)
+    
+    title_prefixes = ["Exploring", "Understanding", "A Moment of", "Discovering", "Learning About"]
+    title_prefix = title_prefixes[title_hash % len(title_prefixes)]
+    
     if topics:
         # Use first topic and make it readable
         main_topic = topics[0].replace("_", " ").title()
-        title = f"Exploring {main_topic}"
+        title = f"{title_prefix} {main_topic}"
     else:
-        # Fallback: use first few words of question
-        first_words = " ".join(transcript.split()[:6])
-        title = f"Discussion: {first_words}"
+        # Fallback: use emotion or first few words
+        user_emotion_label = user_emotion_data.get("label", "") if isinstance(user_emotion_data, dict) else ""
+        if user_emotion_label and user_emotion_label != "neutral":
+            title = f"A Moment of {user_emotion_label.title()}"
+        else:
+            first_words = " ".join(transcript.split()[:5])
+            title = f"Reflection: {first_words}"
         if len(title) > 60:
             title = title[:57] + "..."
     

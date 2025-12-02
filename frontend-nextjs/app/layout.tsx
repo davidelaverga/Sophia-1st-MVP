@@ -7,6 +7,18 @@ import { ThemeBootstrap } from "./ThemeBootstrap"
 export const metadata = {
   title: `${copy.brand.name} – ${copy.brand.tagline}`,
   description: copy.auth.subtitle,
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.png', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-icon.png', type: 'image/png' },
+    ],
+  },
+  manifest: '/manifest.json',
 }
 
 // Viewport configuration for mobile optimization

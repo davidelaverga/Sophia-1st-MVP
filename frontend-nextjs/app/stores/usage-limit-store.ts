@@ -15,7 +15,7 @@ type UsageLimitStore = {
     textPercent: number;
     user_id?: string; // Store user_id for passing to backend
   };
-  showModal: (info: UsageLimitInfo) => void;
+  showModal: (info: UsageLimitInfo, force?: boolean) => void;
   closeModal: () => void;
   showHint: (info: UsageLimitInfo) => void;
   dismissHint: () => void;
@@ -33,8 +33,15 @@ export const useUsageLimitStore = create<UsageLimitStore>((set, get) => ({
   lastToastPercent: undefined,
   isAtLimit: false,
   currentUsage: undefined,
-  showModal: (info) => {
+  showModal: (info, force = false) => {
     const state = get()
+    
+    // Force parameter bypasses all checks (used by demo controls)
+    if (force) {
+      set({ isOpen: true, limitInfo: info })
+      return
+    }
+    
     // If user is at 100% limit, always show modal (ignore dismissal time)
     // Otherwise, only show if it wasn't just dismissed (prevent immediate re-opening)
     if (state.isAtLimit) {

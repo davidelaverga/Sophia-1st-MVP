@@ -5,7 +5,7 @@ import { ReflectionChunk } from "../../hooks/useReflectionPrompt"
 import { createReflection, ReflectionAction } from "../../lib/api/reflections"
 import { emitTelemetry } from "../../lib/telemetry"
 import { useFocusTrap } from "../../hooks/useFocusTrap"
-import { Sparkles, Heart, Send, Check, Loader2, X, ChevronDown, RefreshCw, Quote, Eye } from "lucide-react"
+import { Sparkles, Heart, Send, Check, Loader2, X, ChevronDown, RefreshCw, Quote, Eye, Info, Shield } from "lucide-react"
 
 type ReflectionModalProps = {
   conversationId: string
@@ -262,7 +262,7 @@ export function ReflectionModal({ conversationId, chunks, onClose }: ReflectionM
                       </div>
                       {selectedChunk.reason && selectedChunk.reason !== "reflection" && (
                         <span className="rounded-full bg-sophia-purple/10 px-2.5 py-0.5 text-xs font-medium text-sophia-purple">
-                          {selectedChunk.reason}
+                          {selectedChunk.reason.replace(/_/g, " ")}
                         </span>
                       )}
                     </div>
@@ -348,35 +348,57 @@ export function ReflectionModal({ conversationId, chunks, onClose }: ReflectionM
                           &ldquo;{chunk.text}&rdquo;
                         </p>
                         
-                        {/* Insight tag */}
-                        {chunk.reason && chunk.reason !== "reflection" && (
-                          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-sophia-purple/10 px-2.5 py-0.5 text-xs font-medium text-sophia-purple">
-                            <Sparkles className="h-3 w-3" />
-                            {chunk.reason}
-                          </span>
-                        )}
+                        {/* Insight tag and timestamp */}
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          {chunk.reason && chunk.reason !== "reflection" && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-sophia-purple/10 px-2.5 py-0.5 text-xs font-medium text-sophia-purple">
+                              <Sparkles className="h-3 w-3" />
+                              {chunk.reason.replace(/_/g, " ")}
+                            </span>
+                          )}
+                          {chunk.ts && (
+                            <span className="text-xs text-sophia-text2/60">
+                              {new Date(chunk.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
                       </button>
                     )
                   })}
                 </div>
 
-                {/* Privacy note (collapsible) */}
+                {/* Privacy note (collapsible) - Always visible info */}
                 <div className="mt-4">
                   <button
                     type="button"
                     onClick={() => setShowPrivacyNote(!showPrivacyNote)}
-                    className="flex w-full items-center justify-between rounded-xl px-1 py-2 text-xs text-sophia-text2 transition-colors hover:text-sophia-purple"
+                    className="flex w-full items-center justify-between rounded-xl bg-sophia-purple/5 px-3 py-2.5 text-xs text-sophia-text2 transition-colors hover:bg-sophia-purple/10"
                   >
-                    <span className="flex items-center gap-1.5">
-                      <Heart className="h-3.5 w-3.5" />
-                      Your privacy is protected
+                    <span className="flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-sophia-purple" />
+                      <span className="font-medium">100% Anonymous when shared</span>
                     </span>
                     <ChevronDown className={`h-4 w-4 transition-transform ${showPrivacyNote ? "rotate-180" : ""}`} />
                   </button>
                   
                   {showPrivacyNote && (
-                    <div className="mt-2 rounded-xl bg-sophia-purple/5 p-3 text-xs leading-relaxed text-sophia-text2 animate-fadeIn">
-                      Your reflections are stored securely and privately. When you share, we anonymize everything—only the wisdom is shared, never your identity or personal details.
+                    <div className="mt-2 space-y-2 rounded-xl bg-sophia-surface p-3 text-xs leading-relaxed text-sophia-text2 animate-fadeIn border border-sophia-purple/10">
+                      <p className="font-medium text-sophia-text">Here&apos;s how we protect your privacy:</p>
+                      <ul className="space-y-1.5 pl-1">
+                        <li className="flex items-start gap-2">
+                          <span className="text-sophia-purple mt-0.5">•</span>
+                          <span><strong>No names</strong> — Your identity is never attached to shared reflections</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-sophia-purple mt-0.5">•</span>
+                          <span><strong>No context</strong> — Only the selected insight is shared, not your conversation</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-sophia-purple mt-0.5">•</span>
+                          <span><strong>No tracking</strong> — Shared wisdom can&apos;t be traced back to you</span>
+                        </li>
+                      </ul>
+                      <p className="text-sophia-text2/80 italic mt-2">Your wisdom helps others while keeping you completely private 💜</p>
                     </div>
                   )}
                 </div>

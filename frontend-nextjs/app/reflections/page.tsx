@@ -3,11 +3,28 @@
 /* eslint-disable i18next/no-literal-string */
 /* eslint-disable react/no-unescaped-entities */
 
-import { useState, useMemo } from "react"
-import { Sparkles, Heart, Send, Calendar, Filter, Search, ArrowLeft, Quote, Users, TrendingUp, Star } from "lucide-react"
+import { useState, useMemo, useEffect } from "react"
+import { Sparkles, Heart, Send, Calendar, Filter, Search, ArrowLeft, Quote, Users, TrendingUp, Star, Loader2 } from "lucide-react"
 import Link from "next/link"
+import { useSupabase } from "../providers"
 
-// Mock data - will be replaced with real API calls
+// Types for API responses
+type CommunityInsight = {
+  title: string
+  insight: string
+  sophia_emotion: { label: string; confidence: number }
+  reflection_id: string | null
+}
+
+type UserImpact = {
+  user_id: string
+  session_count: number
+  reflections_created: number
+  reflections_shared: number
+  last_session_at: string | null
+}
+
+// Mock data for reflections - will be replaced with real API calls later
 const MOCK_REFLECTIONS = [
   {
     id: "1",
@@ -51,37 +68,15 @@ const MOCK_REFLECTIONS = [
   },
 ]
 
-const MOCK_COMMUNITY_INSIGHTS = [
+// Fallback community insights when API fails
+const FALLBACK_COMMUNITY_INSIGHTS: CommunityInsight[] = [
   {
-    id: "c1",
-    text: "Patience in DeFi isn't waiting—it's building conviction through understanding.",
-    author: "Anonymous Sage",
-    likes: 156,
-    timeAgo: "2 hours ago",
-  },
-  {
-    id: "c2",
-    text: "The hardest part of impermanent loss isn't the math, it's accepting that sometimes the best move is no move.",
-    author: "Anonymous Sage",
-    likes: 89,
-    timeAgo: "5 hours ago",
-  },
-  {
-    id: "c3",
-    text: "Every smart contract I read makes me a better investor, even if I never use that protocol.",
-    author: "Anonymous Sage", 
-    likes: 234,
-    timeAgo: "1 day ago",
+    title: "Today Sophia learned",
+    insight: "The importance of meaningful conversations and active listening.",
+    sophia_emotion: { label: "curious", confidence: 0.85 },
+    reflection_id: null,
   },
 ]
-
-const MOCK_USER_IMPACT = {
-  totalReflections: 5,
-  sharedCount: 3,
-  totalLikes: 85,
-  streak: 4, // days
-  rank: "Wisdom Seeker", // gamification
-}
 
 type FilterType = "all" | "shared" | "private"
 
@@ -96,8 +91,55 @@ function formatTimeAgo(date: Date): string {
 }
 
 export default function ReflectionsPage() {
+  const { user } = useSupabase()
   const [filter, setFilter] = useState<FilterType>("all")
   const [searchQuery, setSearchQuery] = useState("")
+  
+  // Real data states
+  const [communityInsight, setCommunityInsight] = useState<CommunityInsight | null>(null)
+  const [userImpact, setUserImpact] = useState<UserImpact | null>(null)
+  const [isLoadingCommunity, setIsLoadingCommunity] = useState(true)
+  const [isLoadingImpact, setIsLoadingImpact] = useState(true)
+
+  // Fetch community insights on mount
+  useEffect(() => {
+    async function fetchCommunityInsight() {
+      try {
+        const response = await fetch("/api/community/latest-learning")
+        if (response.ok) {
+          const data = await response.json()
+          setCommunityInsight(data)
+        }
+      } catch (error) {
+        console.error("Failed to fetch community insight:", error)
+      } finally {
+        setIsLoadingCommunity(false)
+      }
+    }
+    fetchCommunityInsight()
+  }, [])
+
+  // Fetch user impact when user is available
+  useEffect(() => {
+    async function fetchUserImpact() {
+      if (!user?.id) {
+        setIsLoadingImpact(false)
+        return
+      }
+      try {
+        const response = await fetch(`/api/community/user-impact?user_id=${encodeURIComponent(user.id)}`)
+        if (response.ok) {
+          const data = await response.json()
+          setUserImpact(data)
+        }
+      } catch (error) {
+        console.error("Failed to fetch user impact:", error)
+      } finally {
+        setIsLoadingImpact(false)
+      }
+    }
+    fetchUserImpact()
+  }, [user?.id])
 
   const filteredReflections = useMemo(() => {
     let result = MOCK_REFLECTIONS
@@ -141,14 +183,18 @@ export default function ReflectionsPage() {
           
           {/* Impact stats mini */}
           <div className="hidden items-center gap-4 sm:flex">
-            <div className="flex items-center gap-1.5 text-sm text-sophia-text2">
-              <Star className="h-4 w-4 text-amber-500" />
-              <span>{MOCK_USER_IMPACT.streak} day streak</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-sm text-sophia-text2">
-              <Heart className="h-4 w-4 text-pink-500" />
-              <span>{MOCK_USER_IMPACT.totalLikes} likes</span>
-            </div>
+            {userImpact && (
+              <>
+                <div className="flex items-center gap-1.5 text-sm text-sophia-text2">
+                  <Star className="h-4 w-4 text-amber-500" />
+                  <span>{userImpact.session_count} sessions</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-sm text-sophia-text2">
+                  <Heart className="h-4 w-4 text-pink-500" />
+                  <span>{userImpact.reflections_shared} shared</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -264,30 +310,47 @@ export default function ReflectionsPage() {
                 <h2 className="font-semibold text-sophia-text">Your Impact</h2>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
-                  <p className="text-2xl font-bold text-sophia-purple">{MOCK_USER_IMPACT.totalReflections}</p>
-                  <p className="text-xs text-sophia-text2">Reflections</p>
+              {isLoadingImpact ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-sophia-purple" />
                 </div>
-                <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
-                  <p className="text-2xl font-bold text-sophia-purple">{MOCK_USER_IMPACT.sharedCount}</p>
-                  <p className="text-xs text-sophia-text2">Shared</p>
-                </div>
-                <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
-                  <p className="text-2xl font-bold text-pink-500">{MOCK_USER_IMPACT.totalLikes}</p>
-                  <p className="text-xs text-sophia-text2">Likes earned</p>
-                </div>
-                <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
-                  <p className="text-2xl font-bold text-amber-500">{MOCK_USER_IMPACT.streak}</p>
-                  <p className="text-xs text-sophia-text2">Day streak</p>
-                </div>
-              </div>
+              ) : userImpact ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
+                      <p className="text-2xl font-bold text-sophia-purple">{userImpact.reflections_created}</p>
+                      <p className="text-xs text-sophia-text2">Reflections</p>
+                    </div>
+                    <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
+                      <p className="text-2xl font-bold text-sophia-purple">{userImpact.reflections_shared}</p>
+                      <p className="text-xs text-sophia-text2">Shared</p>
+                    </div>
+                    <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
+                      <p className="text-2xl font-bold text-pink-500">{userImpact.session_count}</p>
+                      <p className="text-xs text-sophia-text2">Sessions</p>
+                    </div>
+                    <div className="rounded-xl bg-sophia-bg/50 p-3 text-center">
+                      <p className="text-2xl font-bold text-amber-500">
+                        {userImpact.last_session_at ? "Active" : "—"}
+                      </p>
+                      <p className="text-xs text-sophia-text2">Status</p>
+                    </div>
+                  </div>
 
-              {/* Rank badge */}
-              <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sophia-purple to-sophia-glow p-2.5">
-                <Star className="h-4 w-4 text-white" />
-                <span className="text-sm font-semibold text-white">{MOCK_USER_IMPACT.rank}</span>
-              </div>
+                  {/* Rank badge */}
+                  <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sophia-purple to-sophia-glow p-2.5">
+                    <Star className="h-4 w-4 text-white" />
+                    <span className="text-sm font-semibold text-white">
+                      {userImpact.reflections_shared >= 5 ? "Wisdom Sharer" : 
+                       userImpact.reflections_created >= 3 ? "Reflector" : "Explorer"}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-center text-sm text-sophia-text2 py-4">
+                  Sign in to see your impact
+                </p>
+              )}
             </div>
 
             {/* Community Insights */}
@@ -297,25 +360,33 @@ export default function ReflectionsPage() {
                 <h2 className="font-semibold text-sophia-text">Community Wisdom</h2>
               </div>
 
-              <div className="space-y-4">
-                {MOCK_COMMUNITY_INSIGHTS.map((insight) => (
-                  <div key={insight.id} className="border-b border-sophia-text/5 pb-4 last:border-0 last:pb-0">
+              {isLoadingCommunity ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-sophia-purple" />
+                </div>
+              ) : communityInsight ? (
+                <div className="space-y-4">
+                  <div className="border-b border-sophia-text/5 pb-4">
+                    <p className="text-xs font-medium text-sophia-purple mb-2">
+                      {communityInsight.title}
+                    </p>
                     <p className="text-sm leading-relaxed text-sophia-text">
-                      "{insight.text}"
+                      "{communityInsight.insight}"
                     </p>
                     <div className="mt-2 flex items-center justify-between text-xs text-sophia-text2">
-                      <span>{insight.author}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1">
-                          <Heart className="h-3 w-3 fill-pink-500 text-pink-500" />
-                          {insight.likes}
-                        </span>
-                        <span>{insight.timeAgo}</span>
-                      </div>
+                      <span>Anonymous Wisdom</span>
+                      <span className="flex items-center gap-1 capitalize">
+                        <Sparkles className="h-3 w-3 text-sophia-purple" />
+                        {communityInsight.sophia_emotion.label}
+                      </span>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <p className="text-center text-sm text-sophia-text2 py-4">
+                  No community insights yet
+                </p>
+              )}
 
               <Link
                 href="#"

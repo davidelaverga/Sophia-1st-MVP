@@ -65,11 +65,12 @@ export function SettingsSheet({ onClose }: SettingsSheetProps) {
     setIsSigningOut(true)
     try {
       await supabase.auth.signOut()
-      router.push("/login")
-      handleClose()
+      // Clear local session data
+      clearSession()
+      // Reload to show AuthGate with Discord login
+      window.location.href = "/"
     } catch (error) {
       console.error("Error signing out:", error)
-    } finally {
       setIsSigningOut(false)
     }
   }

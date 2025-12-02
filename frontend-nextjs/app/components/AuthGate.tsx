@@ -1,11 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Sparkles } from "lucide-react"
 import { useSupabase } from "../providers"
 import { copy, t } from "../../copy"
 
 type AuthState = "checking" | "unauthenticated" | "authenticated"
+
+// Maximum time to wait for auth check before assuming unauthenticated
+const AUTH_TIMEOUT_MS = 3000
 
 export function AuthGate({ 
   children, 
@@ -17,11 +20,38 @@ export function AuthGate({
   const { supabase, user, loading } = useSupabase()
   const [authState, setAuthState] = useState<AuthState>("checking")
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hasResolvedRef = useRef(false)
+
+  // Safety timeout: if loading takes too long, assume unauthenticated
+  useEffect(() => {
+    if (authState === "checking" && !hasResolvedRef.current) {
+      timeoutRef.current = setTimeout(() => {
+        if (!hasResolvedRef.current) {
+          console.warn("[AuthGate] Auth check timeout - assuming unauthenticated")
+          hasResolvedRef.current = true
+          setAuthState("unauthenticated")
+        }
+      }, AUTH_TIMEOUT_MS)
+    }
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [authState])
 
   useEffect(() => {
     if (loading) {
-      setAuthState("checking")
+      // Still loading, keep checking state
       return
+    }
+
+    // Auth check completed
+    hasResolvedRef.current = true
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
     }
 
     if (user) {
