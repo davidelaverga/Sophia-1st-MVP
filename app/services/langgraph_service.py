@@ -96,6 +96,7 @@ class LangGraphService:
                 "conversation_status": evaluation_manager.get_conversation_status(
                     final_state["session_id"]
                 ),
+                "evaluation_report": final_state.get("evaluation_report"),
             }
 
             logger.info(
@@ -282,6 +283,7 @@ class LangGraphService:
                 supabase_token=supabase_token,
                 user_id=user_id,
                 conversation_count=conversation_count,
+                tier0_result=tier0_result,
             )
 
             logger.info(

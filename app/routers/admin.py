@@ -2,13 +2,10 @@
 
 import logging
 import time
-from pathlib import Path
 
-import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.config import get_settings
 from app.deps import verify_api_key
 from app.services.memory import memory_manager
 
@@ -99,88 +96,3 @@ async def get_memo_metrics(
     except Exception as e:
         logger.error(f"Failed to get MemO metrics: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
-
-
-@router.post("/admin/run-migration")
-async def run_migration(
-    supabase_token: str = Depends(verify_api_key),
-):
-    """Run user_memories table migration (Task #42597)"""
-    try:
-        migration_file = Path("user_memories_migration.sql")
-        if not migration_file.exists():
-            raise HTTPException(status_code=404, detail="Migration file not found")
-
-        # Read migration SQL
-        with open(migration_file, "r") as f:
-            migration_sql = f.read()
-
-        # Get DB connection string from settings
-        settings = get_settings()
-        db_dsn = settings.SUPABASE_DB_DSN
-
-        if not db_dsn:
-            raise HTTPException(
-                status_code=500, detail="SUPABASE_DB_DSN not configured"
-            )
-
-        # Execute migration
-        conn = psycopg.connect(db_dsn)
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(migration_sql)
-            conn.commit()
-
-            # Verify table exists
-            cursor.execute(
-                "SELECT tablename FROM pg_tables WHERE tablename = 'user_memories'"
-            )
-            result = cursor.fetchone()
-
-            if result:
-                # Get table structure
-                cursor.execute(
-                    """
-                    SELECT column_name, data_type
-                    FROM information_schema.columns
-                    WHERE table_name = 'user_memories'
-                    ORDER BY ordinal_position
-                """
-                )
-                columns = cursor.fetchall()
-
-                return {
-                    "message": "Migration executed successfully",
-                    "table_exists": True,
-                    "columns": [{"name": col[0], "type": col[1]} for col in columns],
-                    "timestamp": time.time(),
-                }
-            else:
-                return {
-                    "message": "Migration executed but table not found",
-                    "table_exists": False,
-                    "timestamp": time.time(),
-                }
-
-        except Exception as e:
-            conn.rollback()
-            error_str = str(e).lower()
-            if "already exists" in error_str:
-                return {
-                    "message": "Migration already applied (table exists)",
-                    "table_exists": True,
-                    "timestamp": time.time(),
-                }
-            else:
-                raise
-
-        finally:
-            cursor.close()
-            conn.close()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to run migration: {e}")
-        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")

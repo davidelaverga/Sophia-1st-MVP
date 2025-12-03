@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 from fastapi import Header, HTTPException, Request
 from jwt import (
+    ExpiredSignatureError,
     InvalidTokenError,
     PyJWKClient,
     decode as jwt_decode,
@@ -79,7 +80,7 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
             algorithms=[algorithm],
             options={
                 "verify_signature": True,
-                "verify_exp": False,
+                "verify_exp": True,
                 "verify_aud": False,
                 "verify_iat": False,
                 "verify_nbf": False,
@@ -87,6 +88,10 @@ def _verify_jwt_signature_via_jwks(token: str) -> None:
                 "verify_sub": False,
             },
         )
+    except ExpiredSignatureError as exc:
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: token has expired"
+        ) from exc
     except InvalidTokenError as exc:
         raise HTTPException(
             status_code=401, detail="Unauthorized: invalid token signature"
@@ -194,28 +199,36 @@ def verify_api_key(
             or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
             or settings.SUPABASE_KEY
         )
-        if secret:
-            try:
-                jwt_decode(
-                    token,
-                    secret,
-                    algorithms=[alg],
-                    options={
-                        "verify_signature": True,
-                        "verify_exp": False,
-                        "verify_aud": False,
-                        "verify_iat": False,
-                        "verify_nbf": False,
-                    },
-                )
-            except InvalidTokenError as exc:
-                raise HTTPException(
-                    status_code=401, detail="Unauthorized: invalid token signature"
-                ) from exc
-        else:
-            logger.warning(
-                "SUPABASE_JWT_SECRET/SERVICE_ROLE_KEY is not configured; skipping signature verification for Supabase JWTs"
+        if not secret:
+            # Fail fast: никогда не пропускаем проверку подписи JWT
+            logger.error(
+                "SUPABASE_JWT_SECRET/SERVICE_ROLE_KEY is not configured; cannot verify JWT signature"
             )
+            raise HTTPException(
+                status_code=500,
+                detail="Server configuration error: JWT verification not available",
+            )
+        try:
+            jwt_decode(
+                token,
+                secret,
+                algorithms=[alg],
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,  # Включена проверка срока действия токена
+                    "verify_aud": False,
+                    "verify_iat": False,
+                    "verify_nbf": False,
+                },
+            )
+        except ExpiredSignatureError as exc:
+            raise HTTPException(
+                status_code=401, detail="Unauthorized: token has expired"
+            ) from exc
+        except InvalidTokenError as exc:
+            raise HTTPException(
+                status_code=401, detail="Unauthorized: invalid token signature"
+            ) from exc
     else:
         _verify_jwt_signature_via_jwks(token)
 

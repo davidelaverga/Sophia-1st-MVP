@@ -16,7 +16,6 @@ from app.services.mistral import (
     generate_llm_reply,
 )
 from app.services.emotion import (
-    analyze_emotion_audio,
     infer_text_emotion,
     trigger_phoenix_bg,
 )
@@ -27,10 +26,13 @@ from app.services.emotional_guidance import (
 from app.services.tts import synthesize_inworld
 from app.services.supabase import upload_audio_and_get_url
 from app.services.memory import memory_manager, ConversationTurn
-from app.services.rag import rag_system
 from app.services.memo import memo_client  # Task #42597
 from app.services.prompt_composer import prompt_composer  # Task #42597
-from app.prompt.composer_v2 import PromptComposerV2, TurnSnippet, AffectSnapshot  # Task #42839
+from app.prompt.composer_v2 import (
+    PromptComposerV2,
+    TurnSnippet,
+    AffectSnapshot,
+)  # Task #42839
 from app.config import get_settings
 from app.routing.intent_router import classify_intent_and_mode
 from app.routing.models import CurrentMode, Intent, UtilityPath
@@ -89,6 +91,7 @@ class GraphState(TypedDict):
     emotion_guidance: List[str]
     fallback_used: Dict[str, str]
     use_voxtral: bool  # Flag to indicate if Voxtral audio pipeline is active
+    tier0_result: Optional[Dict[str, Any]]
     cancel_check: Optional[CancelCallback]
 
 
@@ -133,9 +136,7 @@ class AudioIngestor:
     def __init__(self, use_voxtral: bool = True):
         self.settings = get_settings()
         self.use_voxtral = use_voxtral
-        logger.info(
-            f"AudioIngestor initialized (Voxtral preference: {use_voxtral})"
-        )
+        logger.info(f"AudioIngestor initialized (Voxtral preference: {use_voxtral})")
 
     def __call__(self, state: GraphState) -> GraphState:
         logger.info(f"AudioIngestor processing session {state['session_id']}")
@@ -173,8 +174,9 @@ class AudioIngestor:
                     state["use_voxtral"] = False
                     return self._legacy_audio_ingestion(state)
 
-                # Analyze emotion from audio
-                user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                # Use fast text emotion instead of blocking audio analysis
+                # Phoenix will run in background via trigger_phoenix_bg later
+                user_emotion = infer_text_emotion(transcript)
 
                 # Set pipeline flags and populate transcript for IntentAnalyzer
                 state["use_voxtral"] = True
@@ -237,7 +239,8 @@ class AudioIngestor:
                     repr(whisper_preview),
                     len(transcript) if isinstance(transcript, str) else -1,
                 )
-            user_emotion = analyze_emotion_audio(state["audio_bytes"])
+            # Use fast text emotion instead of blocking audio analysis
+            user_emotion = infer_text_emotion(transcript)
 
             state["transcript"] = transcript
             if not transcript or (
@@ -286,8 +289,8 @@ class AudioIngestor:
                     "AudioIngestor whisper fallback produced empty transcript for session %s",
                     state["session_id"],
                 )
-            # Still analyze emotion with Phoenix
-            user_emotion = analyze_emotion_audio(state["audio_bytes"])
+            # Use fast text emotion instead of blocking audio analysis
+            user_emotion = infer_text_emotion(state["transcript"] or "")
             state["user_emotion"] = EmotionData(
                 label=user_emotion.label, confidence=user_emotion.confidence
             )
@@ -367,6 +370,7 @@ class IntentAnalyzer:
             return await classify_intent_and_mode(
                 user_message=transcript,
                 session_id=state["session_id"],
+                tier0_result=state.get("tier0_result"),
                 prosody=None,
             )
 
@@ -439,7 +443,9 @@ class ResponseGenerator:
             mode = mode_str
 
         # Get skill_id if emotional support mode
-        skill_id = state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+        skill_id = (
+            state.get("skill_id") if mode == CurrentMode.EMOTIONAL_SUPPORT else None
+        )
 
         # Build conversation turns from flash context
         flash_context = self._ensure_flash_context(state)
@@ -449,7 +455,9 @@ class ResponseGenerator:
             if turn.get("user"):
                 conversation_turns.append(TurnSnippet(role="user", text=turn["user"]))
             if turn.get("sophia"):
-                conversation_turns.append(TurnSnippet(role="assistant", text=turn["sophia"]))
+                conversation_turns.append(
+                    TurnSnippet(role="assistant", text=turn["sophia"])
+                )
 
         # Add current user message
         transcript = state.get("transcript", "")
@@ -467,10 +475,10 @@ class ResponseGenerator:
 
         # Get RAG snippets if DeFi question
         rag_snippets = []
-        if state.get("intent") == "defi_question":
-            rag_context = rag_system.get_context_for_llm(transcript)
-            if rag_context:
-                rag_snippets = [rag_context]
+        # if state.get("intent") == "defi_question":
+        #     rag_context = rag_system.get_context_for_llm(transcript)
+        #     if rag_context:
+        #         rag_snippets = [rag_context]
 
         # Build affect snapshot if emotional support mode
         affect_snapshot = None
@@ -480,7 +488,7 @@ class ResponseGenerator:
                 affect_snapshot = AffectSnapshot(
                     emotion=user_emotion.label,
                     confidence=user_emotion.confidence,
-                    source="phoenix"
+                    source="phoenix",
                 )
 
         # Build prompt using PromptComposerV2
@@ -625,7 +633,8 @@ class ResponseGenerator:
                         state["audio_bytes"],
                         cancel_check=cancel_check,
                     )
-                    user_emotion = analyze_emotion_audio(state["audio_bytes"])
+                    # Use fast text emotion instead of blocking audio analysis
+                    user_emotion = infer_text_emotion(state["transcript"])
                     state["user_emotion"] = EmotionData(
                         label=user_emotion.label, confidence=user_emotion.confidence
                     )
@@ -701,31 +710,15 @@ class ResponseGenerator:
         state["context_memory"] = memory_context
 
         # Task #42597: Get MemO intelligent memory
+        # Task #42817: Use sync wrapper to avoid 'event loop already running' error
         memo_memories = []
         try:
-            # Extract user_id from session (assuming session_id format or use default)
-            user_id = state.get("user_id", state["session_id"])
+            # Extract user_id from state - prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
 
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    memo_memories = pool.submit(
-                        lambda: asyncio.run(
-                            memo_client.search_memories(
-                                user_id=user_id, query_text=state["transcript"], top_k=3
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                memo_memories = asyncio.run(
-                    memo_client.search_memories(
-                        user_id=user_id, query_text=state["transcript"], top_k=3
-                    )
-                )
+            memo_memories = memo_client.search_memories_sync(
+                user_id=user_id, query_text=state["transcript"], top_k=3
+            )
 
             if memo_memories:
                 logger.info(f"MemO: Retrieved {len(memo_memories)} relevant memories")
@@ -737,7 +730,9 @@ class ResponseGenerator:
         # Build context dictionary (includes current_mode for mode-aware model selection)
         context = {
             "intent": state["intent"],
-            "current_mode": state.get("current_mode", ""),  # For VoxtralLargeService._select_model
+            "current_mode": state.get(
+                "current_mode", ""
+            ),  # For VoxtralLargeService._select_model
             "user_emotion": {
                 "label": state["user_emotion"].label,
                 "confidence": state["user_emotion"].confidence,
@@ -761,12 +756,12 @@ class ResponseGenerator:
             context["memo_memories"] = memo_memories
 
         # Add RAG context for DeFi questions
-        if state["intent"] == "defi_question":
-            # We need the transcript for RAG lookup (already extracted by AudioIngestor)
-            rag_context = rag_system.get_context_for_llm(state["transcript"])
-            if rag_context:
-                context["rag_context"] = rag_context
-                logger.info(f"RAG context added: {len(rag_context)} characters")
+        # if state["intent"] == "defi_question":
+        #     # We need the transcript for RAG lookup (already extracted by AudioIngestor)
+        #     rag_context = rag_system.get_context_for_llm(state["transcript"])
+        #     if rag_context:
+        #         context["rag_context"] = rag_context
+        #         logger.info(f"RAG context added: {len(rag_context)} characters")
 
         return context
 
@@ -845,9 +840,9 @@ class ResponseGenerator:
         )
 
         # Add intent-specific guidance
-        if intent == "defi_question":
-            system_prompt += "\n\nFocus: Provide accurate, educational DeFi guidance. Keep responses under 50 words."
-        elif intent == "emotional_support":
+        # if intent == "defi_question":
+        #     system_prompt += "\n\nFocus: Provide accurate, educational DeFi guidance. Keep responses under 50 words."
+        if intent == "emotional_support":
             system_prompt += "\n\nFocus: Provide supportive and encouraging responses. Keep responses under 50 words."
         else:
             system_prompt += "\n\nFocus: Engage in friendly casual conversation. Keep responses under 50 words."
@@ -946,8 +941,8 @@ class ResponseGenerator:
         if not transcript or self._looks_like_greeting(transcript):
             return ResponsePath.DIRECT
 
-        if (state.get("intent") or "").lower() == "defi_question":
-            return ResponsePath.AGENTIC
+        # if (state.get("intent") or "").lower() == "defi_question":
+        #     return ResponsePath.AGENTIC
 
         flash_context = self._ensure_flash_context(state)
         if (
@@ -1091,41 +1086,56 @@ class ResponseGenerator:
         self, state: GraphState, cancel_check: Optional[CancelCallback]
     ) -> str:
         transcript = state.get("transcript", "")
+        user_emotion: EmotionData = state.get("user_emotion") or EmotionData(
+            label="neutral", confidence=0.5
+        )
 
-        # Task #42839: Use PromptComposerV2 for prompt building
-        try:
-            # Call async _build_prompt_v2 from sync context
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Event loop running, use ThreadPoolExecutor
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    system_prompt = pool.submit(
-                        lambda: asyncio.run(self._build_prompt_v2(state))
-                    ).result()
-            else:
-                # No event loop running, use asyncio.run
-                system_prompt = asyncio.run(self._build_prompt_v2(state))
-        except Exception as exc:
-            logger.warning(f"PromptComposerV2 failed, falling back to old composer: {exc}")
-            # Fallback to old prompt composer
+        system_prompt: Optional[str] = None
+        user_prompt: str = transcript
+
+        # Prefer PromptComposerV2 when response-path split is disabled; otherwise use legacy
+        use_prompt_v2 = not self._response_path_split
+
+        if use_prompt_v2:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        system_prompt = pool.submit(
+                            lambda: asyncio.run(self._build_prompt_v2(state))
+                        ).result()
+                else:
+                    system_prompt = asyncio.run(self._build_prompt_v2(state))
+            except Exception as exc:
+                logger.warning(
+                    f"PromptComposerV2 failed, falling back to old composer: {exc}"
+                )
+                system_prompt = None
+
+        if system_prompt is None:
+            # Legacy composer path (ensures emotion guidance + contextual prompt assembly)
             flash_context = self._ensure_flash_context(state)
             memo_context = self._ensure_memo_context(state)
             emotion_guidance = _ensure_emotion_guidance(state)
 
             rag_context = ""
-            if (state.get("intent") or "").lower() == "defi_question":
-                try:
-                    rag_context = rag_system.get_context_for_llm(transcript)
-                except Exception as e:
-                    logger.warning(f"RAG context lookup failed: {e}")
+            # if (state.get("intent") or "").lower() == "defi_question":
+            #     try:
+            #         rag_context = rag_system.get_context_for_llm(transcript)
+            #     except Exception as e:
+            #         logger.warning(f"RAG context lookup failed: {e}")
 
             additional_context = self._build_agentic_additional_context(
                 flash_context, rag_context
             )
+            user_prompt = self._build_agentic_user_prompt(
+                transcript, user_emotion, flash_context, rag_context
+            )
             system_prompt = prompt_composer.compose_system_prompt(
                 memory_context=memo_context,
-                user_emotion=state["user_emotion"].label,
+                user_emotion=user_emotion.label,
                 additional_context=additional_context,
                 emotion_guidance=emotion_guidance,
             )
@@ -1133,9 +1143,9 @@ class ResponseGenerator:
         if cancel_check:
             cancel_check()
         return generate_llm_reply(
-            transcript,  # Current user message
+            user_prompt,  # User prompt enriched with recent turns/knowledge
             cancel_check=cancel_check,
-            system_prompt=system_prompt,  # Full context from PromptComposerV2
+            system_prompt=system_prompt,
             max_tokens=256,
         )
 
@@ -1158,13 +1168,13 @@ class ResponseGenerator:
         if memo_context.get("memories"):
             return memo_context
         try:
-            user_id = state.get("user_id", state["session_id"])
-            memo_context = asyncio.run(
-                memo_client.get_context_for_llm(
-                    user_id=user_id,
-                    current_query=state.get("transcript", ""),
-                    access_token=state.get("supabase_token"),
-                )
+            # Task #42817: Use sync wrapper to avoid 'event loop already running' error
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            memo_context = memo_client.get_context_for_llm_sync(
+                user_id=user_id,
+                current_query=state.get("transcript", ""),
+                access_token=state.get("supabase_token"),
             )
         except Exception as exc:
             logger.warning("MemO context retrieval failed: %s", exc)
@@ -1297,24 +1307,107 @@ class ResponseGenerator:
         return result_state
 
     def _process_emotional_support_mode(self, state: GraphState) -> GraphState:
-        """EMOTIONAL_SUPPORT mode: Pass to emotional skill router (Task #42729 - placeholder)"""
+        """EMOTIONAL_SUPPORT mode: Use emotional support prompts (Task #42811)"""
         logger.info(
-            "ResponseGenerator: EMOTIONAL_SUPPORT mode - emotional support routing"
+            "ResponseGenerator: EMOTIONAL_SUPPORT mode - using emotional support prompts"
         )
+        _maybe_cancel(state)
+        cancel_check = state.get("cancel_check")
 
-        # TODO: Implement emotional skill router in future
-        # For now, enhance emotional guidance in existing pipeline
+        # Ensure emotional context is loaded
         emotion_guidance = _ensure_emotion_guidance(state)
 
-        # Force emotional support focus in prompt
+        # Get emotion and skill info for prompt building
+        user_emotion = state.get("user_emotion")
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
+        skill_id = state.get("skill_id", "active_listening")
+
         logger.info(
-            f"EMOTIONAL_SUPPORT: Enhanced emotional guidance with {len(emotion_guidance)} tips"
+            f"EMOTIONAL_SUPPORT: emotion={emotion_label}, skill={skill_id}, guidance_tips={len(emotion_guidance)}"
         )
 
-        # Use LIGHT mode with enhanced emotional context
-        result_state = self._process_light_mode(state)
+        # Build emotional support system prompt synchronously (Task #42811)
+        # Import templates directly to avoid async complexity
+        from app.prompt.templates import (
+            SOPHIA_FOUNDATION,
+            CURRENT_MODE_BLOCKS,
+            SKILL_BLOCKS,
+            AFFECT_GUIDANCE_MAP,
+        )
+        from app.routing.models import CurrentMode
+        from app.routing.emotional_router import EmotionalSkill
 
-        return result_state
+        prompt_parts = [SOPHIA_FOUNDATION]
+
+        # Add mode block
+        mode_block = CURRENT_MODE_BLOCKS.get(CurrentMode.EMOTIONAL_SUPPORT, "")
+        if mode_block:
+            prompt_parts.append(mode_block)
+
+        # Add skill block
+        try:
+            skill_enum = EmotionalSkill(skill_id)
+            skill_block = SKILL_BLOCKS.get(skill_enum, "")
+            if skill_block:
+                prompt_parts.append(skill_block)
+        except (ValueError, KeyError):
+            pass
+
+        # Add affect guidance based on detected emotion
+        affect_block = AFFECT_GUIDANCE_MAP.get(
+            emotion_label.lower(), AFFECT_GUIDANCE_MAP.get("neutral", "")
+        )
+        if affect_block:
+            prompt_parts.append(f"\n{affect_block}")
+
+        system_prompt = "\n\n".join(prompt_parts)
+
+        # Generate response with emotional support prompt
+        transcript = state.get("transcript", "")
+        if cancel_check:
+            cancel_check()
+
+        state["llm_response"] = generate_llm_reply(
+            transcript,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=300,  # Longer responses for emotional support
+        )
+
+        logger.info(
+            "EMOTIONAL_SUPPORT: Generated response: '%s...'",
+            state["llm_response"][:50] if state.get("llm_response") else "empty",
+        )
+
+        return state
+
+    def _generate_emotional_fallback(self, state: GraphState, cancel_check=None) -> str:
+        """Fallback emotional response when PromptComposerV2 fails"""
+        transcript = state.get("transcript", "")
+        user_emotion = state.get("user_emotion")
+        emotion_label = (
+            getattr(user_emotion, "label", "neutral") if user_emotion else "neutral"
+        )
+
+        system_prompt = (
+            "You are Sophia, a warm and empathetic AI companion. "
+            f"The user seems to be feeling {emotion_label}. "
+            "Respond with genuine empathy, validate their feelings, and offer gentle support. "
+            "Keep your response warm, authentic, and under 100 words. "
+            "Focus on emotional connection, not problem-solving."
+        )
+
+        if cancel_check:
+            cancel_check()
+
+        return generate_llm_reply(
+            transcript,
+            cancel_check=cancel_check,
+            system_prompt=system_prompt,
+            max_tokens=200,
+        )
 
     def _generate_simple_greeting(self, transcript: str) -> str:
         """Legacy greeting helper (kept for compatibility)."""
@@ -1359,9 +1452,9 @@ class ResponseGenerator:
             client = anthropic.Anthropic(api_key=self.settings.ANTHROPIC_API_KEY)
 
             # Build system prompt based on intent
-            if intent == "defi_question":
-                system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Provide clear, educational responses about DeFi concepts. Keep responses under 50 words."
-            elif intent == "emotional_support":
+            # if intent == "defi_question":
+            #     system_prompt = "You are Sophia, a knowledgeable DeFi mentor. Provide clear, educational responses about DeFi concepts. Keep responses under 50 words."
+            if intent == "emotional_support":
                 system_prompt = "You are Sophia, an empathetic AI companion. Provide supportive and encouraging responses. Keep responses under 50 words."
             else:
                 system_prompt = "You are Sophia, a friendly AI assistant. Engage in casual conversation. Keep responses under 50 words."
@@ -1421,19 +1514,16 @@ class TTSNode:
 
             logger.info(f"TTSNode: Successfully uploaded to {audio_url}")
 
-            # Analyze Sophia's emotion from TTS output
-            sophia_emotion = analyze_emotion_audio(tts_bytes)
-
+            # Skip blocking audio emotion for Sophia - use neutral default
+            # Sophia's TTS emotion analysis is low priority
             state["tts_bytes"] = tts_bytes
             state["audio_url"] = audio_url
             state["is_mock_audio"] = is_mock
-            state["sophia_emotion"] = EmotionData(
-                label=sophia_emotion.label, confidence=sophia_emotion.confidence
-            )
+            state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
 
             logger.info(
                 f"TTSNode completed: audio_url={audio_url}, "
-                f"sophia_emotion={sophia_emotion.label}({sophia_emotion.confidence:.2f})"
+                f"sophia_emotion=neutral(0.80)"
             )
 
         except Exception as e:
@@ -1463,13 +1553,10 @@ class TTSNode:
                 audio_url = upload_audio_and_get_url(
                     file_bytes=tts_bytes, file_name=file_name
                 )
-                sophia_emotion = analyze_emotion_audio(tts_bytes)
-
+                # Skip blocking audio emotion for Sophia - use neutral default
                 state["tts_bytes"] = tts_bytes
                 state["audio_url"] = audio_url
-                state["sophia_emotion"] = EmotionData(
-                    label=sophia_emotion.label, confidence=sophia_emotion.confidence
-                )
+                state["sophia_emotion"] = EmotionData(label="neutral", confidence=0.8)
                 logger.info(f"✅ TTSNode fallback succeeded: {audio_url}")
 
             except Exception as fallback_error:
@@ -1569,39 +1656,18 @@ class EvalLogger:
         )
 
         # Task #42597: Extract and store important information in MemO
+        # Task #42817: Use sync methods to avoid 'event loop already running' error
         try:
-            user_id = state.get("user_id", state["session_id"])
-
-            # Use asyncio.get_event_loop() to avoid "event loop already running" error
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, create a task and get result synchronously
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    pool.submit(
-                        lambda: asyncio.run(
-                            self._extract_and_store_memories(
-                                user_id=user_id,
-                                session_id=state["session_id"],
-                                transcript=state["transcript"],
-                                response=state["llm_response"],
-                                intent=state["intent"],
-                                user_emotion=state["user_emotion"].label,
-                            )
-                        )
-                    ).result()
-            else:
-                # If no event loop is running, use asyncio.run()
-                asyncio.run(
-                    self._extract_and_store_memories(
-                        user_id=user_id,
-                        session_id=state["session_id"],
-                        transcript=state["transcript"],
-                        response=state["llm_response"],
-                        intent=state["intent"],
-                        user_emotion=state["user_emotion"].label,
-                    )
-                )
+            # Prefer real user_id over session_id
+            user_id = state.get("user_id") or state["session_id"]
+            self._extract_and_store_memories_sync(
+                user_id=user_id,
+                session_id=state["session_id"],
+                transcript=state["transcript"],
+                response=state["llm_response"],
+                intent=state["intent"],
+                user_emotion=state["user_emotion"].label,
+            )
         except Exception as e:
             logger.warning(f"MemO memory storage failed: {e}")
 
@@ -1610,7 +1676,7 @@ class EvalLogger:
 
         return state
 
-    async def _extract_and_store_memories(
+    def _extract_and_store_memories_sync(
         self,
         user_id: str,
         session_id: str,
@@ -1619,7 +1685,10 @@ class EvalLogger:
         intent: str,
         user_emotion: str,
     ):
-        """Extract and store important memories from conversation (Task #42597)"""
+        """Extract and store important memories from conversation (Task #42597, #42817)
+
+        Synchronous version to avoid 'event loop already running' errors.
+        """
         memories_to_store = []
 
         # Extract preferences from transcript
@@ -1661,10 +1730,10 @@ class EvalLogger:
                 {"text": transcript, "type": "fact", "importance": 0.9}
             )
 
-        # Store all extracted memories
+        # Store all extracted memories using sync method
         for memory in memories_to_store:
             try:
-                await memo_client.store_memory(
+                memo_client.store_memory_sync(
                     user_id=user_id,
                     session_id=session_id,
                     memory_text=memory["text"],
@@ -1896,6 +1965,7 @@ class SophiaLangGraph:
         supabase_token: Optional[str] = None,
         user_id: Optional[str] = None,
         conversation_count: Optional[int] = None,
+        tier0_result: Optional[Dict[str, Any]] = None,
     ) -> GraphState:
         """Process audio through initial nodes to get context for streaming"""
 
@@ -1935,6 +2005,7 @@ class SophiaLangGraph:
             "emotion_guidance": [],
             "fallback_used": {},
             "use_voxtral": False,
+            "tier0_result": tier0_result,
             "cancel_check": None,
         }
 
@@ -1956,7 +2027,9 @@ class SophiaLangGraph:
         cancel_check = state.get("cancel_check")
         try:
             # Check if we should use Voxtral streaming
-            if getattr(self.settings, "USE_VOXTRAL", True) and state.get("use_voxtral", False):
+            if getattr(self.settings, "USE_VOXTRAL", True) and state.get(
+                "use_voxtral", False
+            ):
                 from app.services.shared_services import shared_services
 
                 hybrid_service = shared_services.get_hybrid_voxtral_service()
@@ -1985,11 +2058,11 @@ class SophiaLangGraph:
 
             # Get RAG context for DeFi questions
             rag_context = ""
-            if state.get("intent") == "defi_question":
-                rag_context = rag_system.get_context_for_llm(
-                    state.get("transcript", "")
-                )
-                logger.info(f"RAG context retrieved: {len(rag_context)} characters")
+            # if state.get("intent") == "defi_question":
+            #     rag_context = rag_system.get_context_for_llm(
+            #         state.get("transcript", "")
+            #     )
+            #     logger.info(f"RAG context retrieved: {len(rag_context)} characters")
 
             # Build comprehensive prompt
             prompt_parts = [
@@ -2023,13 +2096,13 @@ class SophiaLangGraph:
             logger.error(f"Streaming LLM response failed: {e}")
             _raise_if_cancelled(e)
             # Final fallback
-            if (
-                "defi" in state.get("transcript", "").lower()
-                or "crypto" in state.get("transcript", "").lower()
-            ):
-                yield "I can help you with DeFi questions. What would you like to know?"
-            else:
-                yield "I'm here to help. Could you please rephrase your question?"
+            # if (
+            #     "defi" in state.get("transcript", "").lower()
+            #     or "crypto" in state.get("transcript", "").lower()
+            # ):
+            #     yield "I can help you with DeFi questions. What would you like to know?"
+            # else:
+            yield "I'm here to help. Could you please rephrase your question?"
 
     def _build_voxtral_context_for_streaming(self, state: GraphState) -> Dict[str, Any]:
         """Build context for Voxtral streaming (includes current_mode for model selection)"""
@@ -2040,7 +2113,9 @@ class SophiaLangGraph:
 
         context = {
             "intent": state.get("intent", ""),
-            "current_mode": state.get("current_mode", ""),  # For VoxtralLargeService._select_model
+            "current_mode": state.get(
+                "current_mode", ""
+            ),  # For VoxtralLargeService._select_model
             "user_emotion": {
                 "label": state["user_emotion"].label,
                 "confidence": state["user_emotion"].confidence,

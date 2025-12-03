@@ -28,16 +28,16 @@ from app.config import get_settings
 
 async def test_supabase_connection():
     """Test 1: Verify Supabase connection"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 1: Supabase Connection")
-    print("="*60)
+    print("=" * 60)
 
     try:
         settings = get_settings()
         print(f"✓ Supabase URL: {settings.SUPABASE_URL}")
         print(f"✓ Supabase KEY configured: {'Yes' if settings.SUPABASE_KEY else 'No'}")
 
-        client = get_supabase()
+        get_supabase()
         print("✓ Supabase client initialized successfully")
         return True
     except Exception as e:
@@ -47,28 +47,30 @@ async def test_supabase_connection():
 
 async def test_table_existence():
     """Test 2: Check if user_memories table exists"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 2: user_memories Table Existence")
-    print("="*60)
+    print("=" * 60)
 
     try:
         client = get_supabase()
 
         # Try to query the table (this will fail if table doesn't exist)
-        result = client.table("user_memories").select("id").limit(1).execute()
+        client.table("user_memories").select("id").limit(1).execute()
 
         print("✓ user_memories table exists")
-        print(f"✓ Table accessible via REST API")
+        print("✓ Table accessible via REST API")
         return True
     except Exception as e:
         error_msg = str(e)
         if "Could not find the table" in error_msg or "PGRST106" in error_msg:
-            print(f"✗ user_memories table NOT FOUND!")
+            print("✗ user_memories table NOT FOUND!")
             print(f"   Error: {error_msg}")
-            print(f"\n   💡 SOLUTION:")
-            print(f"      1. Open Supabase SQL Editor: https://supabase.com/dashboard")
-            print(f"      2. Run the SQL script: migrations/create_user_memories_table.sql")
-            print(f"      3. Re-run this test")
+            print("\n   💡 SOLUTION:")
+            print("      1. Open Supabase SQL Editor: https://supabase.com/dashboard")
+            print(
+                "      2. Run the SQL script: migrations/create_user_memories_table.sql"
+            )
+            print("      3. Re-run this test")
         else:
             print(f"✗ Table check failed: {e}")
         return False
@@ -76,9 +78,9 @@ async def test_table_existence():
 
 async def test_pgvector_extension():
     """Test 3: Check if pgvector extension is enabled"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 3: pgvector Extension")
-    print("="*60)
+    print("=" * 60)
 
     try:
         # Note: This test requires direct SQL access, which may not be available via REST API
@@ -94,9 +96,9 @@ async def test_pgvector_extension():
 
 async def test_memory_storage():
     """Test 4: Store a test memory"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 4: Memory Storage")
-    print("="*60)
+    print("=" * 60)
 
     test_user_id = f"test-user-{int(datetime.now().timestamp())}"
     test_session_id = "00000000-0000-0000-0000-000000000001"
@@ -109,17 +111,17 @@ async def test_memory_storage():
             memory_type="preference",
             importance=0.9,
             session_id=test_session_id,
-            metadata={"test": True, "timestamp": datetime.now().isoformat()}
+            metadata={"test": True, "timestamp": datetime.now().isoformat()},
         )
 
         if success:
-            print(f"✓ Memory stored successfully")
+            print("✓ Memory stored successfully")
             print(f"  User ID: {test_user_id}")
-            print(f"  Memory type: preference")
-            print(f"  Importance: 0.9")
+            print("  Memory type: preference")
+            print("  Importance: 0.9")
             return test_user_id
         else:
-            print(f"✗ Memory storage returned False")
+            print("✗ Memory storage returned False")
             return None
 
     except Exception as e:
@@ -127,43 +129,43 @@ async def test_memory_storage():
         print(f"✗ Memory storage failed: {e}")
 
         if "Could not find the table" in error_msg:
-            print(f"\n   💡 SOLUTION: Run migrations/create_user_memories_table.sql in Supabase")
+            print(
+                "\n   💡 SOLUTION: Run migrations/create_user_memories_table.sql in Supabase"
+            )
         elif "permission denied" in error_msg.lower():
-            print(f"\n   💡 SOLUTION: Check RLS policies in Supabase")
+            print("\n   💡 SOLUTION: Check RLS policies in Supabase")
         elif "embedding" in error_msg.lower():
-            print(f"\n   💡 SOLUTION: Verify pgvector extension is enabled")
+            print("\n   💡 SOLUTION: Verify pgvector extension is enabled")
 
         return None
 
 
 async def test_memory_search(test_user_id: str):
     """Test 5: Search for stored memories"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 5: Memory Search (Semantic Similarity)")
-    print("="*60)
+    print("=" * 60)
 
     try:
         # Search for memories related to "technical explanations"
         query_text = "Show me technical details with examples"
 
         memories = await memo_client.search_memories(
-            user_id=test_user_id,
-            query_text=query_text,
-            top_k=5
+            user_id=test_user_id, query_text=query_text, top_k=5
         )
 
-        print(f"✓ Search completed successfully")
+        print("✓ Search completed successfully")
         print(f"  Query: '{query_text}'")
         print(f"  Results found: {len(memories)}")
 
         if memories:
             for i, mem in enumerate(memories, 1):
-                similarity = mem.get('similarity_score', 0)
-                text = mem.get('memory_text', '')[:60]
-                mem_type = mem.get('memory_type', 'unknown')
+                similarity = mem.get("similarity_score", 0)
+                text = mem.get("memory_text", "")[:60]
+                mem_type = mem.get("memory_type", "unknown")
                 print(f"  {i}. [{mem_type}] {text}... (similarity: {similarity:.3f})")
         else:
-            print(f"  ⚠ No memories found (might be due to embedding generation)")
+            print("  ⚠ No memories found (might be due to embedding generation)")
 
         return len(memories) > 0
 
@@ -174,14 +176,14 @@ async def test_memory_search(test_user_id: str):
 
 async def test_metrics():
     """Test 6: Check MemO metrics"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST 6: MemO Metrics")
-    print("="*60)
+    print("=" * 60)
 
     try:
         metrics = memo_client.get_metrics()
 
-        print(f"✓ Metrics retrieved successfully:")
+        print("✓ Metrics retrieved successfully:")
         print(f"  Total searches: {metrics['total_searches']}")
         print(f"  Total stores: {metrics['total_stores']}")
         print(f"  Total errors: {metrics['total_errors']}")
@@ -190,11 +192,11 @@ async def test_metrics():
         print(f"  P95 search latency: {metrics['p95_search_latency_ms']:.1f}ms")
 
         # Check thresholds
-        if metrics['p95_search_latency_ms'] > 0:
-            if metrics['p95_search_latency_ms'] < 100:
-                print(f"  ✓ P95 latency is GOOD (< 100ms)")
+        if metrics["p95_search_latency_ms"] > 0:
+            if metrics["p95_search_latency_ms"] < 100:
+                print("  ✓ P95 latency is GOOD (< 100ms)")
             else:
-                print(f"  ⚠ P95 latency is HIGH (> 100ms) - consider optimizing")
+                print("  ⚠ P95 latency is HIGH (> 100ms) - consider optimizing")
 
         return True
     except Exception as e:
@@ -204,12 +206,12 @@ async def test_metrics():
 
 async def main():
     """Run all tests"""
-    print("\n" + "🧪"*30)
+    print("\n" + "🧪" * 30)
     print(" MemO Memory Storage Test Suite (Task #42817)")
-    print("🧪"*30)
+    print("🧪" * 30)
 
     settings = get_settings()
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  MEMO_ENABLED: {settings.MEMO_ENABLED}")
     print(f"  MEMO_TOP_K: {settings.MEMO_TOP_K}")
     print(f"  MEMO_SIMILARITY_THRESHOLD: {settings.MEMO_SIMILARITY_THRESHOLD}")
@@ -222,35 +224,37 @@ async def main():
     # Run tests
     results = {}
 
-    results['supabase'] = await test_supabase_connection()
-    results['table'] = await test_table_existence()
+    results["supabase"] = await test_supabase_connection()
+    results["table"] = await test_table_existence()
 
-    if not results['table']:
-        print("\n" + "="*60)
+    if not results["table"]:
+        print("\n" + "=" * 60)
         print("❌ CRITICAL: user_memories table not found!")
-        print("="*60)
+        print("=" * 60)
         print("\nPlease apply the migration:")
-        print("1. Option A (Recommended): Run migrations/create_user_memories_table.sql in Supabase SQL Editor")
+        print(
+            "1. Option A (Recommended): Run migrations/create_user_memories_table.sql in Supabase SQL Editor"
+        )
         print("2. Option B: Use Alembic: alembic upgrade head")
         print("\nThen re-run this test.")
         sys.exit(1)
 
-    results['pgvector'] = await test_pgvector_extension()
+    results["pgvector"] = await test_pgvector_extension()
 
     test_user_id = await test_memory_storage()
-    results['storage'] = test_user_id is not None
+    results["storage"] = test_user_id is not None
 
     if test_user_id:
-        results['search'] = await test_memory_search(test_user_id)
+        results["search"] = await test_memory_search(test_user_id)
     else:
-        results['search'] = False
+        results["search"] = False
 
-    results['metrics'] = await test_metrics()
+    results["metrics"] = await test_metrics()
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEST SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     passed = sum(1 for v in results.values() if v)
     total = len(results)

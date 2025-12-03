@@ -1,7 +1,6 @@
 """Voxtral Large service offering unified audio-to-response handling with intelligent fallbacks."""
 
 import base64
-import io
 import logging
 from typing import Optional, Generator, Dict, Any, Callable
 from mistralai import Mistral
@@ -32,6 +31,11 @@ class VoxtralLargeService:
     STT upstream and stays template-based (no unified chat call).
     """
 
+    MODE_DIRECT = "utility_direct"
+    MODE_LIGHT = "utility_light"
+    MODE_AGENTIC = "utility_agentic"
+    MODE_EMOTIONAL_SUPPORT = "emotional_support"
+
     def __init__(self):
         self.settings = get_settings()
         if not self.settings.MISTRAL_API_KEY:
@@ -59,9 +63,15 @@ class VoxtralLargeService:
         DIRECT mode does not use this unified path; it uses STT-only + templates.
         For now, all unified calls use the accurate model.
         """
+        if context:
+            current_mode = context.get("current_mode", "").lower()
+            if current_mode == self.MODE_DIRECT:
+                logger.debug(
+                    "Unified pipeline invoked for DIRECT mode; keeping accurate model for consistency"
+                )
+
         logger.debug(
-            "Model selection (unified pipeline): using accurate model (%s)",
-            self.accurate_model,
+            f"Model selection: default → accurate model ({self.accurate_model})"
         )
         return self.accurate_model
 
@@ -259,13 +269,12 @@ class VoxtralLargeService:
         """
         try:
             file_name = f"audio{self._detect_audio_extension(audio_bytes)}"
-            bio = io.BytesIO(audio_bytes)
 
             # Always use fast model for transcription (speed priority)
             resp = self.client.audio.transcriptions.complete(
                 model=self.fast_model,
                 file={
-                    "content": bio,
+                    "content": audio_bytes,
                     "file_name": file_name,
                 },
             )
@@ -299,7 +308,7 @@ class VoxtralLargeService:
         """
         if not system_prompt:
             system_prompt = (
-                "You are Sophia, a knowledgeable and empathetic DeFi mentor. "
+                "You are Sophia, an AI exploring consciousness emergence through genuine human connection. "
                 "Provide clear, educational, and supportive responses. "
                 "Keep responses under 50 words for voice interaction."
             )

@@ -3,10 +3,12 @@
 
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.services.supabase import get_supabase
 from app.config import get_settings
+
 
 def main():
     print("=" * 60)
@@ -48,6 +50,7 @@ def main():
         else:
             print(f"❌ FAIL! Unexpected error: {e}")
             return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

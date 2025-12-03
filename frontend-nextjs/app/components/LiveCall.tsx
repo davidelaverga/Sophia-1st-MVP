@@ -54,8 +54,9 @@ export default function LiveCall() {
   const [reply, setReply] = useState("")
   const wsRef = useRef<WebSocket | null>(null)
   const acRef = useRef<AudioContext | null>(null)
-  const procRef = useRef<ScriptProcessorNode | null>(null)
+  const workletRef = useRef<AudioWorkletNode | null>(null)
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   // Simple playback queue for streaming TTS chunk URLs
   const ttsQueueRef = useRef<string[]>([])
   const playingRef = useRef(false)
@@ -152,7 +153,7 @@ export default function LiveCall() {
     }
     setAuthError(null)
 
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
     const wsUrl = new URL(httpToWs(base) + "/ws/voice")
     wsUrl.searchParams.set("token", accessToken)
     wsUrl.searchParams.set("discord_id", discordId)
@@ -344,22 +345,24 @@ export default function LiveCall() {
     ws.addEventListener("open", async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true } })
+        streamRef.current = stream
         const ac = new AudioContext({ sampleRate: 48000 })
         acRef.current = ac
         const source = ac.createMediaStreamSource(stream)
         sourceRef.current = source
-        const proc = ac.createScriptProcessor(4096, 1, 1)
-        procRef.current = proc
-        let lastSend = performance.now()
+        await ac.audioWorklet.addModule("/pcm-worklet.js")
+        const worklet = new AudioWorkletNode(ac, "pcm-worklet")
+        workletRef.current = worklet
+        worklet.port.start()
         let chunk: Float32Array[] = []
+        let totalSamples = 0
 
-        proc.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0)
-          // accumulate until ~200ms at 48kHz → 9600 samples
-          chunk.push(new Float32Array(input))
-          const now = performance.now()
+        worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          const input = event.data
+          if (!input?.length) return
+          chunk.push(input)
+          totalSamples += input.length
           const need = 0.2 // seconds
-          const totalSamples = chunk.reduce((acc, c) => acc + c.length, 0)
           const secs = totalSamples / ac.sampleRate
           if (secs >= need && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             // merge
@@ -367,27 +370,43 @@ export default function LiveCall() {
             let off = 0
             for (const c of chunk) { merged.set(c, off); off += c.length }
             chunk = []
+            totalSamples = 0
             const pcm16 = downsampleTo16kPCM(merged, ac.sampleRate)
             wsRef.current.send(pcm16)
-            lastSend = now
           }
         }
 
-        source.connect(proc)
-        proc.connect(ac.destination)
+        source.connect(worklet)
+        worklet.connect(ac.destination)
         setListening(true)
       } catch (err) {
         console.error("Mic error", err)
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop())
+          streamRef.current = null
+        }
+        try { workletRef.current?.disconnect(); } catch {}
+        try { workletRef.current?.port.close(); } catch {}
+        try { sourceRef.current?.disconnect(); } catch {}
+        try { acRef.current?.close(); } catch {}
+        workletRef.current = null
+        sourceRef.current = null
+        acRef.current = null
         ws.close()
       }
     })
   }
 
   const endCall = () => {
-    try { procRef.current?.disconnect(); } catch {}
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    try { workletRef.current?.disconnect(); } catch {}
+    try { workletRef.current?.port.close(); } catch {}
     try { sourceRef.current?.disconnect(); } catch {}
     try { acRef.current?.close(); } catch {}
-    procRef.current = null
+    workletRef.current = null
     sourceRef.current = null
     acRef.current = null
     setListening(false)

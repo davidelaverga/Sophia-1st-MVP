@@ -27,6 +27,7 @@ ALLOWED_AUDIO_CONTENT_TYPES = {
     "audio/mp4",
     "audio/aac",
 }
+MAX_AUDIO_SIZE = 50 * 1024 * 1024
 
 
 def prosody_features(pcm_bytes: bytes) -> Dict[str, str]:
@@ -52,6 +53,11 @@ def prosody_features(pcm_bytes: bytes) -> Dict[str, str]:
 
 
 async def extract_audio(upload: UploadFile):
+    if upload.size > MAX_AUDIO_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size: {MAX_AUDIO_SIZE / 1024 / 1024}MB",
+        )
     payload = await upload.read()
     """Lightweight magic-byte sniffing to catch obvious non-audio uploads."""
     if not payload or len(payload) < 4:
